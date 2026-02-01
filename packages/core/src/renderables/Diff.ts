@@ -1,13 +1,13 @@
-import { Renderable, type RenderableOptions } from "../Renderable"
-import type { RenderContext } from "../types"
-import { CodeRenderable, type CodeOptions } from "./Code"
-import { LineNumberRenderable, type LineSign, type LineColorConfig } from "./LineNumberRenderable"
-import { RGBA, parseColor } from "../lib/RGBA"
-import { SyntaxStyle } from "../syntax-style"
+import { Renderable, type RenderableOptions } from "../Renderable.js"
+import type { RenderContext } from "../types.js"
+import { CodeRenderable, type CodeOptions } from "./Code.js"
+import { LineNumberRenderable, type LineSign, type LineColorConfig } from "./LineNumberRenderable.js"
+import { RGBA, parseColor } from "../lib/RGBA.js"
+import { SyntaxStyle } from "../syntax-style.js"
 import { parsePatch, type StructuredPatch } from "diff"
-import { TextRenderable } from "./Text"
-import type { TreeSitterClient } from "../lib/tree-sitter"
-import type { MouseEvent } from "../renderer"
+import { TextRenderable } from "./Text.js"
+import type { TreeSitterClient } from "../lib/tree-sitter/index.js"
+import type { MouseEvent } from "../renderer.js"
 
 interface LogicalLine {
   content: string

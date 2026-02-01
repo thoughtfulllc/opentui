@@ -1,11 +1,11 @@
 import { test, expect, beforeEach, afterEach, describe } from "bun:test"
-import { nonAlphanumericKeys, type KeyEventType, type ParsedKey } from "../lib/parse.keypress"
-import { type KeyEvent } from "../lib/KeyHandler"
+import { nonAlphanumericKeys, type KeyEventType, type ParsedKey } from "../lib/parse.keypress.js"
+import { type KeyEvent } from "../lib/KeyHandler.js"
 import { Buffer } from "node:buffer"
-import { Renderable, type RenderableOptions } from "../Renderable"
-import { createTestRenderer, type TestRenderer, type TestRendererOptions } from "../testing/test-renderer"
-import { ManualClock } from "../testing/manual-clock"
-import type { RenderContext } from "../types"
+import { Renderable, type RenderableOptions } from "../Renderable.js"
+import { createTestRenderer, type TestRenderer, type TestRendererOptions } from "../testing/test-renderer.js"
+import { ManualClock } from "../testing/manual-clock.js"
+import type { RenderContext } from "../types.js"
 
 let currentRenderer: TestRenderer
 let kittyRenderer: TestRenderer

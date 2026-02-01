@@ -3,7 +3,7 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSyn
 import { dirname, join, resolve } from "path"
 import { fileURLToPath } from "url"
 import process from "process"
-import { createSolidTransformPlugin } from "./solid-plugin"
+import { createSolidTransformPlugin } from "./solid-plugin.js"
 
 interface PackageJson {
   name: string

@@ -4,9 +4,9 @@ import {
   type TabSelectRenderableOptions,
   TabSelectRenderableEvents,
   type TabSelectOption,
-} from "./TabSelect"
-import { createTestRenderer, type MockInput, type TestRenderer } from "../testing/test-renderer"
-import { ManualClock } from "../testing/manual-clock"
+} from "./TabSelect.js"
+import { createTestRenderer, type MockInput, type TestRenderer } from "../testing/test-renderer.js"
+import { ManualClock } from "../testing/manual-clock.js"
 
 let currentRenderer: TestRenderer
 let currentMockInput: MockInput

@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test"
-import { parseKeypress, type ParseKeypressOptions } from "./parse.keypress"
+import { parseKeypress, type ParseKeypressOptions } from "./parse.keypress.js"
 
 test("parseKeypress - Kitty keyboard protocol disabled by default", () => {
   // Kitty sequences should fall back to regular parsing when disabled

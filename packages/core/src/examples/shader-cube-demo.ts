@@ -7,10 +7,10 @@ import {
   BoxRenderable,
   FrameBufferRenderable,
   type KeyEvent,
-} from "../index"
-import { setupCommonDemoKeys } from "./lib/standalone-keys"
-import { RGBA } from "../lib"
-import { TextureUtils } from "../3d/TextureUtils"
+} from "../index.js"
+import { setupCommonDemoKeys } from "./lib/standalone-keys.js"
+import { RGBA } from "../lib/index.js"
+import { TextureUtils } from "../3d/TextureUtils.js"
 import {
   Scene as ThreeScene,
   Mesh as ThreeMesh,
@@ -22,10 +22,10 @@ import {
   BoxGeometry,
   AmbientLight,
 } from "three"
-import * as Filters from "../post/filters"
-import { DistortionEffect, VignetteEffect, BrightnessEffect, BlurEffect, BloomEffect } from "../post/filters"
-import type { OptimizedBuffer } from "../buffer"
-import { ThreeCliRenderer } from "../3d"
+import * as Filters from "../post/filters.js"
+import { DistortionEffect, VignetteEffect, BrightnessEffect, BlurEffect, BloomEffect } from "../post/filters.js"
+import type { OptimizedBuffer } from "../buffer.js"
+import { ThreeCliRenderer } from "../3d.js"
 
 // State management for the demo
 interface ShaderCubeDemoState {

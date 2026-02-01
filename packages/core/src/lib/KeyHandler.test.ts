@@ -1,7 +1,7 @@
 import { test, expect } from "bun:test"
-import { InternalKeyHandler, KeyEvent } from "./KeyHandler"
-import { type ParseKeypressOptions, parseKeypress } from "./parse.keypress"
-import { createTestRenderer } from "../testing/test-renderer"
+import { InternalKeyHandler, KeyEvent } from "./KeyHandler.js"
+import { type ParseKeypressOptions, parseKeypress } from "./parse.keypress.js"
+import { createTestRenderer } from "../testing/test-renderer.js"
 
 const { renderer, mockInput } = await createTestRenderer({})
 

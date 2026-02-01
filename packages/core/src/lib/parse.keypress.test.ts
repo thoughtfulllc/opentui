@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test"
-import { parseKeypress, nonAlphanumericKeys, type ParsedKey, type KeyEventType } from "./parse.keypress"
+import { parseKeypress, nonAlphanumericKeys, type ParsedKey, type KeyEventType } from "./parse.keypress.js"
 import { Buffer } from "node:buffer"
 
 test("parseKeypress - basic letters", () => {

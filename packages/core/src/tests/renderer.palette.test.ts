@@ -1,5 +1,5 @@
 import { test, expect, describe } from "bun:test"
-import { createTestRenderer, type TestRendererOptions } from "../testing/test-renderer"
+import { createTestRenderer, type TestRendererOptions } from "../testing/test-renderer.js"
 import { EventEmitter } from "events"
 import { Buffer } from "node:buffer"
 import { Readable } from "node:stream"

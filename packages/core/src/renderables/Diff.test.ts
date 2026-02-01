@@ -1,9 +1,9 @@
 import { test, expect, beforeEach, afterEach } from "bun:test"
-import { DiffRenderable } from "./Diff"
-import { SyntaxStyle } from "../syntax-style"
-import { RGBA } from "../lib/RGBA"
-import { createMockMouse, createTestRenderer, type TestRenderer } from "../testing"
-import type { SimpleHighlight } from "../lib/tree-sitter/types"
+import { DiffRenderable } from "./Diff.js"
+import { SyntaxStyle } from "../syntax-style.js"
+import { RGBA } from "../lib/RGBA.js"
+import { createMockMouse, createTestRenderer, type TestRenderer } from "../testing.js"
+import type { SimpleHighlight } from "../lib/tree-sitter/types.js"
 
 let currentRenderer: TestRenderer
 let renderOnce: () => Promise<void>

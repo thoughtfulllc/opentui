@@ -1,5 +1,5 @@
-import { ANSI } from "./ansi"
-import { Renderable, RootRenderable } from "./Renderable"
+import { ANSI } from "./ansi.js"
+import { Renderable, RootRenderable } from "./Renderable.js"
 import {
   DebugOverlayCorner,
   type CursorStyleOptions,
@@ -8,34 +8,34 @@ import {
   type ThemeMode,
   type ViewportBounds,
   type WidthMethod,
-} from "./types"
-import { RGBA, parseColor, type ColorInput } from "./lib/RGBA"
+} from "./types.js"
+import { RGBA, parseColor, type ColorInput } from "./lib/RGBA.js"
 import type { Pointer } from "bun:ffi"
-import { OptimizedBuffer } from "./buffer"
-import { resolveRenderLib, type RenderLib } from "./zig"
-import { TerminalConsole, type ConsoleOptions, capture } from "./console"
-import { type MouseEventType, type RawMouseEvent, type ScrollInfo } from "./lib/parse.mouse"
-import { Selection } from "./lib/selection"
-import { Clipboard, type ClipboardTarget } from "./lib/clipboard"
+import { OptimizedBuffer } from "./buffer.js"
+import { resolveRenderLib, type RenderLib } from "./zig.js"
+import { TerminalConsole, type ConsoleOptions, capture } from "./console.js"
+import { type MouseEventType, type RawMouseEvent, type ScrollInfo } from "./lib/parse.mouse.js"
+import { Selection } from "./lib/selection.js"
+import { Clipboard, type ClipboardTarget } from "./lib/clipboard.js"
 import { EventEmitter } from "events"
-import { destroySingleton, hasSingleton, singleton } from "./lib/singleton"
-import { getObjectsInViewport } from "./lib/objects-in-viewport"
-import { KeyHandler, InternalKeyHandler } from "./lib/KeyHandler"
-import { env, registerEnvVar } from "./lib/env"
-import { getTreeSitterClient } from "./lib/tree-sitter"
+import { destroySingleton, hasSingleton, singleton } from "./lib/singleton.js"
+import { getObjectsInViewport } from "./lib/objects-in-viewport.js"
+import { KeyHandler, InternalKeyHandler } from "./lib/KeyHandler.js"
+import { env, registerEnvVar } from "./lib/env.js"
+import { getTreeSitterClient } from "./lib/tree-sitter/index.js"
 import {
   createTerminalPalette,
   type TerminalPaletteDetector,
   type TerminalColors,
   type GetPaletteOptions,
-} from "./lib/terminal-palette"
+} from "./lib/terminal-palette.js"
 import {
   isCapabilityResponse,
   isPixelResolutionResponse,
   parsePixelResolution,
-} from "./lib/terminal-capability-detection"
-import { type Clock } from "./lib/clock"
-import { StdinParser, type StdinEvent } from "./lib/stdin-parser"
+} from "./lib/terminal-capability-detection.js"
+import { type Clock } from "./lib/clock.js"
+import { StdinParser, type StdinEvent } from "./lib/stdin-parser.js"
 
 registerEnvVar({
   name: "OTUI_DUMP_CAPTURES",

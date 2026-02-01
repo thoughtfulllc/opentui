@@ -17,7 +17,7 @@ import type {
   TabSelectProps,
   TextareaProps,
   TextProps,
-} from "./src/types/components"
+} from "./src/types/components.js"
 
 export namespace JSX {
   type Element = React.ReactNode

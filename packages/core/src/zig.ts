@@ -9,13 +9,13 @@ import {
   type Highlight,
   type LineInfo,
   type MousePointerStyle,
-} from "./types"
+} from "./types.js"
 export type { LineInfo, AllocatorStats, BuildOptions }
 
-import { RGBA } from "./lib/RGBA"
-import { OptimizedBuffer } from "./buffer"
-import { TextBuffer } from "./text-buffer"
-import { env, registerEnvVar } from "./lib/env"
+import { RGBA } from "./lib/RGBA.js"
+import { OptimizedBuffer } from "./buffer.js"
+import { TextBuffer } from "./text-buffer.js"
+import { env, registerEnvVar } from "./lib/env.js"
 import {
   StyledChunkStruct,
   HighlightStruct,
@@ -33,15 +33,15 @@ import {
   ReserveInfoStruct,
   BuildOptionsStruct,
   AllocatorStatsStruct,
-} from "./zig-structs"
+} from "./zig-structs.js"
 import type {
   NativeSpanFeedOptions,
   NativeSpanFeedStats,
   ReserveInfo,
   BuildOptions,
   AllocatorStats,
-} from "./zig-structs"
-import { isBunfsPath } from "./lib/bunfs"
+} from "./zig-structs.js"
+import { isBunfsPath } from "./lib/bunfs.js"
 
 const module = await import(`@opentui/core-${process.platform}-${process.arch}/index.ts`)
 let targetLibPath = module.default

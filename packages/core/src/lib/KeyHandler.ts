@@ -1,5 +1,5 @@
 import { EventEmitter } from "events"
-import { type KeyEventType, type ParsedKey } from "./parse.keypress"
+import { type KeyEventType, type ParsedKey } from "./parse.keypress.js"
 
 export class KeyEvent implements ParsedKey {
   name: string

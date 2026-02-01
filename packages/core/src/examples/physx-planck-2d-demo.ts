@@ -7,20 +7,20 @@ import {
   BoxRenderable,
   createCliRenderer,
   type KeyEvent,
-} from "../index"
-import { setupCommonDemoKeys } from "./lib/standalone-keys"
+} from "../index.js"
+import { setupCommonDemoKeys } from "./lib/standalone-keys.js"
 import * as THREE from "three"
 import {
   SpriteAnimator,
   TiledSprite,
   type SpriteDefinition,
   type AnimationDefinition,
-} from "../3d/animation/SpriteAnimator"
-import { SpriteResourceManager, type ResourceConfig } from "../3d/SpriteResourceManager"
-import { PhysicsExplosionManager, type PhysicsExplosionHandle } from "../3d/animation/PhysicsExplodingSpriteEffect"
-import { PlanckPhysicsWorld } from "../3d/physics/PlanckPhysicsAdapter"
+} from "../3d/animation/SpriteAnimator.js"
+import { SpriteResourceManager, type ResourceConfig } from "../3d/SpriteResourceManager.js"
+import { PhysicsExplosionManager, type PhysicsExplosionHandle } from "../3d/animation/PhysicsExplodingSpriteEffect.js"
+import { PlanckPhysicsWorld } from "../3d/physics/PlanckPhysicsAdapter.js"
 import * as planck from "planck"
-import { ThreeCliRenderer } from "../3d"
+import { ThreeCliRenderer } from "../3d.js"
 
 // @ts-ignore
 import cratePath from "./assets/crate.png" with { type: "image/png" }

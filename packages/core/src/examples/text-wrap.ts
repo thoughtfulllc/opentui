@@ -3,11 +3,20 @@
  * Text wrapping example
  * Demonstrates automatic text wrapping when the wrap option is enabled
  */
-import { CliRenderer, createCliRenderer, TextRenderable, BoxRenderable, type MouseEvent, t, fg, bold } from ".."
-import { TextNodeRenderable } from "../renderables/TextNode"
-import { ScrollBoxRenderable } from "../renderables/ScrollBox"
-import { InputRenderable, InputRenderableEvents } from "../renderables/Input"
-import { setupCommonDemoKeys } from "./lib/standalone-keys"
+import {
+  CliRenderer,
+  createCliRenderer,
+  TextRenderable,
+  BoxRenderable,
+  type MouseEvent,
+  t,
+  fg,
+  bold,
+} from "../index.js"
+import { TextNodeRenderable } from "../renderables/TextNode.js"
+import { ScrollBoxRenderable } from "../renderables/ScrollBox.js"
+import { InputRenderable, InputRenderableEvents } from "../renderables/Input.js"
+import { setupCommonDemoKeys } from "./lib/standalone-keys.js"
 import { readFile, stat } from "node:fs/promises"
 
 let mainContainer: BoxRenderable | null = null

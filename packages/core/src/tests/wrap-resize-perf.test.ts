@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test"
-import { TextBuffer } from "../text-buffer"
-import { TextBufferView } from "../text-buffer-view"
-import { stringToStyledText } from "../lib/styled-text"
+import { TextBuffer } from "../text-buffer.js"
+import { TextBufferView } from "../text-buffer-view.js"
+import { stringToStyledText } from "../lib/styled-text.js"
 
 /**
  * These tests verify algorithmic complexity rather than absolute performance.

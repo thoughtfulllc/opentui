@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test"
-import { TerminalPalette } from "./terminal-palette"
+import { TerminalPalette } from "./terminal-palette.js"
 import { EventEmitter } from "events"
 import { Buffer } from "node:buffer"
 import { ManualClock } from "../testing/manual-clock"
