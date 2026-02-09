@@ -594,8 +594,8 @@ pub const OptimizedBuffer = struct {
         return self.respectAlpha;
     }
 
-    pub fn gain(self: *OptimizedBuffer, triplets: []const f32) void {
-        if (triplets.len < 3) return;
+    pub fn gain(self: *OptimizedBuffer, triplets: []const f32, strength: f32) void {
+        if (strength == 0 or triplets.len < 3) return;
 
         const width = self.width;
         const height = self.height;
@@ -609,10 +609,15 @@ pub const OptimizedBuffer = struct {
         while (i < len) : (i += 3) {
             const x_f = triplets[i];
             const y_f = triplets[i + 1];
-            const factor = triplets[i + 2];
+            const base_att = triplets[i + 2];
 
-            if (!math.isFinite(x_f) or !math.isFinite(y_f)) continue;
+            if (!math.isFinite(x_f) or !math.isFinite(y_f) or !math.isFinite(base_att)) continue;
             if (x_f < 0 or y_f < 0 or x_f >= width_f or y_f >= height_f) continue;
+            if (base_att <= 0) continue;
+
+            const attenuation = base_att * strength;
+            if (attenuation <= 0) continue;
+            const factor: f32 = if (attenuation >= 1.0) 0.0 else 1.0 - attenuation;
 
             const x: u32 = @intFromFloat(x_f);
             const y: u32 = @intFromFloat(y_f);

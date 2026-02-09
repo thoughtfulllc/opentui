@@ -240,14 +240,14 @@ export class OptimizedBuffer {
     this.lib.bufferSetCellWithAlphaBlending(this.bufferPtr, x, y, char, fg, bg, attributes)
   }
 
-  public gain(cells: Array<[number, number, number]> | Float32Array): void {
+  public gain(cells: Array<[number, number, number]> | Float32Array, strength: number = 1): void {
     this.guard()
-    if (cells.length === 0) return
+    if (strength === 0 || cells.length === 0) return
 
     if (cells instanceof Float32Array) {
       const tripletCount = Math.floor(cells.length / 3)
       if (tripletCount === 0) return
-      this.lib.bufferGain(this.bufferPtr, ptr(cells), tripletCount)
+      this.lib.bufferGain(this.bufferPtr, ptr(cells), tripletCount, strength)
       return
     }
 
@@ -268,7 +268,7 @@ export class OptimizedBuffer {
       triplets[base + 2] = factor
     }
 
-    this.lib.bufferGain(this.bufferPtr, ptr(triplets), tripletCount)
+    this.lib.bufferGain(this.bufferPtr, ptr(triplets), tripletCount, strength)
   }
 
   public drawText(
