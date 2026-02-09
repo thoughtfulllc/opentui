@@ -437,8 +437,8 @@ export class DistortionEffect {
  */
 export class VignetteEffect {
   private _strength: number
-  // Stores the base attenuation (0 at center, 1 at max distance) for each pixel
-  private precomputedBaseAttenuation: Float32Array | null = null
+  // Stores packed triplets [x, y, baseAttenuation] per pixel
+  private precomputedAttenuationTriplets: Float32Array | null = null
   private cachedWidth: number = -1
   private cachedHeight: number = -1
 
@@ -455,11 +455,12 @@ export class VignetteEffect {
   }
 
   private _computeFactors(width: number, height: number): void {
-    this.precomputedBaseAttenuation = new Float32Array(width * height)
+    this.precomputedAttenuationTriplets = new Float32Array(width * height * 3)
     const centerX = width / 2
     const centerY = height / 2
     const maxDistSq = centerX * centerX + centerY * centerY
     const safeMaxDistSq = maxDistSq === 0 ? 1 : maxDistSq // Avoid division by zero
+    let i = 0
 
     for (let y = 0; y < height; y++) {
       const dy = y - centerY
@@ -469,8 +470,9 @@ export class VignetteEffect {
         const distSq = dx * dx + dySq
         // Calculate base attenuation (0 to 1 based on distance)
         const baseAttenuation = Math.min(1, distSq / safeMaxDistSq)
-        const index = y * width + x
-        this.precomputedBaseAttenuation[index] = baseAttenuation
+        this.precomputedAttenuationTriplets[i++] = x
+        this.precomputedAttenuationTriplets[i++] = y
+        this.precomputedAttenuationTriplets[i++] = baseAttenuation
       }
     }
     this.cachedWidth = width
@@ -483,28 +485,13 @@ export class VignetteEffect {
   public apply(buffer: OptimizedBuffer): void {
     const width = buffer.width
     const height = buffer.height
-    const buf = buffer.buffers
-    const size = width * height
 
     // Recompute base attenuation if dimensions changed or factors haven't been computed yet
-    if (width !== this.cachedWidth || height !== this.cachedHeight || !this.precomputedBaseAttenuation) {
+    if (width !== this.cachedWidth || height !== this.cachedHeight || !this.precomputedAttenuationTriplets) {
       this._computeFactors(width, height)
     }
 
-    // Apply effect using precomputed base and current strength
-    for (let i = 0; i < size; i++) {
-      // Calculate the final factor dynamically
-      const factor = Math.max(0, 1 - this.precomputedBaseAttenuation![i] * this._strength)
-      const colorIndex = i * 4
-
-      buf.fg[colorIndex] *= factor
-      buf.fg[colorIndex + 1] *= factor
-      buf.fg[colorIndex + 2] *= factor
-
-      buf.bg[colorIndex] *= factor
-      buf.bg[colorIndex + 1] *= factor
-      buf.bg[colorIndex + 2] *= factor
-    }
+    buffer.gain(this.precomputedAttenuationTriplets!, this._strength)
   }
 }
 
