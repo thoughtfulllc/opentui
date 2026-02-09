@@ -241,22 +241,18 @@ export class OptimizedBuffer {
 
   public gain(cells: Array<[number, number, number]>): void {
     this.guard()
-    const { fg, bg } = this.buffers
-    const width = this._width
-    const height = this._height
+    if (cells.length === 0) return
 
-    for (const [x, y, factor] of cells) {
-      if (x < 0 || y < 0 || x >= width || y >= height) continue
-      const colorIndex = (y * width + x) * 4
-
-      fg[colorIndex] *= factor
-      fg[colorIndex + 1] *= factor
-      fg[colorIndex + 2] *= factor
-
-      bg[colorIndex] *= factor
-      bg[colorIndex + 1] *= factor
-      bg[colorIndex + 2] *= factor
+    const triplets = new Float32Array(cells.length * 3)
+    for (let i = 0; i < cells.length; i++) {
+      const [x, y, factor] = cells[i]
+      const base = i * 3
+      triplets[base] = x
+      triplets[base + 1] = y
+      triplets[base + 2] = factor
     }
+
+    this.lib.bufferGain(this.bufferPtr, ptr(triplets), cells.length)
   }
 
   public drawText(

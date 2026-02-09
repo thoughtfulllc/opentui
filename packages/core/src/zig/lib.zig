@@ -400,6 +400,13 @@ export fn bufferFillRect(bufferPtr: *buffer.OptimizedBuffer, x: u32, y: u32, wid
     bufferPtr.fillRect(x, y, width, height, rgbaBg) catch {};
 }
 
+export fn bufferGain(bufferPtr: *buffer.OptimizedBuffer, tripletsPtr: [*]const f32, tripletCount: usize) void {
+    if (tripletCount == 0) return;
+    const len = tripletCount * 3;
+    const triplets = tripletsPtr[0..len];
+    bufferPtr.gain(triplets);
+}
+
 export fn bufferDrawPackedBuffer(bufferPtr: *buffer.OptimizedBuffer, data: [*]const u8, dataLen: usize, posX: u32, posY: u32, terminalWidthCells: u32, terminalHeightCells: u32) void {
     bufferPtr.drawPackedBuffer(data, dataLen, posX, posY, terminalWidthCells, terminalHeightCells);
 }

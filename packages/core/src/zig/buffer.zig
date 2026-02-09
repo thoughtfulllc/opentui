@@ -594,6 +594,40 @@ pub const OptimizedBuffer = struct {
         return self.respectAlpha;
     }
 
+    pub fn gain(self: *OptimizedBuffer, triplets: []const f32) void {
+        if (triplets.len < 3) return;
+
+        const width = self.width;
+        const height = self.height;
+        const width_f: f32 = @floatFromInt(width);
+        const height_f: f32 = @floatFromInt(height);
+        const fg = self.buffer.fg;
+        const bg = self.buffer.bg;
+
+        const len = triplets.len - (triplets.len % 3);
+        var i: usize = 0;
+        while (i < len) : (i += 3) {
+            const x_f = triplets[i];
+            const y_f = triplets[i + 1];
+            const factor = triplets[i + 2];
+
+            if (!math.isFinite(x_f) or !math.isFinite(y_f)) continue;
+            if (x_f < 0 or y_f < 0 or x_f >= width_f or y_f >= height_f) continue;
+
+            const x: u32 = @intFromFloat(x_f);
+            const y: u32 = @intFromFloat(y_f);
+            const index = y * width + x;
+
+            fg[index][0] *= factor;
+            fg[index][1] *= factor;
+            fg[index][2] *= factor;
+
+            bg[index][0] *= factor;
+            bg[index][1] *= factor;
+            bg[index][2] *= factor;
+        }
+    }
+
     pub fn getId(self: *const OptimizedBuffer) []const u8 {
         return self.id;
     }
