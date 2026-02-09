@@ -239,6 +239,26 @@ export class OptimizedBuffer {
     this.lib.bufferSetCellWithAlphaBlending(this.bufferPtr, x, y, char, fg, bg, attributes)
   }
 
+  public gain(cells: Array<[number, number, number]>): void {
+    this.guard()
+    const { fg, bg } = this.buffers
+    const width = this._width
+    const height = this._height
+
+    for (const [x, y, factor] of cells) {
+      if (x < 0 || y < 0 || x >= width || y >= height) continue
+      const colorIndex = (y * width + x) * 4
+
+      fg[colorIndex] *= factor
+      fg[colorIndex + 1] *= factor
+      fg[colorIndex + 2] *= factor
+
+      bg[colorIndex] *= factor
+      bg[colorIndex + 1] *= factor
+      bg[colorIndex + 2] *= factor
+    }
+  }
+
   public drawText(
     text: string,
     x: number,
