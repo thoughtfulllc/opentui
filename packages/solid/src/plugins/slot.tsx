@@ -1,4 +1,4 @@
-import { createRendererScopedSlotRegistry, SlotRegistry } from "@opentui/core"
+import { createSlotRegistry, SlotRegistry } from "@opentui/core"
 import type { CliRenderer, HostContext, Plugin } from "@opentui/core"
 import { createMemo, createSignal, onCleanup, splitProps, type JSX } from "solid-js"
 
@@ -26,7 +26,7 @@ export function createSolidSlotRegistry<TSlots extends SlotMap, TContext extends
   context: TContext,
   key: string = "solid:slot-registry",
 ): SlotRegistry<JSX.Element, TSlots, TContext> {
-  return createRendererScopedSlotRegistry<JSX.Element, TSlots, TContext>(renderer, key, context)
+  return createSlotRegistry<JSX.Element, TSlots, TContext>(renderer, key, context)
 }
 
 export function createSlot<TSlots extends SlotMap, TContext extends HostContext = HostContext>(
