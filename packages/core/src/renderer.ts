@@ -89,7 +89,7 @@ export type SlotRenderer<TNode, TProps, TContext extends HostContext = HostConte
   props: TProps,
 ) => TNode
 
-export interface Plugin<TNode, TSlots extends Record<string, unknown>, TContext extends HostContext = HostContext> {
+export interface Plugin<TNode, TSlots extends object, TContext extends HostContext = HostContext> {
   id: string
   order?: number
   setup?: (ctx: Readonly<TContext>) => void
@@ -99,7 +99,7 @@ export interface Plugin<TNode, TSlots extends Record<string, unknown>, TContext 
   }
 }
 
-interface RegisteredPlugin<TNode, TSlots extends Record<string, unknown>, TContext extends HostContext = HostContext> {
+interface RegisteredPlugin<TNode, TSlots extends object, TContext extends HostContext = HostContext> {
   plugin: Plugin<TNode, TSlots, TContext>
   registrationOrder: number
 }
@@ -109,7 +109,7 @@ export interface ResolvedSlotRenderer<TNode, TProps, TContext extends HostContex
   renderer: SlotRenderer<TNode, TProps, TContext>
 }
 
-export class SlotRegistry<TNode, TSlots extends Record<string, unknown>, TContext extends HostContext = HostContext> {
+export class SlotRegistry<TNode, TSlots extends object, TContext extends HostContext = HostContext> {
   private plugins: RegisteredPlugin<TNode, TSlots, TContext>[] = []
   private listeners: Set<() => void> = new Set()
   private registrationOrder = 0
@@ -256,6 +256,50 @@ export class SlotRegistry<TNode, TSlots extends Record<string, unknown>, TContex
       listener()
     }
   }
+}
+
+const rendererScopedSlotRegistries = new WeakMap<CliRenderer, Map<string, SlotRegistry<any, any, any>>>()
+
+function getRendererScopedSlotRegistryStore(renderer: CliRenderer): Map<string, SlotRegistry<any, any, any>> {
+  const existingStore = rendererScopedSlotRegistries.get(renderer)
+  if (existingStore) {
+    return existingStore
+  }
+
+  const createdStore = new Map<string, SlotRegistry<any, any, any>>()
+  rendererScopedSlotRegistries.set(renderer, createdStore)
+
+  renderer.once(CliRenderEvents.DESTROY, () => {
+    for (const registry of createdStore.values()) {
+      try {
+        registry.clear()
+      } catch (error) {
+        console.error("Error disposing renderer-scoped slot registry:", error)
+      }
+    }
+
+    createdStore.clear()
+    rendererScopedSlotRegistries.delete(renderer)
+  })
+
+  return createdStore
+}
+
+export function createRendererScopedSlotRegistry<
+  TNode,
+  TSlots extends object,
+  TContext extends HostContext = HostContext,
+>(renderer: CliRenderer, key: string, context: TContext): SlotRegistry<TNode, TSlots, TContext> {
+  const store = getRendererScopedSlotRegistryStore(renderer)
+  const existing = store.get(key)
+
+  if (existing) {
+    return existing as SlotRegistry<TNode, TSlots, TContext>
+  }
+
+  const created = new SlotRegistry<TNode, TSlots, TContext>(context)
+  store.set(key, created as SlotRegistry<any, any, any>)
+  return created
 }
 
 export interface CliRendererConfig {
