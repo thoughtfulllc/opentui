@@ -104,6 +104,11 @@ interface RegisteredPlugin<TNode, TSlots extends Record<string, unknown>, TConte
   registrationOrder: number
 }
 
+export interface ResolvedSlotRenderer<TNode, TProps, TContext extends HostContext = HostContext> {
+  id: string
+  renderer: SlotRenderer<TNode, TProps, TContext>
+}
+
 export class SlotRegistry<TNode, TSlots extends Record<string, unknown>, TContext extends HostContext = HostContext> {
   private plugins: RegisteredPlugin<TNode, TSlots, TContext>[] = []
   private listeners: Set<() => void> = new Set()
@@ -210,7 +215,27 @@ export class SlotRegistry<TNode, TSlots extends Record<string, unknown>, TContex
   }
 
   public resolve<K extends keyof TSlots>(slot: K): Array<SlotRenderer<TNode, TSlots[K], TContext>> {
-    const sortedPlugins = [...this.plugins].sort((left, right) => {
+    return this.resolveEntries(slot).map((entry) => entry.renderer)
+  }
+
+  public resolveEntries<K extends keyof TSlots>(slot: K): Array<ResolvedSlotRenderer<TNode, TSlots[K], TContext>> {
+    const slotRenderers: Array<ResolvedSlotRenderer<TNode, TSlots[K], TContext>> = []
+
+    for (const entry of this.getSortedPlugins()) {
+      const renderer = entry.plugin.slots[slot]
+      if (renderer) {
+        slotRenderers.push({
+          id: entry.plugin.id,
+          renderer: renderer as SlotRenderer<TNode, TSlots[K], TContext>,
+        })
+      }
+    }
+
+    return slotRenderers
+  }
+
+  private getSortedPlugins(): RegisteredPlugin<TNode, TSlots, TContext>[] {
+    return [...this.plugins].sort((left, right) => {
       const leftOrder = left.plugin.order ?? 0
       const rightOrder = right.plugin.order ?? 0
 
@@ -224,16 +249,6 @@ export class SlotRegistry<TNode, TSlots extends Record<string, unknown>, TContex
 
       return left.plugin.id.localeCompare(right.plugin.id)
     })
-
-    const slotRenderers: Array<SlotRenderer<TNode, TSlots[K], TContext>> = []
-    for (const entry of sortedPlugins) {
-      const renderer = entry.plugin.slots[slot]
-      if (renderer) {
-        slotRenderers.push(renderer as SlotRenderer<TNode, TSlots[K], TContext>)
-      }
-    }
-
-    return slotRenderers
   }
 
   private notifyListeners(): void {
