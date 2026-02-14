@@ -380,7 +380,7 @@ export function run(rendererInstance: CliRenderer): void {
 
   createLayout(rendererInstance)
 
-  slotRegistry = createCoreSlotRegistry<DemoSlot>({
+  slotRegistry = createCoreSlotRegistry<DemoSlot>(rendererInstance, {
     appName: "core-plugin-slots-demo",
     version: "1.0.0",
   })

@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test"
+import { createTestRenderer, type TestRendererOptions } from "@opentui/core/testing"
 import { createContext, useContext } from "react"
-import { act } from "react"
+import { act, type ReactNode } from "react"
 import { createReactSlotRegistry, createSlot, type ReactPlugin } from "../src/plugins/slot"
-import { testRender } from "../src/test-utils"
+import { createRoot, type Root } from "../src/reconciler/renderer"
 
 interface AppSlots {
   statusbar: { user: string }
@@ -14,7 +15,45 @@ const hostContext = {
   version: "1.0.0",
 }
 
-let testSetup: Awaited<ReturnType<typeof testRender>>
+let testSetup: Awaited<ReturnType<typeof createTestRenderer>>
+
+function setIsReactActEnvironment(isReactActEnvironment: boolean) {
+  // @ts-expect-error - this is a test environment
+  globalThis.IS_REACT_ACT_ENVIRONMENT = isReactActEnvironment
+}
+
+async function setupSlotTest(
+  createNode: (registry: ReturnType<typeof createReactSlotRegistry<AppSlots>>) => ReactNode,
+  options: TestRendererOptions,
+) {
+  let root: Root | null = null
+  setIsReactActEnvironment(true)
+
+  const setup = await createTestRenderer({
+    ...options,
+    onDestroy() {
+      act(() => {
+        if (root) {
+          root.unmount()
+          root = null
+        }
+      })
+      options.onDestroy?.()
+      setIsReactActEnvironment(false)
+    },
+  })
+
+  const registry = createReactSlotRegistry<AppSlots>(setup.renderer, hostContext)
+  root = createRoot(setup.renderer)
+
+  act(() => {
+    if (root) {
+      root.render(createNode(registry))
+    }
+  })
+
+  return { setup, registry }
+}
 
 describe("React Slot System", () => {
   beforeEach(() => {
@@ -30,15 +69,18 @@ describe("React Slot System", () => {
   })
 
   it("renders fallback content when no plugin matches", async () => {
-    const registry = createReactSlotRegistry<AppSlots>(hostContext)
-    const Slot = createSlot(registry)
-
-    testSetup = await testRender(
-      <Slot name="statusbar" user="sam">
-        <text>fallback-only</text>
-      </Slot>,
+    const { setup } = await setupSlotTest(
+      (registry) => {
+        const Slot = createSlot(registry)
+        return (
+          <Slot name="statusbar" user="sam">
+            <text>fallback-only</text>
+          </Slot>
+        )
+      },
       { width: 50, height: 6 },
     )
+    testSetup = setup
 
     await testSetup.renderOnce()
     const frame = testSetup.captureCharFrame()
@@ -47,9 +89,6 @@ describe("React Slot System", () => {
   })
 
   it("appends plugin output after fallback content by default", async () => {
-    const registry = createReactSlotRegistry<AppSlots>(hostContext)
-    const Slot = createSlot(registry)
-
     const plugin: ReactPlugin<AppSlots> = {
       id: "append-plugin",
       slots: {
@@ -59,14 +98,21 @@ describe("React Slot System", () => {
       },
     }
 
-    registry.register(plugin)
-
-    testSetup = await testRender(
-      <Slot name="statusbar" user="ava">
-        <text>base-content</text>
-      </Slot>,
+    const { setup, registry } = await setupSlotTest(
+      (slotRegistry) => {
+        slotRegistry.register(plugin)
+        const Slot = createSlot(slotRegistry)
+        return (
+          <Slot name="statusbar" user="ava">
+            <text>base-content</text>
+          </Slot>
+        )
+      },
       { width: 60, height: 6 },
     )
+    testSetup = setup
+
+    await testSetup.renderOnce()
 
     await testSetup.renderOnce()
     const frame = testSetup.captureCharFrame()
@@ -76,35 +122,38 @@ describe("React Slot System", () => {
   })
 
   it("uses deterministic replace behavior with ordered plugins", async () => {
-    const registry = createReactSlotRegistry<AppSlots>(hostContext)
-    const Slot = createSlot(registry)
+    const { setup, registry } = await setupSlotTest(
+      (slotRegistry) => {
+        slotRegistry.register({
+          id: "late",
+          order: 10,
+          slots: {
+            statusbar() {
+              return <text>late-plugin</text>
+            },
+          },
+        })
 
-    registry.register({
-      id: "late",
-      order: 10,
-      slots: {
-        statusbar() {
-          return <text>late-plugin</text>
-        },
+        slotRegistry.register({
+          id: "early",
+          order: 0,
+          slots: {
+            statusbar() {
+              return <text>early-plugin</text>
+            },
+          },
+        })
+
+        const Slot = createSlot(slotRegistry)
+        return (
+          <Slot name="statusbar" user="lee" mode="replace">
+            <text>replace-fallback</text>
+          </Slot>
+        )
       },
-    })
-
-    registry.register({
-      id: "early",
-      order: 0,
-      slots: {
-        statusbar() {
-          return <text>early-plugin</text>
-        },
-      },
-    })
-
-    testSetup = await testRender(
-      <Slot name="statusbar" user="lee" mode="replace">
-        <text>replace-fallback</text>
-      </Slot>,
       { width: 40, height: 6 },
     )
+    testSetup = setup
 
     await testSetup.renderOnce()
     const frame = testSetup.captureCharFrame()
@@ -115,8 +164,18 @@ describe("React Slot System", () => {
   })
 
   it("reacts to plugin registration and unregistering", async () => {
-    const registry = createReactSlotRegistry<AppSlots>(hostContext)
-    const Slot = createSlot(registry)
+    const { setup, registry } = await setupSlotTest(
+      (slotRegistry) => {
+        const Slot = createSlot(slotRegistry)
+        return (
+          <Slot name="statusbar" user="kai" mode="replace">
+            <text>dynamic-fallback</text>
+          </Slot>
+        )
+      },
+      { width: 40, height: 6 },
+    )
+    testSetup = setup
 
     const plugin: ReactPlugin<AppSlots> = {
       id: "dynamic-plugin",
@@ -126,13 +185,6 @@ describe("React Slot System", () => {
         },
       },
     }
-
-    testSetup = await testRender(
-      <Slot name="statusbar" user="kai" mode="replace">
-        <text>dynamic-fallback</text>
-      </Slot>,
-      { width: 40, height: 6 },
-    )
 
     await testSetup.renderOnce()
     expect(testSetup.captureCharFrame()).toContain("dynamic-fallback")
@@ -156,29 +208,33 @@ describe("React Slot System", () => {
 
   it("renders plugin nodes within provider context", async () => {
     const ValueContext = createContext("missing")
-    const registry = createReactSlotRegistry<AppSlots>(hostContext)
-    const Slot = createSlot(registry)
 
     function ContextReader() {
       const value = useContext(ValueContext)
       return <text>{`ctx:${value}`}</text>
     }
 
-    registry.register({
-      id: "context-plugin",
-      slots: {
-        statusbar() {
-          return <ContextReader />
-        },
-      },
-    })
+    const { setup, registry } = await setupSlotTest(
+      (slotRegistry) => {
+        slotRegistry.register({
+          id: "context-plugin",
+          slots: {
+            statusbar() {
+              return <ContextReader />
+            },
+          },
+        })
 
-    testSetup = await testRender(
-      <ValueContext.Provider value="inside-provider">
-        <Slot name="statusbar" user="max" />
-      </ValueContext.Provider>,
+        const Slot = createSlot(slotRegistry)
+        return (
+          <ValueContext.Provider value="inside-provider">
+            <Slot name="statusbar" user="max" />
+          </ValueContext.Provider>
+        )
+      },
       { width: 60, height: 6 },
     )
+    testSetup = setup
 
     await testSetup.renderOnce()
     const frame = testSetup.captureCharFrame()

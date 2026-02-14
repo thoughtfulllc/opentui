@@ -1,5 +1,12 @@
 import { describe, expect, test } from "bun:test"
-import { SlotRegistry, type Plugin } from "../renderer"
+import { EventEmitter } from "events"
+import {
+  CliRenderEvents,
+  createRendererScopedSlotRegistry,
+  SlotRegistry,
+  type CliRenderer,
+  type Plugin,
+} from "../renderer"
 
 interface AppSlots {
   statusbar: { user: string }
@@ -198,5 +205,44 @@ describe("SlotRegistry", () => {
     const entries = registry.resolveEntries("statusbar")
     expect(entries.map((entry) => entry.id)).toEqual(["plugin-a", "plugin-b"])
     expect(entries.map((entry) => entry.renderer(hostContext, { user: "sam" }))).toEqual(["a", "b"])
+  })
+
+  test("renderer-scoped registries are isolated per renderer and key", () => {
+    const rendererA = new EventEmitter() as CliRenderer
+    const rendererB = new EventEmitter() as CliRenderer
+
+    const aFirst = createRendererScopedSlotRegistry<string, AppSlots>(rendererA, "demo-key", hostContext)
+    const aSecond = createRendererScopedSlotRegistry<string, AppSlots>(rendererA, "demo-key", hostContext)
+    const aOtherKey = createRendererScopedSlotRegistry<string, AppSlots>(rendererA, "other-key", hostContext)
+    const bFirst = createRendererScopedSlotRegistry<string, AppSlots>(rendererB, "demo-key", hostContext)
+
+    expect(aFirst).toBe(aSecond)
+    expect(aFirst).not.toBe(aOtherKey)
+    expect(aFirst).not.toBe(bFirst)
+  })
+
+  test("renderer-scoped registry clears plugins on renderer destroy", () => {
+    const renderer = new EventEmitter() as CliRenderer
+    const disposeCalls: string[] = []
+
+    const registry = createRendererScopedSlotRegistry<string, AppSlots>(renderer, "cleanup-key", hostContext)
+    registry.register({
+      id: "cleanup-plugin",
+      dispose() {
+        disposeCalls.push("disposed")
+      },
+      slots: {
+        statusbar() {
+          return "cleanup"
+        },
+      },
+    })
+
+    renderer.emit(CliRenderEvents.DESTROY)
+
+    expect(disposeCalls).toEqual(["disposed"])
+
+    const recreated = createRendererScopedSlotRegistry<string, AppSlots>(renderer, "cleanup-key", hostContext)
+    expect(recreated).not.toBe(registry)
   })
 })

@@ -25,8 +25,16 @@ afterEach(() => {
 })
 
 describe("Core slot binding", () => {
+  test("creates renderer-scoped registry by default", () => {
+    const first = createCoreSlotRegistry<AppSlot>(renderer, { appName: "core-only", version: "1.0.0" })
+    const second = createCoreSlotRegistry<AppSlot>(renderer, { appName: "other", version: "2.0.0" })
+
+    expect(first).toBe(second)
+    expect(first.context.appName).toBe("core-only")
+  })
+
   test("uses fallback when no plugin is registered", () => {
-    const registry = createCoreSlotRegistry<AppSlot>({ appName: "core-only", version: "1.0.0" })
+    const registry = createCoreSlotRegistry<AppSlot>(renderer, { appName: "core-only", version: "1.0.0" })
     let fallbackCreateCount = 0
 
     const handle = mountCoreSlot({
@@ -51,7 +59,7 @@ describe("Core slot binding", () => {
   })
 
   test("creates plugin node once and reuses it on refresh", () => {
-    const registry = createCoreSlotRegistry<AppSlot>({ appName: "core-only", version: "1.0.0" })
+    const registry = createCoreSlotRegistry<AppSlot>(renderer, { appName: "core-only", version: "1.0.0" })
     let pluginCreateCount = 0
     let pluginNode: TestRenderable | null = null
 
@@ -85,7 +93,7 @@ describe("Core slot binding", () => {
   })
 
   test("replace mode swaps active plugin without recreating previous active instance", () => {
-    const registry = createCoreSlotRegistry<AppSlot>({ appName: "core-only", version: "1.0.0" })
+    const registry = createCoreSlotRegistry<AppSlot>(renderer, { appName: "core-only", version: "1.0.0" })
     let pluginACreateCount = 0
     let pluginBCreateCount = 0
 
@@ -138,7 +146,7 @@ describe("Core slot binding", () => {
   })
 
   test("unregister removes and destroys plugin node while keeping fallback", () => {
-    const registry = createCoreSlotRegistry<AppSlot>({ appName: "core-only", version: "1.0.0" })
+    const registry = createCoreSlotRegistry<AppSlot>(renderer, { appName: "core-only", version: "1.0.0" })
     let fallbackCreateCount = 0
     let pluginNode: TestRenderable | null = null
 
@@ -175,7 +183,7 @@ describe("Core slot binding", () => {
   })
 
   test("dispose clears mounted nodes and unsubscribes from registry updates", () => {
-    const registry = createCoreSlotRegistry<AppSlot>({ appName: "core-only", version: "1.0.0" })
+    const registry = createCoreSlotRegistry<AppSlot>(renderer, { appName: "core-only", version: "1.0.0" })
     let fallbackNode: TestRenderable | null = null
     let pluginNode: TestRenderable | null = null
 
@@ -220,7 +228,7 @@ describe("Core slot binding", () => {
   })
 
   test("throws for async plugin renderers", () => {
-    const registry = createCoreSlotRegistry<AppSlot>({ appName: "core-only", version: "1.0.0" })
+    const registry = createCoreSlotRegistry<AppSlot>(renderer, { appName: "core-only", version: "1.0.0" })
 
     registerCorePlugin(registry, {
       id: "plugin-async",
