@@ -1,5 +1,5 @@
 import { BaseRenderable } from "../Renderable"
-import { createRendererScopedSlotRegistry, SlotRegistry } from "../renderer"
+import { createSlotRegistry, SlotRegistry } from "../renderer"
 import type { CliRenderer, HostContext, Plugin } from "../renderer"
 
 export type CoreSlotMode = "append" | "replace"
@@ -112,7 +112,7 @@ export function createCoreSlotRegistry<TSlotName extends string, TContext extend
   context: TContext,
   key: string = "core:slot-registry",
 ): CoreSlotRegistry<TSlotName, TContext> {
-  return createRendererScopedSlotRegistry<BaseRenderable, CoreSlotProps<TSlotName>, TContext>(renderer, key, context)
+  return createSlotRegistry<BaseRenderable, CoreSlotProps<TSlotName>, TContext>(renderer, key, context)
 }
 
 export function registerCorePlugin<TSlotName extends string, TContext extends HostContext = HostContext>(

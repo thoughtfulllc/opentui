@@ -1,4 +1,4 @@
-import { createRendererScopedSlotRegistry, SlotRegistry } from "@opentui/core"
+import { createSlotRegistry, SlotRegistry } from "@opentui/core"
 import type { CliRenderer, HostContext, Plugin } from "@opentui/core"
 import { Fragment, useEffect, useMemo, useState } from "react"
 import type { ReactNode } from "react"
@@ -27,7 +27,7 @@ export function createReactSlotRegistry<TSlots extends SlotMap, TContext extends
   context: TContext,
   key: string = "react:slot-registry",
 ): SlotRegistry<ReactNode, TSlots, TContext> {
-  return createRendererScopedSlotRegistry<ReactNode, TSlots, TContext>(renderer, key, context)
+  return createSlotRegistry<ReactNode, TSlots, TContext>(renderer, key, context)
 }
 
 function getSlotProps<TSlots extends SlotMap, K extends keyof TSlots>(props: ReactSlotProps<TSlots, K>): TSlots[K] {
