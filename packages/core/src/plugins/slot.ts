@@ -1,6 +1,6 @@
 import { BaseRenderable } from "../Renderable"
-import { SlotRegistry } from "../renderer"
-import type { HostContext, Plugin } from "../renderer"
+import { createRendererScopedSlotRegistry, SlotRegistry } from "../renderer"
+import type { CliRenderer, HostContext, Plugin } from "../renderer"
 
 export type CoreSlotMode = "append" | "replace"
 
@@ -108,9 +108,11 @@ function destroyNode(node: BaseRenderable): void {
 }
 
 export function createCoreSlotRegistry<TSlotName extends string, TContext extends HostContext = HostContext>(
+  renderer: CliRenderer,
   context: TContext,
+  key: string = "core:slot-registry",
 ): CoreSlotRegistry<TSlotName, TContext> {
-  return new SlotRegistry<BaseRenderable, CoreSlotProps<TSlotName>, TContext>(context)
+  return createRendererScopedSlotRegistry<BaseRenderable, CoreSlotProps<TSlotName>, TContext>(renderer, key, context)
 }
 
 export function registerCorePlugin<TSlotName extends string, TContext extends HostContext = HostContext>(

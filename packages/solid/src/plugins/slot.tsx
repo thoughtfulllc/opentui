@@ -1,5 +1,5 @@
-import { SlotRegistry } from "@opentui/core"
-import type { HostContext, Plugin } from "@opentui/core"
+import { createRendererScopedSlotRegistry, SlotRegistry } from "@opentui/core"
+import type { CliRenderer, HostContext, Plugin } from "@opentui/core"
 import { createMemo, createSignal, onCleanup, splitProps, type JSX } from "solid-js"
 
 export type SlotMode = "replace" | "append"
@@ -22,9 +22,11 @@ export type SolidSlotComponent<TSlots extends SlotMap> = <K extends keyof TSlots
 ) => JSX.Element
 
 export function createSolidSlotRegistry<TSlots extends SlotMap, TContext extends HostContext = HostContext>(
+  renderer: CliRenderer,
   context: TContext,
+  key: string = "solid:slot-registry",
 ): SlotRegistry<JSX.Element, TSlots, TContext> {
-  return new SlotRegistry<JSX.Element, TSlots, TContext>(context)
+  return createRendererScopedSlotRegistry<JSX.Element, TSlots, TContext>(renderer, key, context)
 }
 
 export function createSlot<TSlots extends SlotMap, TContext extends HostContext = HostContext>(
