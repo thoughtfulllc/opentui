@@ -171,4 +171,32 @@ describe("SlotRegistry", () => {
     expect(statusbarRenderer(hostContext, { user: "ava" })).toBe("status:ava")
     expect(sidebarRenderer(hostContext, { items: ["a", "b"] })).toBe("sidebar:a,b")
   })
+
+  test("resolveEntries returns sorted plugin ids with renderers", () => {
+    const registry = new SlotRegistry<TestNode, AppSlots>(hostContext)
+
+    registry.register({
+      id: "plugin-b",
+      order: 2,
+      slots: {
+        statusbar() {
+          return "b"
+        },
+      },
+    })
+
+    registry.register({
+      id: "plugin-a",
+      order: 1,
+      slots: {
+        statusbar() {
+          return "a"
+        },
+      },
+    })
+
+    const entries = registry.resolveEntries("statusbar")
+    expect(entries.map((entry) => entry.id)).toEqual(["plugin-a", "plugin-b"])
+    expect(entries.map((entry) => entry.renderer(hostContext, { user: "sam" }))).toEqual(["a", "b"])
+  })
 })
