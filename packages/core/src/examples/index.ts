@@ -53,6 +53,7 @@ import * as vnodeCompositionDemo from "./vnode-composition-demo"
 import * as hastSyntaxHighlightingExample from "./hast-syntax-highlighting-demo"
 import * as codeDemo from "./code-demo"
 import * as liveStateExample from "./live-state-demo"
+import * as corePluginSlotsDemo from "./core-plugin-slots-demo"
 import * as fullUnicodeExample from "./full-unicode-demo"
 import * as textNodeDemo from "./text-node-demo"
 import * as textWrapExample from "./text-wrap"
@@ -242,6 +243,12 @@ const examples: Example[] = [
     description: "Test automatic renderer lifecycle management with live renderables",
     run: liveStateExample.run,
     destroy: liveStateExample.destroy,
+  },
+  {
+    name: "Core Plugin Slots Demo",
+    description: "Framework-free plugin slots with cached renderables and deterministic ordering",
+    run: corePluginSlotsDemo.run,
+    destroy: corePluginSlotsDemo.destroy,
   },
   {
     name: "Layout System Demo",
