@@ -406,6 +406,7 @@ export function run(rendererInstance: CliRenderer): void {
     registry: slotRegistry,
     name: "sidebar",
     mount: sidebarSlotMount,
+    mode: "replace",
     fallback: () =>
       new TextRenderable(rendererInstance, {
         id: "sidebar-fallback",
