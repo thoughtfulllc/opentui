@@ -111,9 +111,8 @@ function destroyNode(node: BaseRenderable): void {
 export function createCoreSlotRegistry<TSlotName extends string, TContext extends PluginContext = PluginContext>(
   renderer: CliRenderer,
   context: TContext,
-  key: string = "core:slot-registry",
 ): CoreSlotRegistry<TSlotName, TContext> {
-  return createSlotRegistry<BaseRenderable, CoreSlotProps<TSlotName>, TContext>(renderer, key, context)
+  return createSlotRegistry<BaseRenderable, CoreSlotProps<TSlotName>, TContext>(renderer, "core:slot-registry", context)
 }
 
 export function registerCorePlugin<TSlotName extends string, TContext extends PluginContext = PluginContext>(
