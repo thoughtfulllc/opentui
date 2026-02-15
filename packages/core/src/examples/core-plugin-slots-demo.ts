@@ -75,8 +75,6 @@ function updateInfoPanel(): void {
     "Statusbar fallback is always shown in APPEND mode.",
     "Sidebar fallback appears only when no sidebar plugin is active.",
   ].join("\n")
-
-  renderer?.requestRender()
 }
 
 function createClockPlugin(rendererInstance: CliRenderer): CorePlugin<DemoSlot> {
@@ -94,8 +92,6 @@ function createClockPlugin(rendererInstance: CliRenderer): CorePlugin<DemoSlot> 
     if (sidebarText) {
       sidebarText.content = `Last tick: ${timestamp}`
     }
-
-    rendererInstance.requestRender()
   }
 
   return {
@@ -190,7 +186,6 @@ function createActivityPlugin(rendererInstance: CliRenderer): CorePlugin<DemoSlo
     if (activityText) {
       activityText.content = `Activity${pulse[phase]}`
     }
-    rendererInstance.requestRender()
   }
 
   return {
