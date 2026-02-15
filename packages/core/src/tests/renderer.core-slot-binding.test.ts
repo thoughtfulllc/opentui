@@ -27,11 +27,16 @@ afterEach(() => {
 
 describe("Core slot binding", () => {
   test("creates renderer-scoped registry by default", () => {
-    const first = createCoreSlotRegistry<AppSlot, AppContext>(renderer, { appName: "core-only", version: "1.0.0" })
-    const second = createCoreSlotRegistry<AppSlot, AppContext>(renderer, { appName: "other", version: "2.0.0" })
+    const context = { appName: "core-only", version: "1.0.0" }
+    const first = createCoreSlotRegistry<AppSlot, AppContext>(renderer, context)
+    const second = createCoreSlotRegistry<AppSlot, AppContext>(renderer, context)
 
     expect(first).toBe(second)
     expect(first.context.appName).toBe("core-only")
+
+    expect(() => {
+      createCoreSlotRegistry<AppSlot, AppContext>(renderer, { appName: "other", version: "2.0.0" })
+    }).toThrow("different context")
   })
 
   test("uses fallback when no plugin is registered", () => {

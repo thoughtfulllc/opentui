@@ -191,6 +191,12 @@ export function createSlotRegistry<TNode, TSlots extends object, TContext extend
   const existing = store.get(key)
 
   if (existing) {
+    if (existing.context !== context) {
+      throw new Error(
+        `createSlotRegistry called with a different context for renderer key "${key}". Reuse the original context object.`,
+      )
+    }
+
     return existing as SlotRegistry<TNode, TSlots, TContext>
   }
 
