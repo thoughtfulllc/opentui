@@ -78,23 +78,23 @@ function asArray(value: FallbackNodes): BaseRenderable[] {
 
 function ensureValidNode(node: unknown, pluginId: string, mount: BaseRenderable): asserts node is BaseRenderable {
   if (!node) {
-    throw new Error(`Plugin \"${pluginId}\" did not return a renderable node`)
+    throw new Error(`Plugin "${pluginId}" did not return a renderable node`)
   }
 
   if (typeof (node as { then?: unknown }).then === "function") {
-    throw new Error(`Plugin \"${pluginId}\" returned an async value. Core slots require synchronous renderers.`)
+    throw new Error(`Plugin "${pluginId}" returned an async value. Core slots require synchronous renderers.`)
   }
 
   if (!(node instanceof BaseRenderable)) {
-    throw new Error(`Plugin \"${pluginId}\" must return a BaseRenderable`)
+    throw new Error(`Plugin "${pluginId}" must return a BaseRenderable`)
   }
 
   if (node === mount) {
-    throw new Error(`Plugin \"${pluginId}\" returned the slot mount container as its node`)
+    throw new Error(`Plugin "${pluginId}" returned the slot mount container as its node`)
   }
 
   if (node.parent && node.parent !== mount) {
-    throw new Error(`Plugin \"${pluginId}\" returned a renderable already attached to another parent`)
+    throw new Error(`Plugin "${pluginId}" returned a renderable already attached to another parent`)
   }
 }
 
