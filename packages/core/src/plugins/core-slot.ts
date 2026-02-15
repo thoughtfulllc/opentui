@@ -1,7 +1,7 @@
 import { BaseRenderable } from "../Renderable"
 import type { CliRenderer } from "../renderer"
-import { createSlotRegistry, SlotRegistry } from "./registry"
-import type { Plugin, PluginContext } from "./types"
+import { createSlotRegistry, SlotRegistry, type SlotRegistryOptions } from "./registry"
+import type { Plugin, PluginContext, PluginErrorEvent } from "./types"
 
 export type CoreSlotMode = "append" | "replace"
 
@@ -30,6 +30,11 @@ export interface CoreResolvedSlotRenderer<TContext extends PluginContext = Plugi
 
 type FallbackNodes = BaseRenderable | BaseRenderable[] | undefined
 
+export type CoreSlotFailurePlaceholder<TContext extends PluginContext = PluginContext> = (
+  failure: PluginErrorEvent,
+  ctx: Readonly<TContext>,
+) => FallbackNodes
+
 export interface CoreSlotMountOptions<
   TSlotName extends string,
   K extends TSlotName,
@@ -40,6 +45,7 @@ export interface CoreSlotMountOptions<
   mount: BaseRenderable
   mode?: CoreSlotMode
   fallback?: FallbackNodes | (() => FallbackNodes)
+  pluginFailurePlaceholder?: CoreSlotFailurePlaceholder<TContext>
 }
 
 export interface CoreSlotHandle {
@@ -111,8 +117,14 @@ function destroyNode(node: BaseRenderable): void {
 export function createCoreSlotRegistry<TSlotName extends string, TContext extends PluginContext = PluginContext>(
   renderer: CliRenderer,
   context: TContext,
+  options: SlotRegistryOptions = {},
 ): CoreSlotRegistry<TSlotName, TContext> {
-  return createSlotRegistry<BaseRenderable, CoreSlotProps<TSlotName>, TContext>(renderer, "core:slot-registry", context)
+  return createSlotRegistry<BaseRenderable, CoreSlotProps<TSlotName>, TContext>(
+    renderer,
+    "core:slot-registry",
+    context,
+    options,
+  )
 }
 
 export function registerCorePlugin<TSlotName extends string, TContext extends PluginContext = PluginContext>(
@@ -143,8 +155,9 @@ export function mountCoreSlot<
   let mode: CoreSlotMode = options.mode ?? "append"
   let disposed = false
   let mountedNodes: BaseRenderable[] = []
-  const pluginNodes = new Map<string, BaseRenderable>()
+  const pluginNodes = new Map<string, BaseRenderable[]>()
   let fallbackNodes: BaseRenderable[] | null = null
+  const slotName = String(options.name)
 
   const ensureFallbackNodes = (): BaseRenderable[] => {
     if (fallbackNodes !== null) {
@@ -162,14 +175,42 @@ export function mountCoreSlot<
   }
 
   const cleanupRemovedPluginNodes = (activePluginIds: Set<string>): void => {
-    for (const [pluginId, node] of pluginNodes) {
+    for (const [pluginId, nodes] of pluginNodes) {
       if (activePluginIds.has(pluginId)) {
         continue
       }
 
-      removeFromParent(node, options.mount)
-      destroyNode(node)
+      for (const node of nodes) {
+        removeFromParent(node, options.mount)
+        destroyNode(node)
+      }
       pluginNodes.delete(pluginId)
+    }
+  }
+
+  const resolvePluginFailurePlaceholder = (failure: PluginErrorEvent): BaseRenderable[] => {
+    if (!options.pluginFailurePlaceholder) {
+      return []
+    }
+
+    try {
+      const placeholderSource = options.pluginFailurePlaceholder(failure, options.registry.context)
+      const placeholderNodes = asArray(placeholderSource)
+
+      for (const node of placeholderNodes) {
+        ensureValidNode(node, `${failure.pluginId}:error-placeholder`, options.mount)
+      }
+
+      return placeholderNodes
+    } catch (placeholderError) {
+      options.registry.reportPluginError({
+        pluginId: failure.pluginId,
+        slot: slotName,
+        phase: "error_placeholder",
+        source: "core",
+        error: placeholderError,
+      })
+      return []
     }
   }
 
@@ -214,9 +255,21 @@ export function mountCoreSlot<
         continue
       }
 
-      const node = entry.renderer(options.registry.context)
-      ensureValidNode(node, entry.id, options.mount)
-      pluginNodes.set(entry.id, node)
+      try {
+        const node = entry.renderer(options.registry.context)
+        ensureValidNode(node, entry.id, options.mount)
+        pluginNodes.set(entry.id, [node])
+      } catch (error) {
+        const failure = options.registry.reportPluginError({
+          pluginId: entry.id,
+          slot: slotName,
+          phase: "render",
+          source: "core",
+          error,
+        })
+
+        pluginNodes.set(entry.id, resolvePluginFailurePlaceholder(failure))
+      }
     }
 
     const desiredNodes: BaseRenderable[] = []
@@ -226,10 +279,14 @@ export function mountCoreSlot<
     }
 
     for (const entry of activeEntries) {
-      const node = pluginNodes.get(entry.id)
-      if (node) {
-        desiredNodes.push(node)
+      const nodes = pluginNodes.get(entry.id)
+      if (nodes) {
+        desiredNodes.push(...nodes)
       }
+    }
+
+    if (mode === "replace" && desiredNodes.length === 0) {
+      desiredNodes.push(...ensureFallbackNodes())
     }
 
     reconcileMountedNodes(desiredNodes)
@@ -250,9 +307,11 @@ export function mountCoreSlot<
     }
     mountedNodes = []
 
-    for (const node of pluginNodes.values()) {
-      removeFromParent(node, options.mount)
-      destroyNode(node)
+    for (const nodes of pluginNodes.values()) {
+      for (const node of nodes) {
+        removeFromParent(node, options.mount)
+        destroyNode(node)
+      }
     }
     pluginNodes.clear()
 

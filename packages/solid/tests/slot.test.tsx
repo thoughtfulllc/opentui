@@ -247,4 +247,144 @@ describe("Solid Slot System", () => {
     const frame = testSetup.captureCharFrame()
     expect(frame).toContain("ctx:inside-provider")
   })
+
+  it("captures plugin render invocation errors and reports metadata", async () => {
+    const errors: string[] = []
+
+    const { setup } = await setupSlotTest(
+      (registry) => {
+        registry.onPluginError((event) => {
+          errors.push(`${event.pluginId}:${event.slot}:${event.phase}:${event.source}:${event.error.message}`)
+        })
+
+        registry.register({
+          id: "broken-plugin",
+          slots: {
+            statusbar() {
+              throw new Error("render failed")
+            },
+          },
+        })
+
+        const Slot = createSlot(registry)
+        return (
+          <Slot name="statusbar" user="sam">
+            <text>fallback-visible</text>
+          </Slot>
+        )
+      },
+      { width: 70, height: 6 },
+    )
+    testSetup = setup
+
+    await testSetup.renderOnce()
+    const frame = testSetup.captureCharFrame()
+
+    expect(frame).toContain("fallback-visible")
+    expect(errors).toEqual(["broken-plugin:statusbar:render:solid:render failed"])
+  })
+
+  it("replace mode falls back when plugin fails and no placeholder is configured", async () => {
+    const { setup } = await setupSlotTest(
+      (registry) => {
+        registry.register({
+          id: "broken-plugin",
+          slots: {
+            statusbar() {
+              throw new Error("render failed")
+            },
+          },
+        })
+
+        const Slot = createSlot(registry)
+        return (
+          <Slot name="statusbar" user="sam" mode="replace">
+            <text>replace-fallback-visible</text>
+          </Slot>
+        )
+      },
+      { width: 70, height: 6 },
+    )
+    testSetup = setup
+
+    await testSetup.renderOnce()
+    const frame = testSetup.captureCharFrame()
+
+    expect(frame).toContain("replace-fallback-visible")
+  })
+
+  it("catches plugin subtree errors via per-plugin boundary", async () => {
+    const errors: string[] = []
+
+    const ExplodingPluginNode = () => {
+      throw new Error("component exploded")
+    }
+
+    const { setup } = await setupSlotTest(
+      (registry) => {
+        registry.onPluginError((event) => {
+          errors.push(`${event.pluginId}:${event.slot}:${event.phase}:${event.error.message}`)
+        })
+
+        registry.register({
+          id: "exploding-component-plugin",
+          slots: {
+            statusbar() {
+              return <ExplodingPluginNode />
+            },
+          },
+        })
+
+        const Slot = createSlot(registry)
+        return (
+          <Slot name="statusbar" user="sam">
+            <text>safe-host-content</text>
+          </Slot>
+        )
+      },
+      { width: 80, height: 6 },
+    )
+    testSetup = setup
+
+    await testSetup.renderOnce()
+    const frame = testSetup.captureCharFrame()
+
+    expect(frame).toContain("safe-host-content")
+    expect(errors).toEqual(["exploding-component-plugin:statusbar:render:component exploded"])
+  })
+
+  it("renders optional plugin failure placeholder when configured", async () => {
+    const { setup } = await setupSlotTest(
+      (registry) => {
+        registry.register({
+          id: "broken-plugin",
+          slots: {
+            statusbar() {
+              throw new Error("render failed")
+            },
+          },
+        })
+
+        const Slot = createSlot(registry, {
+          pluginFailurePlaceholder(failure) {
+            return <text>{`plugin-error:${failure.pluginId}:${failure.slot}`}</text>
+          },
+        })
+
+        return (
+          <Slot name="statusbar" user="sam">
+            <text>fallback-visible</text>
+          </Slot>
+        )
+      },
+      { width: 80, height: 6 },
+    )
+    testSetup = setup
+
+    await testSetup.renderOnce()
+    const frame = testSetup.captureCharFrame()
+
+    expect(frame).toContain("fallback-visible")
+    expect(frame).toContain("plugin-error:broken-plugin:statusbar")
+  })
 })
