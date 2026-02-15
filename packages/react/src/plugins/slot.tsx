@@ -47,22 +47,22 @@ export function createSlot<TSlots extends SlotMap, TContext extends HostContext 
       })
     }, [registry])
 
-    const renderers = useMemo(() => registry.resolve(props.name), [registry, props.name, version])
+    const entries = useMemo(() => registry.resolveEntries(props.name), [registry, props.name, version])
     const slotProps = getSlotProps(props)
 
-    if (renderers.length === 0) {
+    if (entries.length === 0) {
       return <>{props.children}</>
     }
 
     if (props.mode === "replace") {
-      return <>{renderers[0](registry.context, slotProps)}</>
+      return <>{entries[0].renderer(registry.context, slotProps)}</>
     }
 
     return (
       <>
         {props.children}
-        {renderers.map((renderer, index) => (
-          <Fragment key={`${String(props.name)}:${index}`}>{renderer(registry.context, slotProps)}</Fragment>
+        {entries.map((entry) => (
+          <Fragment key={`${String(props.name)}:${entry.id}`}>{entry.renderer(registry.context, slotProps)}</Fragment>
         ))}
       </>
     )
