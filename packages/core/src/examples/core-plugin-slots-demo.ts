@@ -10,6 +10,7 @@ import {
   type CoreSlotHandle,
   type CoreSlotMode,
   type CoreSlotRegistry,
+  type PluginErrorEvent,
   type KeyEvent,
 } from "../index"
 import { setupCommonDemoKeys } from "./lib/standalone-keys"
@@ -49,9 +50,92 @@ let clockPluginEnabled = false
 let activityPluginEnabled = false
 let orderFlipped = false
 let statusbarMode: CoreSlotMode = "append"
+let clockStatusbarErrorEnabled = false
+let clockSidebarErrorEnabled = false
+let activityStatusbarErrorEnabled = false
+let showPluginFailurePlaceholder = true
+let unregisterPluginErrorListener: (() => void) | null = null
+let pluginErrorHistory: string[] = []
+let placeholderCreateCount = 0
+
+const MAX_PLUGIN_ERROR_HISTORY = 6
 
 const getClockOrder = () => (orderFlipped ? 20 : 0)
 const getActivityOrder = () => (orderFlipped ? -10 : 10)
+
+function formatPluginError(event: PluginErrorEvent): string {
+  const slot = event.slot ?? "<none>"
+  return `${event.pluginId} [${event.phase}/${event.source}] @ ${slot}: ${event.error.message}`
+}
+
+function pushPluginError(event: PluginErrorEvent): void {
+  pluginErrorHistory = [formatPluginError(event), ...pluginErrorHistory].slice(0, MAX_PLUGIN_ERROR_HISTORY)
+}
+
+function createPluginFailurePlaceholder(
+  rendererInstance: CliRenderer,
+  failure: PluginErrorEvent,
+  color: string,
+): BoxRenderable {
+  placeholderCreateCount++
+
+  const container = new BoxRenderable(rendererInstance, {
+    id: `plugin-error-${failure.pluginId}-${placeholderCreateCount}`,
+    border: true,
+    borderStyle: "single",
+    borderColor: color,
+    paddingLeft: 1,
+    paddingRight: 1,
+    marginLeft: 1,
+    backgroundColor: "#1f1115",
+  })
+
+  const title = new TextRenderable(rendererInstance, {
+    id: `plugin-error-title-${failure.pluginId}-${placeholderCreateCount}`,
+    content: `Plugin error: ${failure.pluginId}`,
+    fg: "#fecaca",
+  })
+
+  const details = new TextRenderable(rendererInstance, {
+    id: `plugin-error-details-${failure.pluginId}-${placeholderCreateCount}`,
+    content: `${failure.phase}/${failure.source} @ ${failure.slot ?? "unknown"}`,
+    fg: "#fca5a5",
+  })
+
+  container.add(title)
+  container.add(details)
+  return container
+}
+
+function remountEnabledPlugins(): void {
+  if (!slotRegistry || !renderer) {
+    return
+  }
+
+  if (clockPluginEnabled) {
+    unregisterClockPlugin?.()
+    unregisterClockPlugin = registerCorePlugin(slotRegistry, createClockPlugin(renderer))
+  }
+
+  if (activityPluginEnabled) {
+    unregisterActivityPlugin?.()
+    unregisterActivityPlugin = registerCorePlugin(slotRegistry, createActivityPlugin(renderer))
+  }
+
+  statusbarSlotHandle?.refresh()
+  sidebarSlotHandle?.refresh()
+}
+
+function resetPluginFailureState(): void {
+  clockStatusbarErrorEnabled = false
+  clockSidebarErrorEnabled = false
+  activityStatusbarErrorEnabled = false
+  pluginErrorHistory = []
+  slotRegistry?.clearPluginErrors()
+
+  remountEnabledPlugins()
+  updateInfoPanel()
+}
 
 function updateInfoPanel(): void {
   if (!infoText) {
@@ -65,6 +149,12 @@ function updateInfoPanel(): void {
     `Clock plugin: ${clockPluginEnabled ? "ON" : "OFF"} (press 1)`,
     `Activity plugin: ${activityPluginEnabled ? "ON" : "OFF"} (press 2)`,
     `Order flipped: ${orderFlipped ? "YES" : "NO"} (press o)`,
+    `Show error placeholders: ${showPluginFailurePlaceholder ? "YES" : "NO"} (press p)`,
+    "",
+    `Clock statusbar throw: ${clockStatusbarErrorEnabled ? "ON" : "OFF"} (press e)`,
+    `Clock sidebar throw: ${clockSidebarErrorEnabled ? "ON" : "OFF"} (press w)`,
+    `Activity statusbar throw: ${activityStatusbarErrorEnabled ? "ON" : "OFF"} (press d)`,
+    "Press x to reset all forced errors.",
     "",
     `Clock create counts -> statusbar: ${clockStats.statusbarCreates}, sidebar: ${clockStats.sidebarCreates}`,
     `Activity create counts -> statusbar: ${activityStats.statusbarCreates}`,
@@ -74,6 +164,9 @@ function updateInfoPanel(): void {
     "",
     "Statusbar fallback is always shown in APPEND mode.",
     "Sidebar fallback appears only when no sidebar plugin is active.",
+    "",
+    "Recent plugin errors:",
+    ...(pluginErrorHistory.length > 0 ? pluginErrorHistory : ["(none)"]),
   ].join("\n")
 }
 
@@ -111,6 +204,10 @@ function createClockPlugin(rendererInstance: CliRenderer): CorePlugin<DemoSlot> 
     },
     slots: {
       statusbar() {
+        if (clockStatusbarErrorEnabled) {
+          throw new Error("Forced clock statusbar failure")
+        }
+
         clockStats.statusbarCreates++
 
         const item = new BoxRenderable(rendererInstance, {
@@ -137,6 +234,10 @@ function createClockPlugin(rendererInstance: CliRenderer): CorePlugin<DemoSlot> 
         return item
       },
       sidebar() {
+        if (clockSidebarErrorEnabled) {
+          throw new Error("Forced clock sidebar failure")
+        }
+
         clockStats.sidebarCreates++
 
         const panel = new BoxRenderable(rendererInstance, {
@@ -204,6 +305,10 @@ function createActivityPlugin(rendererInstance: CliRenderer): CorePlugin<DemoSlo
     },
     slots: {
       statusbar() {
+        if (activityStatusbarErrorEnabled) {
+          throw new Error("Forced activity statusbar failure")
+        }
+
         activityStats.statusbarCreates++
 
         const item = new BoxRenderable(rendererInstance, {
@@ -295,6 +400,29 @@ function handleKeyPress(key: KeyEvent): void {
       sidebarSlotHandle?.refresh()
       updateInfoPanel()
       break
+    case "e":
+      clockStatusbarErrorEnabled = !clockStatusbarErrorEnabled
+      remountEnabledPlugins()
+      updateInfoPanel()
+      break
+    case "w":
+      clockSidebarErrorEnabled = !clockSidebarErrorEnabled
+      remountEnabledPlugins()
+      updateInfoPanel()
+      break
+    case "d":
+      activityStatusbarErrorEnabled = !activityStatusbarErrorEnabled
+      remountEnabledPlugins()
+      updateInfoPanel()
+      break
+    case "p":
+      showPluginFailurePlaceholder = !showPluginFailurePlaceholder
+      remountEnabledPlugins()
+      updateInfoPanel()
+      break
+    case "x":
+      resetPluginFailureState()
+      break
   }
 }
 
@@ -384,6 +512,11 @@ export function run(rendererInstance: CliRenderer): void {
     return
   }
 
+  unregisterPluginErrorListener = slotRegistry.onPluginError((event) => {
+    pushPluginError(event)
+    updateInfoPanel()
+  })
+
   statusbarSlotHandle = mountCoreSlot({
     registry: slotRegistry,
     name: "statusbar",
@@ -395,6 +528,13 @@ export function run(rendererInstance: CliRenderer): void {
         content: "Fallback statusbar content",
         fg: "#94a3b8",
       }),
+    pluginFailurePlaceholder: (failure) => {
+      if (!showPluginFailurePlaceholder) {
+        return undefined
+      }
+
+      return createPluginFailurePlaceholder(rendererInstance, failure, "#fb7185")
+    },
   })
 
   sidebarSlotHandle = mountCoreSlot({
@@ -408,6 +548,13 @@ export function run(rendererInstance: CliRenderer): void {
         content: "No sidebar plugin active",
         fg: "#94a3b8",
       }),
+    pluginFailurePlaceholder: (failure) => {
+      if (!showPluginFailurePlaceholder) {
+        return undefined
+      }
+
+      return createPluginFailurePlaceholder(rendererInstance, failure, "#f97316")
+    },
   })
 
   setClockPluginEnabled(true)
@@ -419,6 +566,8 @@ export function run(rendererInstance: CliRenderer): void {
 
 export function destroy(rendererInstance: CliRenderer): void {
   rendererInstance.keyInput.off("keypress", handleKeyPress)
+  unregisterPluginErrorListener?.()
+  unregisterPluginErrorListener = null
 
   unregisterClockPlugin?.()
   unregisterClockPlugin = null
@@ -444,6 +593,12 @@ export function destroy(rendererInstance: CliRenderer): void {
   activityPluginEnabled = false
   statusbarMode = "append"
   orderFlipped = false
+  clockStatusbarErrorEnabled = false
+  clockSidebarErrorEnabled = false
+  activityStatusbarErrorEnabled = false
+  showPluginFailurePlaceholder = true
+  pluginErrorHistory = []
+  placeholderCreateCount = 0
 
   renderer = null
 }
