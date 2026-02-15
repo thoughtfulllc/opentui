@@ -1,6 +1,5 @@
 import { createSlotRegistry, SlotRegistry } from "@opentui/core/plugins"
-import type { Plugin, PluginContext } from "@opentui/core/plugins"
-import type { CliRenderer } from "@opentui/core"
+import type { CliRenderer, Plugin, PluginContext } from "@opentui/core"
 import { Fragment, useEffect, useMemo, useState } from "react"
 import type { ReactNode } from "react"
 
