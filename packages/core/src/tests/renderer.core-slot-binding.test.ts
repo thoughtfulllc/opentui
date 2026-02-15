@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import { Renderable } from "../Renderable"
 import { createTestRenderer, type TestRenderer } from "../testing/test-renderer"
-import { createCoreSlotRegistry, mountCoreSlot, registerCorePlugin } from "../plugins/slot"
+import { createCoreSlotRegistry, mountCoreSlot, registerCorePlugin } from "../plugins/core-slot"
 
 type AppSlot = "statusbar"
 type AppContext = { appName: string; version: string }

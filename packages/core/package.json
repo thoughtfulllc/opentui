@@ -70,6 +70,10 @@
       "types": "./src/testing.ts",
       "import": "./src/testing.ts"
     },
+    "./plugins": {
+      "types": "./src/plugins/registry.ts",
+      "import": "./src/plugins/registry.ts"
+    },
     "./parser.worker": {
       "types": "./src/lib/tree-sitter/parser.worker.ts",
       "import": "./src/lib/tree-sitter/parser.worker.ts"
