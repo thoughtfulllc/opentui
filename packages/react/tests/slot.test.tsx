@@ -89,7 +89,7 @@ describe("React Slot System", () => {
   })
 
   it("appends plugin output after fallback content by default", async () => {
-    const plugin: ReactPlugin<AppSlots> = {
+    const plugin: ReactPlugin<AppSlots, typeof hostContext> = {
       id: "append-plugin",
       slots: {
         statusbar(ctx, props) {

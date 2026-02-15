@@ -4,6 +4,7 @@ import { createTestRenderer, type TestRenderer } from "../testing/test-renderer"
 import { createCoreSlotRegistry, mountCoreSlot, registerCorePlugin } from "../plugins/slot"
 
 type AppSlot = "statusbar"
+type AppContext = { appName: string; version: string }
 
 class TestRenderable extends Renderable {
   constructor(renderer: TestRenderer, id: string) {
@@ -26,8 +27,8 @@ afterEach(() => {
 
 describe("Core slot binding", () => {
   test("creates renderer-scoped registry by default", () => {
-    const first = createCoreSlotRegistry<AppSlot>(renderer, { appName: "core-only", version: "1.0.0" })
-    const second = createCoreSlotRegistry<AppSlot>(renderer, { appName: "other", version: "2.0.0" })
+    const first = createCoreSlotRegistry<AppSlot, AppContext>(renderer, { appName: "core-only", version: "1.0.0" })
+    const second = createCoreSlotRegistry<AppSlot, AppContext>(renderer, { appName: "other", version: "2.0.0" })
 
     expect(first).toBe(second)
     expect(first.context.appName).toBe("core-only")
