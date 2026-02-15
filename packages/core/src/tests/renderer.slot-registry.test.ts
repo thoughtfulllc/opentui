@@ -57,6 +57,45 @@ describe("SlotRegistry", () => {
     expect(calls).toEqual(["setup:slot-test-app:1.0.0:same", "dispose"])
   })
 
+  test("register accepts class-based plugin instances", () => {
+    const renderer = createMockRenderer()
+    const registry = new SlotRegistry<TestNode, AppSlots, AppContext>(renderer, hostContext)
+
+    class ClassPlugin implements Plugin<TestNode, AppSlots, AppContext> {
+      id = "class-plugin"
+      order = 0
+      setupCalls = 0
+      disposeCalls = 0
+      rendererSeen: CliRenderer | null = null
+      prefix = "class"
+
+      setup(ctx: Readonly<AppContext>, setupRenderer: CliRenderer): void {
+        this.setupCalls++
+        this.rendererSeen = setupRenderer
+        this.prefix = ctx.appName
+      }
+
+      dispose(): void {
+        this.disposeCalls++
+      }
+
+      slots = {
+        statusbar: (_ctx: Readonly<AppContext>, props: AppSlots["statusbar"]) => `${this.prefix}:${props.user}`,
+      }
+    }
+
+    const plugin = new ClassPlugin()
+    registry.register(plugin)
+
+    const output = registry.resolve("statusbar")[0](hostContext, { user: "sam" })
+    registry.unregister(plugin.id)
+
+    expect(output).toBe("slot-test-app:sam")
+    expect(plugin.setupCalls).toBe(1)
+    expect(plugin.disposeCalls).toBe(1)
+    expect(plugin.rendererSeen).toBe(renderer)
+  })
+
   test("rejects duplicate plugin ids", () => {
     const registry = new SlotRegistry<TestNode, AppSlots, AppContext>(createMockRenderer(), hostContext)
 
