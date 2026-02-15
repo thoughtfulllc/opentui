@@ -2,6 +2,27 @@ import type { CliRenderer } from "../renderer"
 
 export interface PluginContext {}
 
+export type PluginErrorPhase = "setup" | "render" | "dispose" | "error_placeholder"
+
+export type PluginErrorSource = "registry" | "core" | "react" | "solid"
+
+export interface PluginErrorEvent {
+  pluginId: string
+  slot?: string
+  phase: PluginErrorPhase
+  source: PluginErrorSource
+  error: Error
+  timestamp: number
+}
+
+export interface PluginErrorReport {
+  pluginId: string
+  slot?: string
+  phase: PluginErrorPhase
+  source?: PluginErrorSource
+  error: unknown
+}
+
 export type SlotRenderer<TNode, TProps, TContext extends PluginContext = PluginContext> = (
   ctx: Readonly<TContext>,
   props: TProps,

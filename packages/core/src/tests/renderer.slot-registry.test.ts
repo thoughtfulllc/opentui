@@ -301,26 +301,29 @@ describe("SlotRegistry", () => {
   test("does not register plugin when setup throws", () => {
     const registry = new SlotRegistry<TestNode, AppSlots, AppContext>(createMockRenderer(), hostContext)
     let notifyCount = 0
+    const errors: string[] = []
     registry.subscribe(() => {
       notifyCount++
     })
+    registry.onPluginError((event) => {
+      errors.push(`${event.pluginId}:${event.phase}:${event.error.message}`)
+    })
 
-    expect(() => {
-      registry.register({
-        id: "setup-failure",
-        setup() {
-          throw new Error("setup failed")
+    registry.register({
+      id: "setup-failure",
+      setup() {
+        throw new Error("setup failed")
+      },
+      slots: {
+        statusbar() {
+          return "should-not-register"
         },
-        slots: {
-          statusbar() {
-            return "should-not-register"
-          },
-        },
-      })
-    }).toThrow("setup failed")
+      },
+    })
 
     expect(registry.resolve("statusbar")).toEqual([])
     expect(notifyCount).toBe(0)
+    expect(errors).toEqual(["setup-failure:setup:setup failed"])
 
     registry.register({
       id: "setup-failure",
@@ -339,8 +342,12 @@ describe("SlotRegistry", () => {
   test("unregister removes plugin and notifies even if dispose throws", () => {
     const registry = new SlotRegistry<TestNode, AppSlots, AppContext>(createMockRenderer(), hostContext)
     let notifyCount = 0
+    const errors: string[] = []
     registry.subscribe(() => {
       notifyCount++
+    })
+    registry.onPluginError((event) => {
+      errors.push(`${event.pluginId}:${event.phase}:${event.error.message}`)
     })
 
     registry.register({
@@ -355,17 +362,20 @@ describe("SlotRegistry", () => {
       },
     })
 
-    expect(() => {
-      registry.unregister("dispose-failure")
-    }).toThrow("dispose failed")
+    registry.unregister("dispose-failure")
 
     expect(registry.resolve("statusbar")).toEqual([])
     expect(notifyCount).toBe(2)
+    expect(errors).toEqual(["dispose-failure:dispose:dispose failed"])
   })
 
-  test("clear disposes every plugin and throws first dispose error", () => {
+  test("clear disposes every plugin and reports dispose errors", () => {
     const registry = new SlotRegistry<TestNode, AppSlots, AppContext>(createMockRenderer(), hostContext)
     const disposeCalls: string[] = []
+    const errors: string[] = []
+    registry.onPluginError((event) => {
+      errors.push(`${event.pluginId}:${event.phase}:${event.error.message}`)
+    })
 
     registry.register({
       id: "first-error",
@@ -405,11 +415,47 @@ describe("SlotRegistry", () => {
       },
     })
 
-    expect(() => {
-      registry.clear()
-    }).toThrow("first dispose error")
+    registry.clear()
 
     expect(disposeCalls).toEqual(["first-error", "second-error", "clean-dispose"])
     expect(registry.resolve("statusbar")).toEqual([])
+    expect(errors).toEqual(["first-error:dispose:first dispose error", "second-error:dispose:second dispose error"])
+  })
+
+  test("stores plugin error history with source and slot metadata", () => {
+    const registry = new SlotRegistry<TestNode, AppSlots, AppContext>(createMockRenderer(), hostContext, {
+      maxPluginErrors: 2,
+    })
+
+    registry.reportPluginError({
+      pluginId: "plugin-a",
+      slot: "statusbar",
+      phase: "render",
+      source: "core",
+      error: new Error("first"),
+    })
+
+    registry.reportPluginError({
+      pluginId: "plugin-b",
+      phase: "setup",
+      source: "registry",
+      error: "second",
+    })
+
+    registry.reportPluginError({
+      pluginId: "plugin-c",
+      phase: "dispose",
+      source: "registry",
+      error: new Error("third"),
+    })
+
+    expect(
+      registry
+        .getPluginErrors()
+        .map((event) => `${event.pluginId}:${event.phase}:${event.source}:${event.error.message}`),
+    ).toEqual(["plugin-b:setup:registry:second", "plugin-c:dispose:registry:third"])
+
+    registry.clearPluginErrors()
+    expect(registry.getPluginErrors()).toEqual([])
   })
 })
