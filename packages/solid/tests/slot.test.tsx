@@ -132,7 +132,7 @@ describe("Solid Slot System", () => {
     expect(frame).toContain("plugin:solid-slot-tests:ava")
   })
 
-  it("uses deterministic replace behavior with ordered plugins", async () => {
+  it("replace mode hides fallback and renders all ordered plugins", async () => {
     const { setup } = await setupSlotTest(
       (registry) => {
         registry.register({
@@ -170,8 +170,132 @@ describe("Solid Slot System", () => {
     const frame = testSetup.captureCharFrame()
 
     expect(frame).toContain("early-plugin")
-    expect(frame).not.toContain("late-plugin")
+    expect(frame).toContain("late-plugin")
     expect(frame).not.toContain("replace-fallback")
+  })
+
+  it("single_winner mode renders only the highest-priority plugin", async () => {
+    const { setup } = await setupSlotTest(
+      (registry) => {
+        registry.register({
+          id: "late",
+          order: 10,
+          slots: {
+            statusbar() {
+              return <text>late-plugin</text>
+            },
+          },
+        })
+
+        registry.register({
+          id: "early",
+          order: 0,
+          slots: {
+            statusbar() {
+              return <text>early-plugin</text>
+            },
+          },
+        })
+
+        const Slot = createSlot(registry)
+        return (
+          <Slot name="statusbar" user="lee" mode="single_winner">
+            <text>single-fallback</text>
+          </Slot>
+        )
+      },
+      { width: 40, height: 6 },
+    )
+    testSetup = setup
+
+    await testSetup.renderOnce()
+    const frame = testSetup.captureCharFrame()
+
+    expect(frame).toContain("early-plugin")
+    expect(frame).not.toContain("late-plugin")
+    expect(frame).not.toContain("single-fallback")
+  })
+
+  it("replace mode keeps healthy plugin output when another plugin fails", async () => {
+    const { setup } = await setupSlotTest(
+      (registry) => {
+        registry.register({
+          id: "broken-plugin",
+          order: 0,
+          slots: {
+            statusbar() {
+              throw new Error("broken render")
+            },
+          },
+        })
+
+        registry.register({
+          id: "healthy-plugin",
+          order: 10,
+          slots: {
+            statusbar() {
+              return <text>healthy-plugin</text>
+            },
+          },
+        })
+
+        const Slot = createSlot(registry)
+        return (
+          <Slot name="statusbar" user="lee" mode="replace">
+            <text>replace-fallback</text>
+          </Slot>
+        )
+      },
+      { width: 50, height: 6 },
+    )
+    testSetup = setup
+
+    await testSetup.renderOnce()
+    const frame = testSetup.captureCharFrame()
+
+    expect(frame).toContain("healthy-plugin")
+    expect(frame).not.toContain("replace-fallback")
+  })
+
+  it("single_winner mode falls back when highest-priority plugin fails", async () => {
+    const { setup } = await setupSlotTest(
+      (registry) => {
+        registry.register({
+          id: "broken-winner",
+          order: 0,
+          slots: {
+            statusbar() {
+              throw new Error("winner failed")
+            },
+          },
+        })
+
+        registry.register({
+          id: "healthy-second",
+          order: 10,
+          slots: {
+            statusbar() {
+              return <text>healthy-second</text>
+            },
+          },
+        })
+
+        const Slot = createSlot(registry)
+        return (
+          <Slot name="statusbar" user="lee" mode="single_winner">
+            <text>single-fallback</text>
+          </Slot>
+        )
+      },
+      { width: 50, height: 6 },
+    )
+    testSetup = setup
+
+    await testSetup.renderOnce()
+    const frame = testSetup.captureCharFrame()
+
+    expect(frame).toContain("single-fallback")
+    expect(frame).not.toContain("healthy-second")
   })
 
   it("reacts to plugin registration and unregistering", async () => {

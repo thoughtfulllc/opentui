@@ -20,6 +20,18 @@ const hostContext = {
   version: "1.0.0",
 }
 
+function nextStatusbarMode(mode: SlotMode): SlotMode {
+  if (mode === "append") {
+    return "replace"
+  }
+
+  if (mode === "replace") {
+    return "single_winner"
+  }
+
+  return "append"
+}
+
 function formatPluginError(event: PluginErrorEvent): string {
   return `${event.pluginId} [${event.phase}/${event.source}] @ ${event.slot ?? "<none>"}: ${event.error.message}`
 }
@@ -170,7 +182,7 @@ function App() {
         setActivityEnabled((current) => !current)
         return
       case "m":
-        setStatusbarMode((current) => (current === "append" ? "replace" : "append"))
+        setStatusbarMode((current) => nextStatusbarMode(current))
         return
       case "e":
         setClockCrashEnabled((current) => !current)
@@ -203,7 +215,7 @@ function App() {
   const info = [
     "React Plugin Slot Demo",
     "",
-    `Statusbar mode: ${statusbarMode.toUpperCase()} (press m)`,
+    `Statusbar mode: ${statusbarMode.toUpperCase()} (press m to cycle)`,
     `Clock plugin: ${clockEnabled ? "ON" : "OFF"} (press 1)`,
     `Activity plugin: ${activityEnabled ? "ON" : "OFF"} (press 2)`,
     `Clock subtree crash: ${clockCrashEnabled ? "ON" : "OFF"} (press e)`,
