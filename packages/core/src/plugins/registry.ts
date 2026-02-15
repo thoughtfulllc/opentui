@@ -1,6 +1,8 @@
 import type { CliRenderer } from "../renderer"
 import type { Plugin, PluginContext, ResolvedSlotRenderer, SlotRenderer } from "./types"
 
+export type { Plugin, PluginContext, ResolvedSlotRenderer, SlotRenderer } from "./types"
+
 interface RegisteredPlugin<TNode, TSlots extends object, TContext extends PluginContext = PluginContext> {
   plugin: Plugin<TNode, TSlots, TContext>
   registrationOrder: number

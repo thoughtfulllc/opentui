@@ -1,5 +1,6 @@
-import { createSlotRegistry, SlotRegistry } from "@opentui/core"
-import type { CliRenderer, Plugin, PluginContext } from "@opentui/core"
+import { createSlotRegistry, SlotRegistry } from "@opentui/core/plugins"
+import type { Plugin, PluginContext } from "@opentui/core/plugins"
+import type { CliRenderer } from "@opentui/core"
 import { createMemo, createSignal, onCleanup, splitProps, type JSX } from "solid-js"
 
 export type SlotMode = "replace" | "append"
