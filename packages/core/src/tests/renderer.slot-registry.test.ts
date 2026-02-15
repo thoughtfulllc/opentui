@@ -241,4 +241,119 @@ describe("SlotRegistry", () => {
     const recreated = createSlotRegistry<string, AppSlots>(renderer, "cleanup-key", hostContext)
     expect(recreated).not.toBe(registry)
   })
+
+  test("does not register plugin when setup throws", () => {
+    const registry = new SlotRegistry<TestNode, AppSlots>(hostContext)
+    let notifyCount = 0
+    registry.subscribe(() => {
+      notifyCount++
+    })
+
+    expect(() => {
+      registry.register({
+        id: "setup-failure",
+        setup() {
+          throw new Error("setup failed")
+        },
+        slots: {
+          statusbar() {
+            return "should-not-register"
+          },
+        },
+      })
+    }).toThrow("setup failed")
+
+    expect(registry.resolve("statusbar")).toEqual([])
+    expect(notifyCount).toBe(0)
+
+    registry.register({
+      id: "setup-failure",
+      slots: {
+        statusbar() {
+          return "registered-after-failure"
+        },
+      },
+    })
+
+    expect(registry.resolve("statusbar").map((renderer) => renderer(hostContext, { user: "sam" }))).toEqual([
+      "registered-after-failure",
+    ])
+  })
+
+  test("unregister removes plugin and notifies even if dispose throws", () => {
+    const registry = new SlotRegistry<TestNode, AppSlots>(hostContext)
+    let notifyCount = 0
+    registry.subscribe(() => {
+      notifyCount++
+    })
+
+    registry.register({
+      id: "dispose-failure",
+      dispose() {
+        throw new Error("dispose failed")
+      },
+      slots: {
+        statusbar() {
+          return "present-before-unregister"
+        },
+      },
+    })
+
+    expect(() => {
+      registry.unregister("dispose-failure")
+    }).toThrow("dispose failed")
+
+    expect(registry.resolve("statusbar")).toEqual([])
+    expect(notifyCount).toBe(2)
+  })
+
+  test("clear disposes every plugin and throws first dispose error", () => {
+    const registry = new SlotRegistry<TestNode, AppSlots>(hostContext)
+    const disposeCalls: string[] = []
+
+    registry.register({
+      id: "first-error",
+      dispose() {
+        disposeCalls.push("first-error")
+        throw new Error("first dispose error")
+      },
+      slots: {
+        statusbar() {
+          return "first"
+        },
+      },
+    })
+
+    registry.register({
+      id: "second-error",
+      dispose() {
+        disposeCalls.push("second-error")
+        throw new Error("second dispose error")
+      },
+      slots: {
+        statusbar() {
+          return "second"
+        },
+      },
+    })
+
+    registry.register({
+      id: "clean-dispose",
+      dispose() {
+        disposeCalls.push("clean-dispose")
+      },
+      slots: {
+        statusbar() {
+          return "third"
+        },
+      },
+    })
+
+    expect(() => {
+      registry.clear()
+    }).toThrow("first dispose error")
+
+    expect(disposeCalls).toEqual(["first-error", "second-error", "clean-dispose"])
+    expect(registry.resolve("statusbar")).toEqual([])
+  })
 })

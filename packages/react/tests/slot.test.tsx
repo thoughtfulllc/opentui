@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test"
 import { createTestRenderer, type TestRendererOptions } from "@opentui/core/testing"
-import { createContext, useContext } from "react"
+import { createContext, useContext, useEffect, useState } from "react"
 import { act, type ReactNode } from "react"
 import { createReactSlotRegistry, createSlot, type ReactPlugin } from "../src/plugins/slot"
 import { createRoot, type Root } from "../src/reconciler/renderer"
@@ -239,5 +239,70 @@ describe("React Slot System", () => {
     await testSetup.renderOnce()
     const frame = testSetup.captureCharFrame()
     expect(frame).toContain("ctx:inside-provider")
+  })
+
+  it("keeps plugin identity stable when append order changes", async () => {
+    const mountLog: string[] = []
+
+    function StatefulPluginNode({ pluginId }: { pluginId: string }) {
+      const [createdBy] = useState(pluginId)
+
+      useEffect(() => {
+        mountLog.push(`mount:${pluginId}:${createdBy}`)
+        return () => {
+          mountLog.push(`unmount:${pluginId}:${createdBy}`)
+        }
+      }, [pluginId, createdBy])
+
+      return <text>{`${pluginId}:${createdBy}`}</text>
+    }
+
+    const { setup, registry } = await setupSlotTest(
+      (slotRegistry) => {
+        slotRegistry.register({
+          id: "alpha",
+          order: 0,
+          slots: {
+            statusbar() {
+              return <StatefulPluginNode pluginId="alpha" />
+            },
+          },
+        })
+
+        slotRegistry.register({
+          id: "beta",
+          order: 10,
+          slots: {
+            statusbar() {
+              return <StatefulPluginNode pluginId="beta" />
+            },
+          },
+        })
+
+        const Slot = createSlot(slotRegistry)
+        return <Slot name="statusbar" user="sam" />
+      },
+      { width: 80, height: 6 },
+    )
+    testSetup = setup
+
+    await testSetup.renderOnce()
+    const beforeReorder = testSetup.captureCharFrame()
+
+    expect(beforeReorder).toContain("alpha:alpha")
+    expect(beforeReorder).toContain("beta:beta")
+
+    act(() => {
+      registry.updateOrder("beta", -1)
+    })
+
+    await testSetup.renderOnce()
+    const afterReorder = testSetup.captureCharFrame()
+
+    expect(afterReorder).toContain("beta:beta")
+    expect(afterReorder).toContain("alpha:alpha")
+    expect(afterReorder).not.toContain("beta:alpha")
+    expect(afterReorder).not.toContain("alpha:beta")
+    expect(mountLog).toEqual(["mount:alpha:alpha", "mount:beta:beta"])
   })
 })

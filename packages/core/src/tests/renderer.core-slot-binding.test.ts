@@ -247,4 +247,104 @@ describe("Core slot binding", () => {
       })
     }).toThrow("async value")
   })
+
+  test("throws for non-renderable plugin values", () => {
+    const registry = createCoreSlotRegistry<AppSlot>(renderer, { appName: "core-only", version: "1.0.0" })
+
+    registerCorePlugin(registry, {
+      id: "plugin-invalid",
+      slots: {
+        statusbar() {
+          return "not-a-renderable" as unknown as TestRenderable
+        },
+      },
+    })
+
+    expect(() => {
+      mountCoreSlot({
+        registry,
+        name: "statusbar",
+        mount: slotMount,
+      })
+    }).toThrow("must return a BaseRenderable")
+  })
+
+  test("throws when plugin returns mount container", () => {
+    const registry = createCoreSlotRegistry<AppSlot>(renderer, { appName: "core-only", version: "1.0.0" })
+
+    registerCorePlugin(registry, {
+      id: "plugin-self",
+      slots: {
+        statusbar() {
+          return slotMount
+        },
+      },
+    })
+
+    expect(() => {
+      mountCoreSlot({
+        registry,
+        name: "statusbar",
+        mount: slotMount,
+      })
+    }).toThrow("mount container")
+  })
+
+  test("throws when plugin returns node attached to another parent", () => {
+    const registry = createCoreSlotRegistry<AppSlot>(renderer, { appName: "core-only", version: "1.0.0" })
+    const otherParent = new TestRenderable(renderer, "other-parent")
+    const attachedNode = new TestRenderable(renderer, "attached-node")
+    renderer.root.add(otherParent)
+    otherParent.add(attachedNode)
+
+    registerCorePlugin(registry, {
+      id: "plugin-attached",
+      slots: {
+        statusbar() {
+          return attachedNode
+        },
+      },
+    })
+
+    expect(() => {
+      mountCoreSlot({
+        registry,
+        name: "statusbar",
+        mount: slotMount,
+      })
+    }).toThrow("already attached to another parent")
+
+    expect(attachedNode.parent).toBe(otherParent)
+    expect(slotMount.getChildren()).toEqual([])
+  })
+
+  test("cleans up plugin nodes when fallback renderer fails", () => {
+    const registry = createCoreSlotRegistry<AppSlot>(renderer, { appName: "core-only", version: "1.0.0" })
+    let pluginNode: TestRenderable | null = null
+
+    registerCorePlugin(registry, {
+      id: "plugin-a",
+      slots: {
+        statusbar() {
+          pluginNode = new TestRenderable(renderer, "plugin-a")
+          return pluginNode
+        },
+      },
+    })
+
+    expect(() => {
+      mountCoreSlot({
+        registry,
+        name: "statusbar",
+        mount: slotMount,
+        mode: "append",
+        fallback: () => {
+          return Promise.resolve(new TestRenderable(renderer, "fallback")) as unknown as TestRenderable
+        },
+      })
+    }).toThrow("async value")
+
+    expect(pluginNode?.isDestroyed).toBe(true)
+    expect(slotMount.getChildren()).toEqual([])
+  })
 })
