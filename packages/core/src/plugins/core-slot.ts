@@ -3,7 +3,7 @@ import type { CliRenderer } from "../renderer"
 import { createSlotRegistry, SlotRegistry, type SlotRegistryOptions } from "./registry"
 import type { Plugin, PluginContext, PluginErrorEvent } from "./types"
 
-export type CoreSlotMode = "append" | "replace"
+export type CoreSlotMode = "append" | "replace" | "single_winner"
 
 type CoreSlotProps<TSlotName extends string> = {
   [K in TSlotName]: undefined
@@ -248,7 +248,7 @@ export function mountCoreSlot<
     const allEntries = resolveCoreSlot(options.registry, options.name)
     cleanupRemovedPluginNodes(new Set(allEntries.map((entry) => entry.id)))
 
-    const activeEntries = mode === "replace" && allEntries.length > 0 ? [allEntries[0]] : allEntries
+    const activeEntries = mode === "single_winner" && allEntries.length > 0 ? [allEntries[0]] : allEntries
 
     for (const entry of activeEntries) {
       if (pluginNodes.has(entry.id)) {
@@ -285,7 +285,7 @@ export function mountCoreSlot<
       }
     }
 
-    if (mode === "replace" && desiredNodes.length === 0) {
+    if (mode !== "append" && desiredNodes.length === 0) {
       desiredNodes.push(...ensureFallbackNodes())
     }
 

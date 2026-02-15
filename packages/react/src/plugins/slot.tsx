@@ -3,7 +3,7 @@ import type { CliRenderer, Plugin, PluginContext, PluginErrorEvent } from "@open
 import React, { Fragment, useEffect, useMemo, useState } from "react"
 import type { ReactNode } from "react"
 
-export type SlotMode = "replace" | "append"
+export type SlotMode = "append" | "replace" | "single_winner"
 type SlotMap = Record<string, object>
 
 export type ReactPlugin<TSlots extends SlotMap, TContext extends PluginContext = PluginContext> = Plugin<
@@ -131,13 +131,24 @@ export function createSlot<TSlots extends SlotMap, TContext extends PluginContex
       return <>{props.children}</>
     }
 
-    if (props.mode === "replace") {
+    if (props.mode === "single_winner") {
       const rendered = renderEntry(entries[0])
-      if (rendered === null || rendered === undefined) {
+      if (rendered === null || rendered === undefined || rendered === false) {
         return <>{props.children}</>
       }
 
       return <>{rendered}</>
+    }
+
+    if (props.mode === "replace") {
+      const renderedEntries = entries.map(renderEntry)
+      const hasPluginOutput = renderedEntries.some((node) => node !== null && node !== undefined && node !== false)
+
+      if (!hasPluginOutput) {
+        return <>{props.children}</>
+      }
+
+      return <>{renderedEntries}</>
     }
 
     return (

@@ -98,7 +98,7 @@ describe("Core slot binding", () => {
     handle.dispose()
   })
 
-  test("replace mode swaps active plugin without recreating previous active instance", () => {
+  test("single_winner mode swaps active plugin without recreating previous active instance", () => {
     const registry = createCoreSlotRegistry<AppSlot>(renderer, { appName: "core-only", version: "1.0.0" })
     let pluginACreateCount = 0
     let pluginBCreateCount = 0
@@ -129,7 +129,7 @@ describe("Core slot binding", () => {
       registry,
       name: "statusbar",
       mount: slotMount,
-      mode: "replace",
+      mode: "single_winner",
     })
 
     expect(pluginACreateCount).toBe(1)
@@ -147,6 +147,114 @@ describe("Core slot binding", () => {
     expect(pluginACreateCount).toBe(1)
     expect(pluginBCreateCount).toBe(1)
     expect(slotMount.getChildren().map((child) => child.id)).toEqual(["plugin-a-1"])
+
+    handle.dispose()
+  })
+
+  test("replace mode hides fallback and renders all ordered plugins", () => {
+    const registry = createCoreSlotRegistry<AppSlot>(renderer, { appName: "core-only", version: "1.0.0" })
+
+    registerCorePlugin(registry, {
+      id: "late",
+      order: 10,
+      slots: {
+        statusbar() {
+          return new TestRenderable(renderer, "late-plugin")
+        },
+      },
+    })
+
+    registerCorePlugin(registry, {
+      id: "early",
+      order: 0,
+      slots: {
+        statusbar() {
+          return new TestRenderable(renderer, "early-plugin")
+        },
+      },
+    })
+
+    const handle = mountCoreSlot({
+      registry,
+      name: "statusbar",
+      mount: slotMount,
+      mode: "replace",
+      fallback: () => new TestRenderable(renderer, "replace-fallback"),
+    })
+
+    expect(slotMount.getChildren().map((child) => child.id)).toEqual(["early-plugin", "late-plugin"])
+
+    handle.dispose()
+  })
+
+  test("replace mode keeps healthy plugins when one plugin render fails", () => {
+    const registry = createCoreSlotRegistry<AppSlot>(renderer, { appName: "core-only", version: "1.0.0" })
+
+    registerCorePlugin(registry, {
+      id: "broken-plugin",
+      order: 0,
+      slots: {
+        statusbar() {
+          throw new Error("broken render")
+        },
+      },
+    })
+
+    registerCorePlugin(registry, {
+      id: "healthy-plugin",
+      order: 10,
+      slots: {
+        statusbar() {
+          return new TestRenderable(renderer, "healthy-plugin")
+        },
+      },
+    })
+
+    const handle = mountCoreSlot({
+      registry,
+      name: "statusbar",
+      mount: slotMount,
+      mode: "replace",
+      fallback: () => new TestRenderable(renderer, "replace-fallback"),
+    })
+
+    expect(slotMount.getChildren().map((child) => child.id)).toEqual(["healthy-plugin"])
+
+    handle.dispose()
+  })
+
+  test("single_winner mode falls back when winning plugin fails", () => {
+    const registry = createCoreSlotRegistry<AppSlot>(renderer, { appName: "core-only", version: "1.0.0" })
+
+    registerCorePlugin(registry, {
+      id: "broken-winner",
+      order: 0,
+      slots: {
+        statusbar() {
+          throw new Error("winner failed")
+        },
+      },
+    })
+
+    registerCorePlugin(registry, {
+      id: "healthy-second",
+      order: 10,
+      slots: {
+        statusbar() {
+          return new TestRenderable(renderer, "healthy-second")
+        },
+      },
+    })
+
+    const handle = mountCoreSlot({
+      registry,
+      name: "statusbar",
+      mount: slotMount,
+      mode: "single_winner",
+      fallback: () => new TestRenderable(renderer, "single-fallback"),
+    })
+
+    expect(slotMount.getChildren().map((child) => child.id)).toEqual(["single-fallback"])
 
     handle.dispose()
   })
