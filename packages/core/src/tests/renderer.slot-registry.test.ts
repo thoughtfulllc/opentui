@@ -22,20 +22,25 @@ const hostContext: AppContext = {
   version: "1.0.0",
 }
 
+function createMockRenderer(): CliRenderer {
+  return new EventEmitter() as CliRenderer
+}
+
 describe("SlotRegistry", () => {
   test("resolves no renderers for missing slot contributions", () => {
-    const registry = new SlotRegistry<TestNode, AppSlots, AppContext>(hostContext)
+    const registry = new SlotRegistry<TestNode, AppSlots, AppContext>(createMockRenderer(), hostContext)
     expect(registry.resolve("statusbar")).toEqual([])
   })
 
   test("supports plugin setup and dispose lifecycles", () => {
     const calls: string[] = []
-    const registry = new SlotRegistry<TestNode, AppSlots, AppContext>(hostContext)
+    const renderer = createMockRenderer()
+    const registry = new SlotRegistry<TestNode, AppSlots, AppContext>(renderer, hostContext)
 
     registry.register({
       id: "lifecycle-plugin",
-      setup(ctx) {
-        calls.push(`setup:${ctx.appName}:${ctx.version}`)
+      setup(ctx, setupRenderer) {
+        calls.push(`setup:${ctx.appName}:${ctx.version}:${setupRenderer === renderer ? "same" : "different"}`)
       },
       dispose() {
         calls.push("dispose")
@@ -49,11 +54,11 @@ describe("SlotRegistry", () => {
 
     registry.unregister("lifecycle-plugin")
 
-    expect(calls).toEqual(["setup:slot-test-app:1.0.0", "dispose"])
+    expect(calls).toEqual(["setup:slot-test-app:1.0.0:same", "dispose"])
   })
 
   test("rejects duplicate plugin ids", () => {
-    const registry = new SlotRegistry<TestNode, AppSlots, AppContext>(hostContext)
+    const registry = new SlotRegistry<TestNode, AppSlots, AppContext>(createMockRenderer(), hostContext)
 
     const plugin: TestPlugin = {
       id: "duplicate",
@@ -72,7 +77,7 @@ describe("SlotRegistry", () => {
   })
 
   test("sorts renderers deterministically by order then registration order", () => {
-    const registry = new SlotRegistry<TestNode, AppSlots, AppContext>(hostContext)
+    const registry = new SlotRegistry<TestNode, AppSlots, AppContext>(createMockRenderer(), hostContext)
 
     registry.register({
       id: "z-registered-first",
@@ -119,7 +124,7 @@ describe("SlotRegistry", () => {
   })
 
   test("supports order updates and emits subscription notifications", () => {
-    const registry = new SlotRegistry<TestNode, AppSlots, AppContext>(hostContext)
+    const registry = new SlotRegistry<TestNode, AppSlots, AppContext>(createMockRenderer(), hostContext)
     let notifyCount = 0
 
     const unsubscribe = registry.subscribe(() => {
@@ -159,7 +164,7 @@ describe("SlotRegistry", () => {
   })
 
   test("supports multiple slot contributions per plugin", () => {
-    const registry = new SlotRegistry<TestNode, AppSlots, AppContext>(hostContext)
+    const registry = new SlotRegistry<TestNode, AppSlots, AppContext>(createMockRenderer(), hostContext)
 
     registry.register({
       id: "multi-slot",
@@ -181,7 +186,7 @@ describe("SlotRegistry", () => {
   })
 
   test("resolveEntries returns sorted plugin ids with renderers", () => {
-    const registry = new SlotRegistry<TestNode, AppSlots, AppContext>(hostContext)
+    const registry = new SlotRegistry<TestNode, AppSlots, AppContext>(createMockRenderer(), hostContext)
 
     registry.register({
       id: "plugin-b",
@@ -209,8 +214,8 @@ describe("SlotRegistry", () => {
   })
 
   test("slot registries are isolated per renderer and key", () => {
-    const rendererA = new EventEmitter() as CliRenderer
-    const rendererB = new EventEmitter() as CliRenderer
+    const rendererA = createMockRenderer()
+    const rendererB = createMockRenderer()
 
     const aFirst = createSlotRegistry<string, AppSlots, AppContext>(rendererA, "demo-key", hostContext)
     const aSecond = createSlotRegistry<string, AppSlots, AppContext>(rendererA, "demo-key", hostContext)
@@ -230,7 +235,7 @@ describe("SlotRegistry", () => {
   })
 
   test("slot registry clears plugins on renderer destroy", () => {
-    const renderer = new EventEmitter() as CliRenderer
+    const renderer = createMockRenderer()
     const disposeCalls: string[] = []
 
     const registry = createSlotRegistry<string, AppSlots, AppContext>(renderer, "cleanup-key", hostContext)
@@ -255,7 +260,7 @@ describe("SlotRegistry", () => {
   })
 
   test("does not register plugin when setup throws", () => {
-    const registry = new SlotRegistry<TestNode, AppSlots, AppContext>(hostContext)
+    const registry = new SlotRegistry<TestNode, AppSlots, AppContext>(createMockRenderer(), hostContext)
     let notifyCount = 0
     registry.subscribe(() => {
       notifyCount++
@@ -293,7 +298,7 @@ describe("SlotRegistry", () => {
   })
 
   test("unregister removes plugin and notifies even if dispose throws", () => {
-    const registry = new SlotRegistry<TestNode, AppSlots, AppContext>(hostContext)
+    const registry = new SlotRegistry<TestNode, AppSlots, AppContext>(createMockRenderer(), hostContext)
     let notifyCount = 0
     registry.subscribe(() => {
       notifyCount++
@@ -320,7 +325,7 @@ describe("SlotRegistry", () => {
   })
 
   test("clear disposes every plugin and throws first dispose error", () => {
-    const registry = new SlotRegistry<TestNode, AppSlots, AppContext>(hostContext)
+    const registry = new SlotRegistry<TestNode, AppSlots, AppContext>(createMockRenderer(), hostContext)
     const disposeCalls: string[] = []
 
     registry.register({

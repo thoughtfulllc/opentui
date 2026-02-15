@@ -18,7 +18,7 @@ export type CoreSlotRegistry<TSlotName extends string, TContext extends PluginCo
 export interface CorePlugin<TSlotName extends string, TContext extends PluginContext = PluginContext> {
   id: string
   order?: number
-  setup?: (ctx: Readonly<TContext>) => void
+  setup?: (ctx: Readonly<TContext>, renderer: CliRenderer) => void
   dispose?: () => void
   slots: Partial<Record<TSlotName, (ctx: Readonly<TContext>) => BaseRenderable>>
 }
