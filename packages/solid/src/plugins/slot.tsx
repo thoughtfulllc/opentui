@@ -1,11 +1,11 @@
 import { createSlotRegistry, SlotRegistry } from "@opentui/core"
-import type { CliRenderer, HostContext, Plugin } from "@opentui/core"
+import type { CliRenderer, Plugin, PluginContext } from "@opentui/core"
 import { createMemo, createSignal, onCleanup, splitProps, type JSX } from "solid-js"
 
 export type SlotMode = "replace" | "append"
 type SlotMap = Record<string, object>
 
-export type SolidPlugin<TSlots extends SlotMap, TContext extends HostContext = HostContext> = Plugin<
+export type SolidPlugin<TSlots extends SlotMap, TContext extends PluginContext = PluginContext> = Plugin<
   JSX.Element,
   TSlots,
   TContext
@@ -21,7 +21,7 @@ export type SolidSlotComponent<TSlots extends SlotMap> = <K extends keyof TSlots
   props: SolidSlotProps<TSlots, K>,
 ) => JSX.Element
 
-export function createSolidSlotRegistry<TSlots extends SlotMap, TContext extends HostContext = HostContext>(
+export function createSolidSlotRegistry<TSlots extends SlotMap, TContext extends PluginContext = PluginContext>(
   renderer: CliRenderer,
   context: TContext,
   key: string = "solid:slot-registry",
@@ -29,7 +29,7 @@ export function createSolidSlotRegistry<TSlots extends SlotMap, TContext extends
   return createSlotRegistry<JSX.Element, TSlots, TContext>(renderer, key, context)
 }
 
-export function createSlot<TSlots extends SlotMap, TContext extends HostContext = HostContext>(
+export function createSlot<TSlots extends SlotMap, TContext extends PluginContext = PluginContext>(
   registry: SlotRegistry<JSX.Element, TSlots, TContext>,
 ): SolidSlotComponent<TSlots> {
   return function Slot<K extends keyof TSlots>(props: SolidSlotProps<TSlots, K>): JSX.Element {

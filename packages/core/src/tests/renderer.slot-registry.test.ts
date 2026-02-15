@@ -10,22 +10,27 @@ interface AppSlots {
 }
 
 type TestNode = string
-type TestPlugin = Plugin<TestNode, AppSlots>
+type AppContext = {
+  appName: string
+  version: string
+}
 
-const hostContext = {
+type TestPlugin = Plugin<TestNode, AppSlots, AppContext>
+
+const hostContext: AppContext = {
   appName: "slot-test-app",
   version: "1.0.0",
 }
 
 describe("SlotRegistry", () => {
   test("resolves no renderers for missing slot contributions", () => {
-    const registry = new SlotRegistry<TestNode, AppSlots>(hostContext)
+    const registry = new SlotRegistry<TestNode, AppSlots, AppContext>(hostContext)
     expect(registry.resolve("statusbar")).toEqual([])
   })
 
   test("supports plugin setup and dispose lifecycles", () => {
     const calls: string[] = []
-    const registry = new SlotRegistry<TestNode, AppSlots>(hostContext)
+    const registry = new SlotRegistry<TestNode, AppSlots, AppContext>(hostContext)
 
     registry.register({
       id: "lifecycle-plugin",
@@ -48,7 +53,7 @@ describe("SlotRegistry", () => {
   })
 
   test("rejects duplicate plugin ids", () => {
-    const registry = new SlotRegistry<TestNode, AppSlots>(hostContext)
+    const registry = new SlotRegistry<TestNode, AppSlots, AppContext>(hostContext)
 
     const plugin: TestPlugin = {
       id: "duplicate",
@@ -67,7 +72,7 @@ describe("SlotRegistry", () => {
   })
 
   test("sorts renderers deterministically by order then registration order", () => {
-    const registry = new SlotRegistry<TestNode, AppSlots>(hostContext)
+    const registry = new SlotRegistry<TestNode, AppSlots, AppContext>(hostContext)
 
     registry.register({
       id: "z-registered-first",
@@ -114,7 +119,7 @@ describe("SlotRegistry", () => {
   })
 
   test("supports order updates and emits subscription notifications", () => {
-    const registry = new SlotRegistry<TestNode, AppSlots>(hostContext)
+    const registry = new SlotRegistry<TestNode, AppSlots, AppContext>(hostContext)
     let notifyCount = 0
 
     const unsubscribe = registry.subscribe(() => {
@@ -154,7 +159,7 @@ describe("SlotRegistry", () => {
   })
 
   test("supports multiple slot contributions per plugin", () => {
-    const registry = new SlotRegistry<TestNode, AppSlots>(hostContext)
+    const registry = new SlotRegistry<TestNode, AppSlots, AppContext>(hostContext)
 
     registry.register({
       id: "multi-slot",
@@ -176,7 +181,7 @@ describe("SlotRegistry", () => {
   })
 
   test("resolveEntries returns sorted plugin ids with renderers", () => {
-    const registry = new SlotRegistry<TestNode, AppSlots>(hostContext)
+    const registry = new SlotRegistry<TestNode, AppSlots, AppContext>(hostContext)
 
     registry.register({
       id: "plugin-b",
@@ -207,10 +212,10 @@ describe("SlotRegistry", () => {
     const rendererA = new EventEmitter() as CliRenderer
     const rendererB = new EventEmitter() as CliRenderer
 
-    const aFirst = createSlotRegistry<string, AppSlots>(rendererA, "demo-key", hostContext)
-    const aSecond = createSlotRegistry<string, AppSlots>(rendererA, "demo-key", hostContext)
-    const aOtherKey = createSlotRegistry<string, AppSlots>(rendererA, "other-key", hostContext)
-    const bFirst = createSlotRegistry<string, AppSlots>(rendererB, "demo-key", hostContext)
+    const aFirst = createSlotRegistry<string, AppSlots, AppContext>(rendererA, "demo-key", hostContext)
+    const aSecond = createSlotRegistry<string, AppSlots, AppContext>(rendererA, "demo-key", hostContext)
+    const aOtherKey = createSlotRegistry<string, AppSlots, AppContext>(rendererA, "other-key", hostContext)
+    const bFirst = createSlotRegistry<string, AppSlots, AppContext>(rendererB, "demo-key", hostContext)
 
     expect(aFirst).toBe(aSecond)
     expect(aFirst).not.toBe(aOtherKey)
@@ -221,7 +226,7 @@ describe("SlotRegistry", () => {
     const renderer = new EventEmitter() as CliRenderer
     const disposeCalls: string[] = []
 
-    const registry = createSlotRegistry<string, AppSlots>(renderer, "cleanup-key", hostContext)
+    const registry = createSlotRegistry<string, AppSlots, AppContext>(renderer, "cleanup-key", hostContext)
     registry.register({
       id: "cleanup-plugin",
       dispose() {
@@ -238,12 +243,12 @@ describe("SlotRegistry", () => {
 
     expect(disposeCalls).toEqual(["disposed"])
 
-    const recreated = createSlotRegistry<string, AppSlots>(renderer, "cleanup-key", hostContext)
+    const recreated = createSlotRegistry<string, AppSlots, AppContext>(renderer, "cleanup-key", hostContext)
     expect(recreated).not.toBe(registry)
   })
 
   test("does not register plugin when setup throws", () => {
-    const registry = new SlotRegistry<TestNode, AppSlots>(hostContext)
+    const registry = new SlotRegistry<TestNode, AppSlots, AppContext>(hostContext)
     let notifyCount = 0
     registry.subscribe(() => {
       notifyCount++
@@ -281,7 +286,7 @@ describe("SlotRegistry", () => {
   })
 
   test("unregister removes plugin and notifies even if dispose throws", () => {
-    const registry = new SlotRegistry<TestNode, AppSlots>(hostContext)
+    const registry = new SlotRegistry<TestNode, AppSlots, AppContext>(hostContext)
     let notifyCount = 0
     registry.subscribe(() => {
       notifyCount++
@@ -308,7 +313,7 @@ describe("SlotRegistry", () => {
   })
 
   test("clear disposes every plugin and throws first dispose error", () => {
-    const registry = new SlotRegistry<TestNode, AppSlots>(hostContext)
+    const registry = new SlotRegistry<TestNode, AppSlots, AppContext>(hostContext)
     const disposeCalls: string[] = []
 
     registry.register({

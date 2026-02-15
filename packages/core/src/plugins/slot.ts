@@ -1,7 +1,7 @@
 import { BaseRenderable } from "../Renderable"
 import type { CliRenderer } from "../renderer"
 import { createSlotRegistry, SlotRegistry } from "./registry"
-import type { HostContext, Plugin } from "./types"
+import type { Plugin, PluginContext } from "./types"
 
 export type CoreSlotMode = "append" | "replace"
 
@@ -9,13 +9,13 @@ type CoreSlotProps<TSlotName extends string> = {
   [K in TSlotName]: undefined
 }
 
-export type CoreSlotRegistry<TSlotName extends string, TContext extends HostContext = HostContext> = SlotRegistry<
+export type CoreSlotRegistry<TSlotName extends string, TContext extends PluginContext = PluginContext> = SlotRegistry<
   BaseRenderable,
   CoreSlotProps<TSlotName>,
   TContext
 >
 
-export interface CorePlugin<TSlotName extends string, TContext extends HostContext = HostContext> {
+export interface CorePlugin<TSlotName extends string, TContext extends PluginContext = PluginContext> {
   id: string
   order?: number
   setup?: (ctx: Readonly<TContext>) => void
@@ -23,7 +23,7 @@ export interface CorePlugin<TSlotName extends string, TContext extends HostConte
   slots: Partial<Record<TSlotName, (ctx: Readonly<TContext>) => BaseRenderable>>
 }
 
-export interface CoreResolvedSlotRenderer<TContext extends HostContext = HostContext> {
+export interface CoreResolvedSlotRenderer<TContext extends PluginContext = PluginContext> {
   id: string
   renderer: (ctx: Readonly<TContext>) => BaseRenderable
 }
@@ -33,7 +33,7 @@ type FallbackNodes = BaseRenderable | BaseRenderable[] | undefined
 export interface CoreSlotMountOptions<
   TSlotName extends string,
   K extends TSlotName,
-  TContext extends HostContext = HostContext,
+  TContext extends PluginContext = PluginContext,
 > {
   registry: CoreSlotRegistry<TSlotName, TContext>
   name: K
@@ -48,7 +48,7 @@ export interface CoreSlotHandle {
   dispose: () => void
 }
 
-function toCorePlugin<TSlotName extends string, TContext extends HostContext = HostContext>(
+function toCorePlugin<TSlotName extends string, TContext extends PluginContext = PluginContext>(
   plugin: CorePlugin<TSlotName, TContext>,
 ): Plugin<BaseRenderable, CoreSlotProps<TSlotName>, TContext> {
   const slots: Partial<Record<TSlotName, (ctx: Readonly<TContext>, props: undefined) => BaseRenderable>> = {}
@@ -108,7 +108,7 @@ function destroyNode(node: BaseRenderable): void {
   node.destroyRecursively()
 }
 
-export function createCoreSlotRegistry<TSlotName extends string, TContext extends HostContext = HostContext>(
+export function createCoreSlotRegistry<TSlotName extends string, TContext extends PluginContext = PluginContext>(
   renderer: CliRenderer,
   context: TContext,
   key: string = "core:slot-registry",
@@ -116,7 +116,7 @@ export function createCoreSlotRegistry<TSlotName extends string, TContext extend
   return createSlotRegistry<BaseRenderable, CoreSlotProps<TSlotName>, TContext>(renderer, key, context)
 }
 
-export function registerCorePlugin<TSlotName extends string, TContext extends HostContext = HostContext>(
+export function registerCorePlugin<TSlotName extends string, TContext extends PluginContext = PluginContext>(
   registry: CoreSlotRegistry<TSlotName, TContext>,
   plugin: CorePlugin<TSlotName, TContext>,
 ): () => void {
@@ -126,7 +126,7 @@ export function registerCorePlugin<TSlotName extends string, TContext extends Ho
 export function resolveCoreSlot<
   TSlotName extends string,
   K extends TSlotName,
-  TContext extends HostContext = HostContext,
+  TContext extends PluginContext = PluginContext,
 >(registry: CoreSlotRegistry<TSlotName, TContext>, slot: K): Array<CoreResolvedSlotRenderer<TContext>> {
   return registry.resolveEntries(slot).map((entry) => {
     return {
@@ -139,7 +139,7 @@ export function resolveCoreSlot<
 export function mountCoreSlot<
   TSlotName extends string,
   K extends TSlotName,
-  TContext extends HostContext = HostContext,
+  TContext extends PluginContext = PluginContext,
 >(options: CoreSlotMountOptions<TSlotName, K, TContext>): CoreSlotHandle {
   let mode: CoreSlotMode = options.mode ?? "append"
   let disposed = false
