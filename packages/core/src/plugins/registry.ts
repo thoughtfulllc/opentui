@@ -10,10 +10,16 @@ export class SlotRegistry<TNode, TSlots extends object, TContext extends PluginC
   private plugins: RegisteredPlugin<TNode, TSlots, TContext>[] = []
   private listeners: Set<() => void> = new Set()
   private registrationOrder = 0
+  private rendererInstance: CliRenderer
   private hostContext: Readonly<TContext>
 
-  constructor(context: TContext) {
+  constructor(renderer: CliRenderer, context: TContext) {
+    this.rendererInstance = renderer
     this.hostContext = context
+  }
+
+  public get renderer(): CliRenderer {
+    return this.rendererInstance
   }
 
   public get context(): Readonly<TContext> {
@@ -25,7 +31,7 @@ export class SlotRegistry<TNode, TSlots extends object, TContext extends PluginC
       throw new Error(`Plugin with id \"${plugin.id}\" is already registered`)
     }
 
-    plugin.setup?.(this.hostContext)
+    plugin.setup?.(this.hostContext, this.rendererInstance)
 
     this.plugins.push({
       plugin,
@@ -200,7 +206,7 @@ export function createSlotRegistry<TNode, TSlots extends object, TContext extend
     return existing as SlotRegistry<TNode, TSlots, TContext>
   }
 
-  const created = new SlotRegistry<TNode, TSlots, TContext>(context)
+  const created = new SlotRegistry<TNode, TSlots, TContext>(renderer, context)
   store.set(key, created as SlotRegistry<any, any, any>)
   return created
 }
