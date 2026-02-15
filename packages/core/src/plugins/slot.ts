@@ -1,6 +1,7 @@
 import { BaseRenderable } from "../Renderable"
-import { createSlotRegistry, SlotRegistry } from "../renderer"
-import type { CliRenderer, HostContext, Plugin } from "../renderer"
+import type { CliRenderer } from "../renderer"
+import { createSlotRegistry, SlotRegistry } from "./registry"
+import type { HostContext, Plugin } from "./types"
 
 export type CoreSlotMode = "append" | "replace"
 

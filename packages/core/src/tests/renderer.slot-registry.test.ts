@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test"
 import { EventEmitter } from "events"
-import { CliRenderEvents, createSlotRegistry, SlotRegistry, type CliRenderer, type Plugin } from "../renderer"
+import { createSlotRegistry, SlotRegistry } from "../plugins/registry"
+import type { Plugin } from "../plugins/types"
+import type { CliRenderer } from "../renderer"
 
 interface AppSlots {
   statusbar: { user: string }
@@ -232,7 +234,7 @@ describe("SlotRegistry", () => {
       },
     })
 
-    renderer.emit(CliRenderEvents.DESTROY)
+    renderer.emit("destroy")
 
     expect(disposeCalls).toEqual(["disposed"])
 
