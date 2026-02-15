@@ -2,7 +2,7 @@ import { createSlotRegistry, SlotRegistry, type SlotRegistryOptions } from "@ope
 import type { CliRenderer, Plugin, PluginContext, PluginErrorEvent } from "@opentui/core"
 import { createMemo, createSignal, ErrorBoundary, onCleanup, splitProps, type JSX } from "solid-js"
 
-export type SlotMode = "replace" | "append"
+export type SlotMode = "append" | "replace" | "single_winner"
 type SlotMap = Record<string, object>
 
 export type SolidPlugin<TSlots extends SlotMap, TContext extends PluginContext = PluginContext> = Plugin<
@@ -61,25 +61,24 @@ export function createSlot<TSlots extends SlotMap, TContext extends PluginContex
       fallbackOnError?: JSX.Element,
     ): JSX.Element => {
       const fallbackValue = fallbackOnError ?? (null as unknown as JSX.Element)
+      let initialRender: JSX.Element
 
-      const renderPlugin = (): JSX.Element => {
-        try {
-          return entry.renderer(registry.context, slotProps as TSlots[K])
-        } catch (error) {
-          const failure = registry.reportPluginError({
-            pluginId: entry.id,
-            slot: slotName(),
-            phase: "render",
-            source: "solid",
-            error,
-          })
+      try {
+        initialRender = entry.renderer(registry.context, slotProps as TSlots[K])
+      } catch (error) {
+        const failure = registry.reportPluginError({
+          pluginId: entry.id,
+          slot: slotName(),
+          phase: "render",
+          source: "solid",
+          error,
+        })
 
-          if (options.pluginFailurePlaceholder) {
-            return options.pluginFailurePlaceholder(failure)
-          }
-
-          return fallbackValue
+        if (options.pluginFailurePlaceholder) {
+          return options.pluginFailurePlaceholder(failure)
         }
+
+        return fallbackValue
       }
 
       return (
@@ -100,7 +99,7 @@ export function createSlot<TSlots extends SlotMap, TContext extends PluginContex
             return fallbackValue
           }}
         >
-          {renderPlugin()}
+          {initialRender}
         </ErrorBoundary>
       )
     }
@@ -114,8 +113,21 @@ export function createSlot<TSlots extends SlotMap, TContext extends PluginContex
             return local.children
           }
 
-          if (local.mode === "replace") {
+          if (local.mode === "single_winner") {
             return renderEntry(resolvedEntries[0], local.children as JSX.Element)
+          }
+
+          if (local.mode === "replace") {
+            const renderedEntries = resolvedEntries.map((entry) => renderEntry(entry))
+            const hasPluginOutput = renderedEntries.some(
+              (entry) => entry !== null && entry !== undefined && entry !== false,
+            )
+
+            if (!hasPluginOutput) {
+              return local.children as JSX.Element
+            }
+
+            return <>{renderedEntries}</>
           }
 
           return (

@@ -63,6 +63,18 @@ const MAX_PLUGIN_ERROR_HISTORY = 6
 const getClockOrder = () => (orderFlipped ? 20 : 0)
 const getActivityOrder = () => (orderFlipped ? -10 : 10)
 
+function nextStatusbarMode(mode: CoreSlotMode): CoreSlotMode {
+  if (mode === "append") {
+    return "replace"
+  }
+
+  if (mode === "replace") {
+    return "single_winner"
+  }
+
+  return "append"
+}
+
 function formatPluginError(event: PluginErrorEvent): string {
   const slot = event.slot ?? "<none>"
   return `${event.pluginId} [${event.phase}/${event.source}] @ ${slot}: ${event.error.message}`
@@ -145,7 +157,7 @@ function updateInfoPanel(): void {
   infoText.content = [
     "Core Plugin Slot Demo",
     "",
-    `Statusbar mode: ${statusbarMode.toUpperCase()} (press m)`,
+    `Statusbar mode: ${statusbarMode.toUpperCase()} (press m to cycle)`,
     `Clock plugin: ${clockPluginEnabled ? "ON" : "OFF"} (press 1)`,
     `Activity plugin: ${activityPluginEnabled ? "ON" : "OFF"} (press 2)`,
     `Order flipped: ${orderFlipped ? "YES" : "NO"} (press o)`,
@@ -385,7 +397,7 @@ function handleKeyPress(key: KeyEvent): void {
       setActivityPluginEnabled(!activityPluginEnabled)
       break
     case "m":
-      statusbarMode = statusbarMode === "append" ? "replace" : "append"
+      statusbarMode = nextStatusbarMode(statusbarMode)
       statusbarSlotHandle?.setMode(statusbarMode)
       updateInfoPanel()
       break
