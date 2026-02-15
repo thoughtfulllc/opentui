@@ -220,6 +220,13 @@ describe("SlotRegistry", () => {
     expect(aFirst).toBe(aSecond)
     expect(aFirst).not.toBe(aOtherKey)
     expect(aFirst).not.toBe(bFirst)
+
+    expect(() => {
+      createSlotRegistry<string, AppSlots, AppContext>(rendererA, "demo-key", {
+        appName: "other-app",
+        version: "2.0.0",
+      })
+    }).toThrow("different context")
   })
 
   test("slot registry clears plugins on renderer destroy", () => {

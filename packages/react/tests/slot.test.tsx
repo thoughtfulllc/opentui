@@ -68,6 +68,21 @@ describe("React Slot System", () => {
     }
   })
 
+  it("reuses one registry per renderer and rejects different context", async () => {
+    const setup = await createTestRenderer({ width: 20, height: 4 })
+    testSetup = setup
+
+    const context = { appName: "react-slot-tests", version: "1.0.0" }
+    const first = createReactSlotRegistry<AppSlots, typeof context>(setup.renderer, context)
+    const second = createReactSlotRegistry<AppSlots, typeof context>(setup.renderer, context)
+
+    expect(first).toBe(second)
+
+    expect(() => {
+      createReactSlotRegistry<AppSlots, typeof context>(setup.renderer, { appName: "other", version: "2.0.0" })
+    }).toThrow("different context")
+  })
+
   it("renders fallback content when no plugin matches", async () => {
     const { setup } = await setupSlotTest(
       (registry) => {

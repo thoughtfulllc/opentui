@@ -24,9 +24,8 @@ export type SolidSlotComponent<TSlots extends SlotMap> = <K extends keyof TSlots
 export function createSolidSlotRegistry<TSlots extends SlotMap, TContext extends PluginContext = PluginContext>(
   renderer: CliRenderer,
   context: TContext,
-  key: string = "solid:slot-registry",
 ): SlotRegistry<JSX.Element, TSlots, TContext> {
-  return createSlotRegistry<JSX.Element, TSlots, TContext>(renderer, key, context)
+  return createSlotRegistry<JSX.Element, TSlots, TContext>(renderer, "solid:slot-registry", context)
 }
 
 export function createSlot<TSlots extends SlotMap, TContext extends PluginContext = PluginContext>(

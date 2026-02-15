@@ -25,9 +25,8 @@ export type ReactSlotComponent<TSlots extends SlotMap> = <K extends keyof TSlots
 export function createReactSlotRegistry<TSlots extends SlotMap, TContext extends PluginContext = PluginContext>(
   renderer: CliRenderer,
   context: TContext,
-  key: string = "react:slot-registry",
 ): SlotRegistry<ReactNode, TSlots, TContext> {
-  return createSlotRegistry<ReactNode, TSlots, TContext>(renderer, key, context)
+  return createSlotRegistry<ReactNode, TSlots, TContext>(renderer, "react:slot-registry", context)
 }
 
 function getSlotProps<TSlots extends SlotMap, K extends keyof TSlots>(props: ReactSlotProps<TSlots, K>): TSlots[K] {
