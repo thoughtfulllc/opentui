@@ -233,8 +233,12 @@ describe("Core slot binding", () => {
     expect(slotMount.getChildren().length).toBe(0)
   })
 
-  test("throws for async plugin renderers", () => {
+  test("captures async plugin renderer failures without crashing", () => {
     const registry = createCoreSlotRegistry<AppSlot>(renderer, { appName: "core-only", version: "1.0.0" })
+    const errors: string[] = []
+    registry.onPluginError((event) => {
+      errors.push(`${event.pluginId}:${event.slot}:${event.phase}:${event.error.message}`)
+    })
 
     registerCorePlugin(registry, {
       id: "plugin-async",
@@ -245,17 +249,30 @@ describe("Core slot binding", () => {
       },
     })
 
-    expect(() => {
-      mountCoreSlot({
-        registry,
-        name: "statusbar",
-        mount: slotMount,
-      })
-    }).toThrow("async value")
+    const handle = mountCoreSlot({
+      registry,
+      name: "statusbar",
+      mount: slotMount,
+      fallback: () => new TestRenderable(renderer, "fallback"),
+    })
+
+    expect(slotMount.getChildren().map((child) => child.id)).toEqual(["fallback"])
+    expect(errors.length).toBe(1)
+    expect(errors[0]).toContain("plugin-async:statusbar:render")
+    expect(errors[0]).toContain("async value")
+
+    handle.refresh()
+    expect(errors.length).toBe(1)
+
+    handle.dispose()
   })
 
-  test("throws for non-renderable plugin values", () => {
+  test("captures non-renderable plugin values without crashing", () => {
     const registry = createCoreSlotRegistry<AppSlot>(renderer, { appName: "core-only", version: "1.0.0" })
+    const errors: string[] = []
+    registry.onPluginError((event) => {
+      errors.push(`${event.pluginId}:${event.slot}:${event.phase}:${event.error.message}`)
+    })
 
     registerCorePlugin(registry, {
       id: "plugin-invalid",
@@ -266,17 +283,24 @@ describe("Core slot binding", () => {
       },
     })
 
-    expect(() => {
-      mountCoreSlot({
-        registry,
-        name: "statusbar",
-        mount: slotMount,
-      })
-    }).toThrow("must return a BaseRenderable")
+    const handle = mountCoreSlot({
+      registry,
+      name: "statusbar",
+      mount: slotMount,
+    })
+
+    expect(slotMount.getChildren()).toEqual([])
+    expect(errors).toEqual(['plugin-invalid:statusbar:render:Plugin "plugin-invalid" must return a BaseRenderable'])
+
+    handle.dispose()
   })
 
-  test("throws when plugin returns mount container", () => {
+  test("captures plugin self-mount failures", () => {
     const registry = createCoreSlotRegistry<AppSlot>(renderer, { appName: "core-only", version: "1.0.0" })
+    const errors: string[] = []
+    registry.onPluginError((event) => {
+      errors.push(event.error.message)
+    })
 
     registerCorePlugin(registry, {
       id: "plugin-self",
@@ -287,17 +311,24 @@ describe("Core slot binding", () => {
       },
     })
 
-    expect(() => {
-      mountCoreSlot({
-        registry,
-        name: "statusbar",
-        mount: slotMount,
-      })
-    }).toThrow("mount container")
+    const handle = mountCoreSlot({
+      registry,
+      name: "statusbar",
+      mount: slotMount,
+    })
+
+    expect(slotMount.getChildren()).toEqual([])
+    expect(errors[0]).toContain("mount container")
+
+    handle.dispose()
   })
 
-  test("throws when plugin returns node attached to another parent", () => {
+  test("captures failures when plugin returns node attached to another parent", () => {
     const registry = createCoreSlotRegistry<AppSlot>(renderer, { appName: "core-only", version: "1.0.0" })
+    const errors: string[] = []
+    registry.onPluginError((event) => {
+      errors.push(event.error.message)
+    })
     const otherParent = new TestRenderable(renderer, "other-parent")
     const attachedNode = new TestRenderable(renderer, "attached-node")
     renderer.root.add(otherParent)
@@ -312,16 +343,109 @@ describe("Core slot binding", () => {
       },
     })
 
-    expect(() => {
-      mountCoreSlot({
-        registry,
-        name: "statusbar",
-        mount: slotMount,
-      })
-    }).toThrow("already attached to another parent")
+    const handle = mountCoreSlot({
+      registry,
+      name: "statusbar",
+      mount: slotMount,
+    })
 
     expect(attachedNode.parent).toBe(otherParent)
     expect(slotMount.getChildren()).toEqual([])
+    expect(errors[0]).toContain("already attached to another parent")
+
+    handle.dispose()
+  })
+
+  test("renders plugin failure placeholder only when configured", () => {
+    const registry = createCoreSlotRegistry<AppSlot>(renderer, { appName: "core-only", version: "1.0.0" })
+
+    registerCorePlugin(registry, {
+      id: "broken-plugin",
+      slots: {
+        statusbar() {
+          throw new Error("plugin exploded")
+        },
+      },
+    })
+
+    const handleWithoutPlaceholder = mountCoreSlot({
+      registry,
+      name: "statusbar",
+      mount: slotMount,
+      fallback: () => new TestRenderable(renderer, "fallback"),
+    })
+
+    expect(slotMount.getChildren().map((child) => child.id)).toEqual(["fallback"])
+    handleWithoutPlaceholder.dispose()
+
+    const handleWithPlaceholder = mountCoreSlot({
+      registry,
+      name: "statusbar",
+      mount: slotMount,
+      fallback: () => new TestRenderable(renderer, "fallback"),
+      pluginFailurePlaceholder(failure) {
+        return new TestRenderable(renderer, `error-${failure.pluginId}`)
+      },
+    })
+
+    expect(slotMount.getChildren().map((child) => child.id)).toEqual(["fallback", "error-broken-plugin"])
+    handleWithPlaceholder.dispose()
+  })
+
+  test("replace mode uses fallback when plugin fails and no placeholder is configured", () => {
+    const registry = createCoreSlotRegistry<AppSlot>(renderer, { appName: "core-only", version: "1.0.0" })
+
+    registerCorePlugin(registry, {
+      id: "broken-plugin",
+      slots: {
+        statusbar() {
+          throw new Error("plugin exploded")
+        },
+      },
+    })
+
+    const handle = mountCoreSlot({
+      registry,
+      name: "statusbar",
+      mount: slotMount,
+      mode: "replace",
+      fallback: () => new TestRenderable(renderer, "fallback"),
+    })
+
+    expect(slotMount.getChildren().map((child) => child.id)).toEqual(["fallback"])
+    handle.dispose()
+  })
+
+  test("reports placeholder renderer failures separately", () => {
+    const registry = createCoreSlotRegistry<AppSlot>(renderer, { appName: "core-only", version: "1.0.0" })
+    const errors: string[] = []
+    registry.onPluginError((event) => {
+      errors.push(`${event.phase}:${event.error.message}`)
+    })
+
+    registerCorePlugin(registry, {
+      id: "broken-plugin",
+      slots: {
+        statusbar() {
+          throw new Error("plugin render failed")
+        },
+      },
+    })
+
+    const handle = mountCoreSlot({
+      registry,
+      name: "statusbar",
+      mount: slotMount,
+      fallback: () => new TestRenderable(renderer, "fallback"),
+      pluginFailurePlaceholder() {
+        throw new Error("placeholder failed")
+      },
+    })
+
+    expect(slotMount.getChildren().map((child) => child.id)).toEqual(["fallback"])
+    expect(errors).toEqual(["render:plugin render failed", "error_placeholder:placeholder failed"])
+
+    handle.dispose()
   })
 
   test("cleans up plugin nodes when fallback renderer fails", () => {

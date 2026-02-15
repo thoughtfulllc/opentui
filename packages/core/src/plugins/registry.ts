@@ -1,5 +1,32 @@
 import type { CliRenderer } from "../renderer"
-import type { Plugin, PluginContext, ResolvedSlotRenderer, SlotRenderer } from "./types"
+import type {
+  Plugin,
+  PluginContext,
+  PluginErrorEvent,
+  PluginErrorReport,
+  ResolvedSlotRenderer,
+  SlotRenderer,
+} from "./types"
+
+const noop = () => {}
+
+function normalizeError(error: unknown): Error {
+  if (error instanceof Error) {
+    return error
+  }
+
+  if (typeof error === "string") {
+    return new Error(error)
+  }
+
+  return new Error(`Unknown plugin error: ${String(error)}`)
+}
+
+export interface SlotRegistryOptions {
+  onPluginError?: (event: PluginErrorEvent) => void
+  debugPluginErrors?: boolean
+  maxPluginErrors?: number
+}
 
 interface RegisteredPlugin<TNode, TSlots extends object, TContext extends PluginContext = PluginContext> {
   plugin: Plugin<TNode, TSlots, TContext>
@@ -9,13 +36,22 @@ interface RegisteredPlugin<TNode, TSlots extends object, TContext extends Plugin
 export class SlotRegistry<TNode, TSlots extends object, TContext extends PluginContext = PluginContext> {
   private plugins: RegisteredPlugin<TNode, TSlots, TContext>[] = []
   private listeners: Set<() => void> = new Set()
+  private errorListeners: Set<(event: PluginErrorEvent) => void> = new Set()
+  private pluginErrors: PluginErrorEvent[] = []
   private registrationOrder = 0
   private rendererInstance: CliRenderer
   private hostContext: Readonly<TContext>
+  private options: Required<Pick<SlotRegistryOptions, "debugPluginErrors" | "maxPluginErrors">> &
+    Pick<SlotRegistryOptions, "onPluginError">
 
-  constructor(renderer: CliRenderer, context: TContext) {
+  constructor(renderer: CliRenderer, context: TContext, options: SlotRegistryOptions = {}) {
     this.rendererInstance = renderer
     this.hostContext = context
+    this.options = {
+      debugPluginErrors: options.debugPluginErrors ?? false,
+      maxPluginErrors: options.maxPluginErrors ?? 100,
+      onPluginError: options.onPluginError,
+    }
   }
 
   public get renderer(): CliRenderer {
@@ -26,12 +62,31 @@ export class SlotRegistry<TNode, TSlots extends object, TContext extends PluginC
     return this.hostContext
   }
 
+  public configure(options: SlotRegistryOptions): void {
+    this.options = {
+      debugPluginErrors: options.debugPluginErrors ?? this.options.debugPluginErrors,
+      maxPluginErrors: options.maxPluginErrors ?? this.options.maxPluginErrors,
+      onPluginError: options.onPluginError ?? this.options.onPluginError,
+    }
+  }
+
   public register(plugin: Plugin<TNode, TSlots, TContext>): () => void {
     if (this.plugins.some((entry) => entry.plugin.id === plugin.id)) {
       throw new Error(`Plugin with id \"${plugin.id}\" is already registered`)
     }
 
-    plugin.setup?.(this.hostContext, this.rendererInstance)
+    try {
+      plugin.setup?.(this.hostContext, this.rendererInstance)
+    } catch (error) {
+      this.reportPluginError({
+        pluginId: plugin.id,
+        phase: "setup",
+        source: "registry",
+        error,
+      })
+
+      return noop
+    }
 
     this.plugins.push({
       plugin,
@@ -53,18 +108,18 @@ export class SlotRegistry<TNode, TSlots extends object, TContext extends PluginC
 
     const [entry] = this.plugins.splice(index, 1)
 
-    let disposeError: unknown
     try {
       entry?.plugin.dispose?.()
     } catch (error) {
-      disposeError = error
+      this.reportPluginError({
+        pluginId: id,
+        phase: "dispose",
+        source: "registry",
+        error,
+      })
     }
 
     this.notifyListeners()
-
-    if (disposeError) {
-      throw disposeError
-    }
 
     return true
   }
@@ -92,22 +147,20 @@ export class SlotRegistry<TNode, TSlots extends object, TContext extends PluginC
     const plugins = [...this.plugins]
     this.plugins = []
 
-    let firstError: unknown
     for (const entry of plugins) {
       try {
         entry.plugin.dispose?.()
       } catch (error) {
-        if (!firstError) {
-          firstError = error
-        }
+        this.reportPluginError({
+          pluginId: entry.plugin.id,
+          phase: "dispose",
+          source: "registry",
+          error,
+        })
       }
     }
 
     this.notifyListeners()
-
-    if (firstError) {
-      throw firstError
-    }
   }
 
   public subscribe(listener: () => void): () => void {
@@ -115,6 +168,61 @@ export class SlotRegistry<TNode, TSlots extends object, TContext extends PluginC
     return () => {
       this.listeners.delete(listener)
     }
+  }
+
+  public onPluginError(listener: (event: PluginErrorEvent) => void): () => void {
+    this.errorListeners.add(listener)
+    return () => {
+      this.errorListeners.delete(listener)
+    }
+  }
+
+  public getPluginErrors(): readonly PluginErrorEvent[] {
+    return this.pluginErrors
+  }
+
+  public clearPluginErrors(): void {
+    this.pluginErrors = []
+  }
+
+  public reportPluginError(report: PluginErrorReport): PluginErrorEvent {
+    const event: PluginErrorEvent = {
+      pluginId: report.pluginId,
+      slot: report.slot,
+      phase: report.phase,
+      source: report.source ?? "registry",
+      error: normalizeError(report.error),
+      timestamp: Date.now(),
+    }
+
+    this.pluginErrors.push(event)
+    if (this.pluginErrors.length > this.options.maxPluginErrors) {
+      this.pluginErrors.splice(0, this.pluginErrors.length - this.options.maxPluginErrors)
+    }
+
+    if (this.options.debugPluginErrors) {
+      const slotLabel = event.slot ? ` slot=\"${event.slot}\"` : ""
+      console.debug(
+        `[SlotRegistry][PluginError] plugin=\"${event.pluginId}\" phase=\"${event.phase}\" source=\"${event.source}\"${slotLabel}`,
+      )
+      console.debug(event.error)
+    }
+
+    for (const listener of this.errorListeners) {
+      try {
+        listener(event)
+      } catch (error) {
+        console.error("Error in plugin error listener:", error)
+      }
+    }
+
+    try {
+      this.options.onPluginError?.(event)
+    } catch (error) {
+      console.error("Error in plugin error callback:", error)
+    }
+
+    return event
   }
 
   public resolve<K extends keyof TSlots>(slot: K): Array<SlotRenderer<TNode, TSlots[K], TContext>> {
@@ -156,7 +264,11 @@ export class SlotRegistry<TNode, TSlots extends object, TContext extends PluginC
 
   private notifyListeners(): void {
     for (const listener of this.listeners) {
-      listener()
+      try {
+        listener()
+      } catch (error) {
+        console.error("Error in slot registry listener:", error)
+      }
     }
   }
 }
@@ -192,6 +304,7 @@ export function createSlotRegistry<TNode, TSlots extends object, TContext extend
   renderer: CliRenderer,
   key: string,
   context: TContext,
+  options: SlotRegistryOptions = {},
 ): SlotRegistry<TNode, TSlots, TContext> {
   const store = getSlotRegistryStore(renderer)
   const existing = store.get(key)
@@ -203,10 +316,12 @@ export function createSlotRegistry<TNode, TSlots extends object, TContext extend
       )
     }
 
-    return existing as SlotRegistry<TNode, TSlots, TContext>
+    const typedExisting = existing as SlotRegistry<TNode, TSlots, TContext>
+    typedExisting.configure(options)
+    return typedExisting
   }
 
-  const created = new SlotRegistry<TNode, TSlots, TContext>(renderer, context)
+  const created = new SlotRegistry<TNode, TSlots, TContext>(renderer, context, options)
   store.set(key, created as SlotRegistry<any, any, any>)
   return created
 }
