@@ -1,12 +1,12 @@
 import type { CliRenderer } from "../renderer"
-import type { HostContext, Plugin, ResolvedSlotRenderer, SlotRenderer } from "./types"
+import type { Plugin, PluginContext, ResolvedSlotRenderer, SlotRenderer } from "./types"
 
-interface RegisteredPlugin<TNode, TSlots extends object, TContext extends HostContext = HostContext> {
+interface RegisteredPlugin<TNode, TSlots extends object, TContext extends PluginContext = PluginContext> {
   plugin: Plugin<TNode, TSlots, TContext>
   registrationOrder: number
 }
 
-export class SlotRegistry<TNode, TSlots extends object, TContext extends HostContext = HostContext> {
+export class SlotRegistry<TNode, TSlots extends object, TContext extends PluginContext = PluginContext> {
   private plugins: RegisteredPlugin<TNode, TSlots, TContext>[] = []
   private listeners: Set<() => void> = new Set()
   private registrationOrder = 0
@@ -182,7 +182,7 @@ function getSlotRegistryStore(renderer: CliRenderer): Map<string, SlotRegistry<a
   return createdStore
 }
 
-export function createSlotRegistry<TNode, TSlots extends object, TContext extends HostContext = HostContext>(
+export function createSlotRegistry<TNode, TSlots extends object, TContext extends PluginContext = PluginContext>(
   renderer: CliRenderer,
   key: string,
   context: TContext,

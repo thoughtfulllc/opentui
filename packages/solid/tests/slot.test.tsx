@@ -87,7 +87,7 @@ describe("Solid Slot System", () => {
   })
 
   it("appends plugin output after fallback content by default", async () => {
-    const plugin: SolidPlugin<AppSlots> = {
+    const plugin: SolidPlugin<AppSlots, typeof hostContext> = {
       id: "append-plugin",
       slots: {
         statusbar(ctx, props) {
