@@ -458,4 +458,43 @@ describe("SlotRegistry", () => {
     registry.clearPluginErrors()
     expect(registry.getPluginErrors()).toEqual([])
   })
+
+  test("configure can clear onPluginError and reset maxPluginErrors", () => {
+    const callbackEvents: string[] = []
+    const registry = new SlotRegistry<TestNode, AppSlots, AppContext>(createMockRenderer(), hostContext, {
+      onPluginError(event) {
+        callbackEvents.push(event.pluginId)
+      },
+      maxPluginErrors: 1,
+    })
+
+    registry.reportPluginError({
+      pluginId: "plugin-a",
+      phase: "render",
+      source: "core",
+      error: new Error("first"),
+    })
+
+    registry.configure({
+      onPluginError: undefined,
+      maxPluginErrors: undefined,
+    })
+
+    registry.reportPluginError({
+      pluginId: "plugin-b",
+      phase: "render",
+      source: "core",
+      error: new Error("second"),
+    })
+
+    registry.reportPluginError({
+      pluginId: "plugin-c",
+      phase: "render",
+      source: "core",
+      error: new Error("third"),
+    })
+
+    expect(callbackEvents).toEqual(["plugin-a"])
+    expect(registry.getPluginErrors().map((event) => event.pluginId)).toEqual(["plugin-a", "plugin-b", "plugin-c"])
+  })
 })

@@ -9,6 +9,8 @@ import type {
 } from "./types"
 
 const noop = () => {}
+const DEFAULT_DEBUG_PLUGIN_ERRORS = false
+const DEFAULT_MAX_PLUGIN_ERRORS = 100
 
 function normalizeError(error: unknown): Error {
   if (error instanceof Error) {
@@ -48,8 +50,8 @@ export class SlotRegistry<TNode, TSlots extends object, TContext extends PluginC
     this.rendererInstance = renderer
     this.hostContext = context
     this.options = {
-      debugPluginErrors: options.debugPluginErrors ?? false,
-      maxPluginErrors: options.maxPluginErrors ?? 100,
+      debugPluginErrors: options.debugPluginErrors ?? DEFAULT_DEBUG_PLUGIN_ERRORS,
+      maxPluginErrors: options.maxPluginErrors ?? DEFAULT_MAX_PLUGIN_ERRORS,
       onPluginError: options.onPluginError,
     }
   }
@@ -63,10 +65,16 @@ export class SlotRegistry<TNode, TSlots extends object, TContext extends PluginC
   }
 
   public configure(options: SlotRegistryOptions): void {
-    this.options = {
-      debugPluginErrors: options.debugPluginErrors ?? this.options.debugPluginErrors,
-      maxPluginErrors: options.maxPluginErrors ?? this.options.maxPluginErrors,
-      onPluginError: options.onPluginError ?? this.options.onPluginError,
+    if ("debugPluginErrors" in options) {
+      this.options.debugPluginErrors = options.debugPluginErrors ?? DEFAULT_DEBUG_PLUGIN_ERRORS
+    }
+
+    if ("maxPluginErrors" in options) {
+      this.options.maxPluginErrors = options.maxPluginErrors ?? DEFAULT_MAX_PLUGIN_ERRORS
+    }
+
+    if ("onPluginError" in options) {
+      this.options.onPluginError = options.onPluginError
     }
   }
 
