@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import { Renderable } from "../Renderable"
 import { createTestRenderer, type TestRenderer } from "../testing/test-renderer"
-import { createCoreSlotRegistry, mountCoreSlot, registerCorePlugin } from "../plugins/core-slot"
+import { createCoreSlotRegistry, registerCorePlugin, SlotRenderable } from "../plugins/core-slot"
 
 type AppSlot = "statusbar"
 type AppContext = { appName: string; version: string }
@@ -13,12 +13,9 @@ class TestRenderable extends Renderable {
 }
 
 let renderer: TestRenderer
-let slotMount: TestRenderable
 
 beforeEach(async () => {
   ;({ renderer } = await createTestRenderer({}))
-  slotMount = new TestRenderable(renderer, "slot-mount")
-  renderer.root.add(slotMount)
 })
 
 afterEach(() => {
@@ -43,25 +40,25 @@ describe("Core slot binding", () => {
     const registry = createCoreSlotRegistry<AppSlot>(renderer, { appName: "core-only", version: "1.0.0" })
     let fallbackCreateCount = 0
 
-    const handle = mountCoreSlot({
+    const slot = new SlotRenderable(renderer, {
       registry,
       name: "statusbar",
-      mount: slotMount,
       fallback: () => {
         fallbackCreateCount++
         return new TestRenderable(renderer, "fallback")
       },
     })
+    renderer.root.add(slot)
 
     expect(fallbackCreateCount).toBe(1)
-    expect(slotMount.getChildren().map((child) => child.id)).toEqual(["fallback"])
+    expect(slot.getChildren().map((child) => child.id)).toEqual(["fallback"])
 
-    handle.refresh()
+    slot.refresh()
 
     expect(fallbackCreateCount).toBe(1)
-    expect(slotMount.getChildren().map((child) => child.id)).toEqual(["fallback"])
+    expect(slot.getChildren().map((child) => child.id)).toEqual(["fallback"])
 
-    handle.dispose()
+    slot.destroy()
   })
 
   test("creates plugin node once and reuses it on refresh", () => {
@@ -80,22 +77,22 @@ describe("Core slot binding", () => {
       },
     })
 
-    const handle = mountCoreSlot({
+    const slot = new SlotRenderable(renderer, {
       registry,
       name: "statusbar",
-      mount: slotMount,
     })
+    renderer.root.add(slot)
 
     expect(pluginCreateCount).toBe(1)
-    expect(slotMount.getChildren()[0]).toBe(pluginNode)
+    expect(slot.getChildren()[0]).toBe(pluginNode)
 
-    handle.refresh()
+    slot.refresh()
     registry.updateOrder("plugin-a", 10)
 
     expect(pluginCreateCount).toBe(1)
-    expect(slotMount.getChildren()[0]).toBe(pluginNode)
+    expect(slot.getChildren()[0]).toBe(pluginNode)
 
-    handle.dispose()
+    slot.destroy()
   })
 
   test("single_winner mode recreates plugins that re-enter as winner", () => {
@@ -125,30 +122,30 @@ describe("Core slot binding", () => {
       },
     })
 
-    const handle = mountCoreSlot({
+    const slot = new SlotRenderable(renderer, {
       registry,
       name: "statusbar",
-      mount: slotMount,
       mode: "single_winner",
     })
+    renderer.root.add(slot)
 
     expect(pluginACreateCount).toBe(1)
     expect(pluginBCreateCount).toBe(0)
-    expect(slotMount.getChildren().map((child) => child.id)).toEqual(["plugin-a-1"])
+    expect(slot.getChildren().map((child) => child.id)).toEqual(["plugin-a-1"])
 
     registry.updateOrder("plugin-b", -1)
 
     expect(pluginACreateCount).toBe(1)
     expect(pluginBCreateCount).toBe(1)
-    expect(slotMount.getChildren().map((child) => child.id)).toEqual(["plugin-b-1"])
+    expect(slot.getChildren().map((child) => child.id)).toEqual(["plugin-b-1"])
 
     registry.updateOrder("plugin-a", -2)
 
     expect(pluginACreateCount).toBe(2)
     expect(pluginBCreateCount).toBe(1)
-    expect(slotMount.getChildren().map((child) => child.id)).toEqual(["plugin-a-2"])
+    expect(slot.getChildren().map((child) => child.id)).toEqual(["plugin-a-2"])
 
-    handle.dispose()
+    slot.destroy()
   })
 
   test("single_winner destroys non-winning plugin nodes when winner changes", () => {
@@ -184,31 +181,31 @@ describe("Core slot binding", () => {
       },
     })
 
-    const handle = mountCoreSlot({
+    const slot = new SlotRenderable(renderer, {
       registry,
       name: "statusbar",
-      mount: slotMount,
       mode: "single_winner",
     })
+    renderer.root.add(slot)
 
-    expect(slotMount.getChildren().map((child) => child.id)).toEqual(["plugin-a-1"])
+    expect(slot.getChildren().map((child) => child.id)).toEqual(["plugin-a-1"])
     expect(pluginANodes[0]?.isDestroyed).toBe(false)
 
     registry.updateOrder("plugin-b", -1)
 
-    expect(slotMount.getChildren().map((child) => child.id)).toEqual(["plugin-b-1"])
+    expect(slot.getChildren().map((child) => child.id)).toEqual(["plugin-b-1"])
     expect(pluginANodes[0]?.isDestroyed).toBe(true)
     expect(pluginBNodes[0]?.isDestroyed).toBe(false)
 
     registry.updateOrder("plugin-a", -2)
 
-    expect(slotMount.getChildren().map((child) => child.id)).toEqual(["plugin-a-2"])
+    expect(slot.getChildren().map((child) => child.id)).toEqual(["plugin-a-2"])
     expect(pluginACreateCount).toBe(2)
     expect(pluginBCreateCount).toBe(1)
     expect(pluginANodes[1]?.isDestroyed).toBe(false)
     expect(pluginBNodes[0]?.isDestroyed).toBe(true)
 
-    handle.dispose()
+    slot.destroy()
 
     expect(pluginANodes[1]?.isDestroyed).toBe(true)
     expect(pluginBNodes[0]?.isDestroyed).toBe(true)
@@ -272,27 +269,27 @@ describe("Core slot binding", () => {
       },
     })
 
-    const handle = mountCoreSlot({
+    const slot = new SlotRenderable(renderer, {
       registry,
       name: "statusbar",
-      mount: slotMount,
       mode: "single_winner",
     })
+    renderer.root.add(slot)
 
-    expect(slotMount.getChildren().map((child) => child.id)).toEqual(["plugin-a-object"])
+    expect(slot.getChildren().map((child) => child.id)).toEqual(["plugin-a-object"])
 
     registry.updateOrder("plugin-b", -1)
 
-    expect(slotMount.getChildren().map((child) => child.id)).toEqual(["plugin-b-object"])
+    expect(slot.getChildren().map((child) => child.id)).toEqual(["plugin-b-object"])
     expect(pluginANode?.isDestroyed).toBe(false)
 
     registry.updateOrder("plugin-a", -2)
 
-    expect(slotMount.getChildren().map((child) => child.id)).toEqual(["plugin-a-object"])
+    expect(slot.getChildren().map((child) => child.id)).toEqual(["plugin-a-object"])
     expect(pluginARenderCount).toBe(2)
     expect(pluginBRenderCount).toBe(1)
 
-    handle.dispose()
+    slot.destroy()
 
     expect(pluginANode?.isDestroyed).toBe(false)
     expect(pluginBNode?.isDestroyed).toBe(false)
@@ -336,20 +333,20 @@ describe("Core slot binding", () => {
       },
     })
 
-    const handle = mountCoreSlot({
+    const slot = new SlotRenderable(renderer, {
       registry,
       name: "statusbar",
-      mount: slotMount,
       mode: "single_winner",
     })
+    renderer.root.add(slot)
 
     registry.unregister("plugin-object")
 
-    expect(slotMount.getChildren()).toEqual([])
+    expect(slot.getChildren()).toEqual([])
     expect(pluginNode?.isDestroyed).toBe(false)
     expect(lifecycleEvents).toEqual(["activate", "deactivate", "dispose"])
 
-    handle.dispose()
+    slot.destroy()
   })
 
   test("reports managed slot lifecycle hook failures without crashing", () => {
@@ -380,19 +377,19 @@ describe("Core slot binding", () => {
       },
     })
 
-    const handle = mountCoreSlot({
+    const slot = new SlotRenderable(renderer, {
       registry,
       name: "statusbar",
-      mount: slotMount,
       mode: "single_winner",
     })
+    renderer.root.add(slot)
 
     registry.unregister("managed-errors")
 
-    expect(slotMount.getChildren()).toEqual([])
+    expect(slot.getChildren()).toEqual([])
     expect(lifecycleErrors).toEqual(["setup:activate failed", "dispose:deactivate failed", "dispose:dispose failed"])
 
-    handle.dispose()
+    slot.destroy()
   })
 
   test("replace mode hides fallback and renders all ordered plugins", () => {
@@ -418,17 +415,17 @@ describe("Core slot binding", () => {
       },
     })
 
-    const handle = mountCoreSlot({
+    const slot = new SlotRenderable(renderer, {
       registry,
       name: "statusbar",
-      mount: slotMount,
       mode: "replace",
       fallback: () => new TestRenderable(renderer, "replace-fallback"),
     })
+    renderer.root.add(slot)
 
-    expect(slotMount.getChildren().map((child) => child.id)).toEqual(["early-plugin", "late-plugin"])
+    expect(slot.getChildren().map((child) => child.id)).toEqual(["early-plugin", "late-plugin"])
 
-    handle.dispose()
+    slot.destroy()
   })
 
   test("replace mode keeps healthy plugins when one plugin render fails", () => {
@@ -454,17 +451,17 @@ describe("Core slot binding", () => {
       },
     })
 
-    const handle = mountCoreSlot({
+    const slot = new SlotRenderable(renderer, {
       registry,
       name: "statusbar",
-      mount: slotMount,
       mode: "replace",
       fallback: () => new TestRenderable(renderer, "replace-fallback"),
     })
+    renderer.root.add(slot)
 
-    expect(slotMount.getChildren().map((child) => child.id)).toEqual(["healthy-plugin"])
+    expect(slot.getChildren().map((child) => child.id)).toEqual(["healthy-plugin"])
 
-    handle.dispose()
+    slot.destroy()
   })
 
   test("single_winner mode falls back when winning plugin fails", () => {
@@ -490,17 +487,17 @@ describe("Core slot binding", () => {
       },
     })
 
-    const handle = mountCoreSlot({
+    const slot = new SlotRenderable(renderer, {
       registry,
       name: "statusbar",
-      mount: slotMount,
       mode: "single_winner",
       fallback: () => new TestRenderable(renderer, "single-fallback"),
     })
+    renderer.root.add(slot)
 
-    expect(slotMount.getChildren().map((child) => child.id)).toEqual(["single-fallback"])
+    expect(slot.getChildren().map((child) => child.id)).toEqual(["single-fallback"])
 
-    handle.dispose()
+    slot.destroy()
   })
 
   test("unregister removes and destroys plugin node while keeping fallback", () => {
@@ -518,26 +515,26 @@ describe("Core slot binding", () => {
       },
     })
 
-    const handle = mountCoreSlot({
+    const slot = new SlotRenderable(renderer, {
       registry,
       name: "statusbar",
-      mount: slotMount,
       mode: "append",
       fallback: () => {
         fallbackCreateCount++
         return new TestRenderable(renderer, "fallback")
       },
     })
+    renderer.root.add(slot)
 
-    expect(slotMount.getChildren().map((child) => child.id)).toEqual(["fallback", "plugin-a"])
+    expect(slot.getChildren().map((child) => child.id)).toEqual(["fallback", "plugin-a"])
 
     registry.unregister("plugin-a")
 
     expect(fallbackCreateCount).toBe(1)
-    expect(slotMount.getChildren().map((child) => child.id)).toEqual(["fallback"])
+    expect(slot.getChildren().map((child) => child.id)).toEqual(["fallback"])
     expect(pluginNode?.isDestroyed).toBe(true)
 
-    handle.dispose()
+    slot.destroy()
   })
 
   test("clear removes mounted plugin nodes and restores fallback", () => {
@@ -555,29 +552,29 @@ describe("Core slot binding", () => {
       },
     })
 
-    const handle = mountCoreSlot({
+    const slot = new SlotRenderable(renderer, {
       registry,
       name: "statusbar",
-      mount: slotMount,
       mode: "replace",
       fallback: () => {
         fallbackCreateCount++
         return new TestRenderable(renderer, "fallback")
       },
     })
+    renderer.root.add(slot)
 
-    expect(slotMount.getChildren().map((child) => child.id)).toEqual(["plugin-a"])
+    expect(slot.getChildren().map((child) => child.id)).toEqual(["plugin-a"])
 
     registry.clear()
 
     expect(fallbackCreateCount).toBe(1)
-    expect(slotMount.getChildren().map((child) => child.id)).toEqual(["fallback"])
+    expect(slot.getChildren().map((child) => child.id)).toEqual(["fallback"])
     expect(pluginNode?.isDestroyed).toBe(true)
 
-    handle.dispose()
+    slot.destroy()
   })
 
-  test("setMode transitions reconcile mounted output", () => {
+  test("mode setter transitions reconcile mounted output", () => {
     const registry = createCoreSlotRegistry<AppSlot>(renderer, { appName: "core-only", version: "1.0.0" })
     let pluginACreateCount = 0
     let pluginBCreateCount = 0
@@ -604,32 +601,32 @@ describe("Core slot binding", () => {
       },
     })
 
-    const handle = mountCoreSlot({
+    const slot = new SlotRenderable(renderer, {
       registry,
       name: "statusbar",
-      mount: slotMount,
       mode: "append",
       fallback: () => new TestRenderable(renderer, "fallback"),
     })
+    renderer.root.add(slot)
 
-    expect(slotMount.getChildren().map((child) => child.id)).toEqual(["fallback", "plugin-a-1", "plugin-b-1"])
+    expect(slot.getChildren().map((child) => child.id)).toEqual(["fallback", "plugin-a-1", "plugin-b-1"])
 
-    handle.setMode("replace")
-    expect(slotMount.getChildren().map((child) => child.id)).toEqual(["plugin-a-1", "plugin-b-1"])
+    slot.mode = "replace"
+    expect(slot.getChildren().map((child) => child.id)).toEqual(["plugin-a-1", "plugin-b-1"])
 
-    handle.setMode("single_winner")
-    expect(slotMount.getChildren().map((child) => child.id)).toEqual(["plugin-a-1"])
+    slot.mode = "single_winner"
+    expect(slot.getChildren().map((child) => child.id)).toEqual(["plugin-a-1"])
 
-    handle.setMode("replace")
-    expect(slotMount.getChildren().map((child) => child.id)).toEqual(["plugin-a-1", "plugin-b-2"])
+    slot.mode = "replace"
+    expect(slot.getChildren().map((child) => child.id)).toEqual(["plugin-a-1", "plugin-b-2"])
 
-    handle.setMode("append")
-    expect(slotMount.getChildren().map((child) => child.id)).toEqual(["fallback", "plugin-a-1", "plugin-b-2"])
+    slot.mode = "append"
+    expect(slot.getChildren().map((child) => child.id)).toEqual(["fallback", "plugin-a-1", "plugin-b-2"])
 
-    handle.dispose()
+    slot.destroy()
   })
 
-  test("dispose clears mounted nodes and unsubscribes from registry updates", () => {
+  test("destroy clears mounted nodes and unsubscribes from registry updates", () => {
     const registry = createCoreSlotRegistry<AppSlot>(renderer, { appName: "core-only", version: "1.0.0" })
     let fallbackNode: TestRenderable | null = null
     let pluginNode: TestRenderable | null = null
@@ -644,21 +641,20 @@ describe("Core slot binding", () => {
       },
     })
 
-    const handle = mountCoreSlot({
+    const slot = new SlotRenderable(renderer, {
       registry,
       name: "statusbar",
-      mount: slotMount,
       fallback: () => {
         fallbackNode = new TestRenderable(renderer, "fallback")
         return fallbackNode
       },
     })
+    renderer.root.add(slot)
 
-    expect(slotMount.getChildren().length).toBe(2)
+    expect(slot.getChildren().length).toBe(2)
 
-    handle.dispose()
+    slot.destroy()
 
-    expect(slotMount.getChildren().length).toBe(0)
     expect(fallbackNode?.isDestroyed).toBe(true)
     expect(pluginNode?.isDestroyed).toBe(true)
 
@@ -671,7 +667,8 @@ describe("Core slot binding", () => {
       },
     })
 
-    expect(slotMount.getChildren().length).toBe(0)
+    // SlotRenderable is destroyed, so no new children should appear
+    // (it's been removed from tree by destroy())
   })
 
   test("captures async plugin renderer failures without crashing", () => {
@@ -690,22 +687,22 @@ describe("Core slot binding", () => {
       },
     })
 
-    const handle = mountCoreSlot({
+    const slot = new SlotRenderable(renderer, {
       registry,
       name: "statusbar",
-      mount: slotMount,
       fallback: () => new TestRenderable(renderer, "fallback"),
     })
+    renderer.root.add(slot)
 
-    expect(slotMount.getChildren().map((child) => child.id)).toEqual(["fallback"])
+    expect(slot.getChildren().map((child) => child.id)).toEqual(["fallback"])
     expect(errors.length).toBe(1)
     expect(errors[0]).toContain("plugin-async:statusbar:render")
     expect(errors[0]).toContain("async value")
 
-    handle.refresh()
+    slot.refresh()
     expect(errors.length).toBe(1)
 
-    handle.dispose()
+    slot.destroy()
   })
 
   test("captures non-renderable plugin values without crashing", () => {
@@ -724,16 +721,16 @@ describe("Core slot binding", () => {
       },
     })
 
-    const handle = mountCoreSlot({
+    const slot = new SlotRenderable(renderer, {
       registry,
       name: "statusbar",
-      mount: slotMount,
     })
+    renderer.root.add(slot)
 
-    expect(slotMount.getChildren()).toEqual([])
+    expect(slot.getChildren()).toEqual([])
     expect(errors).toEqual(['plugin-invalid:statusbar:render:Plugin "plugin-invalid" must return a BaseRenderable'])
 
-    handle.dispose()
+    slot.destroy()
   })
 
   test("captures plugin self-mount failures", () => {
@@ -743,25 +740,25 @@ describe("Core slot binding", () => {
       errors.push(event.error.message)
     })
 
+    const slot = new SlotRenderable(renderer, {
+      registry,
+      name: "statusbar",
+    })
+    renderer.root.add(slot)
+
     registerCorePlugin(registry, {
       id: "plugin-self",
       slots: {
         statusbar() {
-          return slotMount
+          return slot
         },
       },
     })
 
-    const handle = mountCoreSlot({
-      registry,
-      name: "statusbar",
-      mount: slotMount,
-    })
-
-    expect(slotMount.getChildren()).toEqual([])
+    expect(slot.getChildren()).toEqual([])
     expect(errors[0]).toContain("mount container")
 
-    handle.dispose()
+    slot.destroy()
   })
 
   test("captures failures when plugin returns node attached to another parent", () => {
@@ -784,17 +781,17 @@ describe("Core slot binding", () => {
       },
     })
 
-    const handle = mountCoreSlot({
+    const slot = new SlotRenderable(renderer, {
       registry,
       name: "statusbar",
-      mount: slotMount,
     })
+    renderer.root.add(slot)
 
     expect(attachedNode.parent).toBe(otherParent)
-    expect(slotMount.getChildren()).toEqual([])
+    expect(slot.getChildren()).toEqual([])
     expect(errors[0]).toContain("already attached to another parent")
 
-    handle.dispose()
+    slot.destroy()
   })
 
   test("renders plugin failure placeholder only when configured", () => {
@@ -809,28 +806,28 @@ describe("Core slot binding", () => {
       },
     })
 
-    const handleWithoutPlaceholder = mountCoreSlot({
+    const slotWithoutPlaceholder = new SlotRenderable(renderer, {
       registry,
       name: "statusbar",
-      mount: slotMount,
       fallback: () => new TestRenderable(renderer, "fallback"),
     })
+    renderer.root.add(slotWithoutPlaceholder)
 
-    expect(slotMount.getChildren().map((child) => child.id)).toEqual(["fallback"])
-    handleWithoutPlaceholder.dispose()
+    expect(slotWithoutPlaceholder.getChildren().map((child) => child.id)).toEqual(["fallback"])
+    slotWithoutPlaceholder.destroy()
 
-    const handleWithPlaceholder = mountCoreSlot({
+    const slotWithPlaceholder = new SlotRenderable(renderer, {
       registry,
       name: "statusbar",
-      mount: slotMount,
       fallback: () => new TestRenderable(renderer, "fallback"),
       pluginFailurePlaceholder(failure) {
         return new TestRenderable(renderer, `error-${failure.pluginId}`)
       },
     })
+    renderer.root.add(slotWithPlaceholder)
 
-    expect(slotMount.getChildren().map((child) => child.id)).toEqual(["fallback", "error-broken-plugin"])
-    handleWithPlaceholder.dispose()
+    expect(slotWithPlaceholder.getChildren().map((child) => child.id)).toEqual(["fallback", "error-broken-plugin"])
+    slotWithPlaceholder.destroy()
   })
 
   test("replace mode uses fallback when plugin fails and no placeholder is configured", () => {
@@ -845,16 +842,16 @@ describe("Core slot binding", () => {
       },
     })
 
-    const handle = mountCoreSlot({
+    const slot = new SlotRenderable(renderer, {
       registry,
       name: "statusbar",
-      mount: slotMount,
       mode: "replace",
       fallback: () => new TestRenderable(renderer, "fallback"),
     })
+    renderer.root.add(slot)
 
-    expect(slotMount.getChildren().map((child) => child.id)).toEqual(["fallback"])
-    handle.dispose()
+    expect(slot.getChildren().map((child) => child.id)).toEqual(["fallback"])
+    slot.destroy()
   })
 
   test("reports placeholder renderer failures separately", () => {
@@ -873,20 +870,20 @@ describe("Core slot binding", () => {
       },
     })
 
-    const handle = mountCoreSlot({
+    const slot = new SlotRenderable(renderer, {
       registry,
       name: "statusbar",
-      mount: slotMount,
       fallback: () => new TestRenderable(renderer, "fallback"),
       pluginFailurePlaceholder() {
         throw new Error("placeholder failed")
       },
     })
+    renderer.root.add(slot)
 
-    expect(slotMount.getChildren().map((child) => child.id)).toEqual(["fallback"])
+    expect(slot.getChildren().map((child) => child.id)).toEqual(["fallback"])
     expect(errors).toEqual(["render:plugin render failed", "error_placeholder:placeholder failed"])
 
-    handle.dispose()
+    slot.destroy()
   })
 
   test("cleans up plugin nodes when fallback renderer fails", () => {
@@ -904,10 +901,9 @@ describe("Core slot binding", () => {
     })
 
     expect(() => {
-      mountCoreSlot({
+      new SlotRenderable(renderer, {
         registry,
         name: "statusbar",
-        mount: slotMount,
         mode: "append",
         fallback: () => {
           return Promise.resolve(new TestRenderable(renderer, "fallback")) as unknown as TestRenderable
@@ -916,6 +912,5 @@ describe("Core slot binding", () => {
     }).toThrow("async value")
 
     expect(pluginNode?.isDestroyed).toBe(true)
-    expect(slotMount.getChildren()).toEqual([])
   })
 })

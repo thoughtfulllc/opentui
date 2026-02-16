@@ -1,5 +1,6 @@
-import { BaseRenderable } from "../Renderable"
+import { BaseRenderable, Renderable, type RenderableOptions } from "../Renderable"
 import type { CliRenderer } from "../renderer"
+import type { RenderContext } from "../types"
 import { createSlotRegistry, SlotRegistry, type SlotRegistryOptions } from "./registry"
 import type { Plugin, PluginContext, PluginErrorEvent, SlotMode } from "./types"
 
@@ -49,25 +50,6 @@ export type CoreSlotFailurePlaceholder<TContext extends PluginContext = PluginCo
   failure: PluginErrorEvent,
   ctx: Readonly<TContext>,
 ) => FallbackNodes
-
-export interface CoreSlotMountOptions<
-  TSlotName extends string,
-  K extends TSlotName,
-  TContext extends PluginContext = PluginContext,
-> {
-  registry: CoreSlotRegistry<TSlotName, TContext>
-  name: K
-  mount: BaseRenderable
-  mode?: CoreSlotMode
-  fallback?: FallbackNodes | (() => FallbackNodes)
-  pluginFailurePlaceholder?: CoreSlotFailurePlaceholder<TContext>
-}
-
-export interface CoreSlotHandle {
-  refresh: () => void
-  setMode: (mode: CoreSlotMode) => void
-  dispose: () => void
-}
 
 type CoreSlotOwnership = "host" | "plugin"
 
@@ -167,8 +149,6 @@ export function createCoreSlotRegistry<TSlotName extends string, TContext extend
   context: TContext,
   options: SlotRegistryOptions = {},
 ): CoreSlotRegistry<TSlotName, TContext> {
-  // Core slots intentionally use one registry key per renderer instance.
-  // Use createSlotRegistry with your own key if you need multiple independent registries.
   return createSlotRegistry<BaseRenderable, CoreSlotProps<TSlotName>, TContext>(
     renderer,
     "core:slot-registry",
@@ -214,51 +194,209 @@ function resolveCoreSlotEntries<
   })
 }
 
-export function mountCoreSlot<
+// -- SlotRenderable ---------------------------------------------------------
+
+export interface SlotRenderableOptions<
   TSlotName extends string,
   K extends TSlotName,
   TContext extends PluginContext = PluginContext,
->(options: CoreSlotMountOptions<TSlotName, K, TContext>): CoreSlotHandle {
-  let mode: CoreSlotMode = options.mode ?? "append"
-  let disposed = false
-  let mountedNodes: BaseRenderable[] = []
-  const pluginNodes = new Map<string, SlotNodeState<TContext>>()
-  let activePluginIds = new Set<string>()
-  let fallbackNodes: BaseRenderable[] | null = null
-  const slotName = String(options.name)
+> extends RenderableOptions {
+  registry: CoreSlotRegistry<TSlotName, TContext>
+  name: K
+  mode?: CoreSlotMode
+  fallback?: FallbackNodes | (() => FallbackNodes)
+  pluginFailurePlaceholder?: CoreSlotFailurePlaceholder<TContext>
+}
 
-  const ensureFallbackNodes = (): BaseRenderable[] => {
-    if (fallbackNodes !== null) {
-      return fallbackNodes
+export class SlotRenderable<
+  TSlotName extends string = string,
+  TContext extends PluginContext = PluginContext,
+> extends Renderable {
+  private _mode: CoreSlotMode
+  private _slotRegistry: CoreSlotRegistry<TSlotName, TContext>
+  private _slotName: TSlotName
+  private _fallbackOption: FallbackNodes | (() => FallbackNodes)
+  private _pluginFailurePlaceholder?: CoreSlotFailurePlaceholder<TContext>
+  private _disposed = false
+  private _mountedNodes: BaseRenderable[] = []
+  private _pluginNodes = new Map<string, SlotNodeState<TContext>>()
+  private _activePluginIds = new Set<string>()
+  private _fallbackNodes: BaseRenderable[] | null = null
+  private _unsubscribe: (() => void) | null = null
+
+  constructor(ctx: RenderContext, options: SlotRenderableOptions<TSlotName, TSlotName, TContext>) {
+    super(ctx, options)
+
+    this._slotRegistry = options.registry
+    this._slotName = options.name
+    this._mode = options.mode ?? "append"
+    this._fallbackOption = options.fallback
+    this._pluginFailurePlaceholder = options.pluginFailurePlaceholder
+
+    this._unsubscribe = this._slotRegistry.subscribe(() => this.refresh())
+
+    try {
+      this.refresh()
+    } catch (error) {
+      this._cleanupAll()
+      throw error
     }
-
-    const source = typeof options.fallback === "function" ? options.fallback() : options.fallback
-    const nodes = asArray(source)
-    for (const node of nodes) {
-      ensureValidNode(node, "fallback", options.mount)
-    }
-
-    fallbackNodes = nodes
-    return fallbackNodes
   }
 
-  const callManagedHook = (
+  public get mode(): CoreSlotMode {
+    return this._mode
+  }
+
+  public set mode(value: CoreSlotMode) {
+    this._mode = value
+    this.refresh()
+  }
+
+  public refresh(): void {
+    if (this._disposed) {
+      return
+    }
+
+    const allEntries = resolveCoreSlotEntries(this._slotRegistry, this._slotName)
+    const activeEntries = this._mode === "single_winner" && allEntries.length > 0 ? [allEntries[0]] : allEntries
+    const nextActivePluginIds = new Set(activeEntries.map((entry) => entry.id))
+    const registeredPluginIds = new Set(allEntries.map((entry) => entry.id))
+
+    this._cleanupInactivePluginNodes(nextActivePluginIds, registeredPluginIds)
+
+    for (const entry of activeEntries) {
+      let state = this._pluginNodes.get(entry.id)
+
+      if (!state || (state.ownership === "plugin" && state.nodes.length === 0)) {
+        try {
+          const node = entry.renderer(this._slotRegistry.context)
+          ensureValidNode(node, entry.id, this)
+          state = {
+            nodes: [node],
+            ownership: entry.ownership,
+            managedSlot: entry.managedSlot ?? state?.managedSlot,
+          }
+        } catch (error) {
+          const failure = this._slotRegistry.reportPluginError({
+            pluginId: entry.id,
+            slot: String(this._slotName),
+            phase: "render",
+            source: "core",
+            error,
+          })
+
+          state = {
+            nodes: this._resolvePluginFailurePlaceholder(failure),
+            ownership: "host",
+            managedSlot: entry.managedSlot ?? state?.managedSlot,
+          }
+        }
+
+        this._pluginNodes.set(entry.id, state)
+      }
+
+      if (!this._activePluginIds.has(entry.id)) {
+        this._callManagedHook(entry.id, state.managedSlot, "onActivate", "setup")
+      }
+    }
+
+    const desiredNodes: BaseRenderable[] = []
+
+    if (this._mode === "append" || activeEntries.length === 0) {
+      desiredNodes.push(...this._ensureFallbackNodes())
+    }
+
+    for (const entry of activeEntries) {
+      const state = this._pluginNodes.get(entry.id)
+      if (state) {
+        desiredNodes.push(...state.nodes)
+      }
+    }
+
+    if (this._mode !== "append" && desiredNodes.length === 0) {
+      desiredNodes.push(...this._ensureFallbackNodes())
+    }
+
+    this._reconcileMountedNodes(desiredNodes)
+    this._activePluginIds = nextActivePluginIds
+  }
+
+  protected override destroySelf(): void {
+    this._cleanupAll()
+  }
+
+  private _cleanupAll(): void {
+    if (this._disposed) {
+      return
+    }
+    this._disposed = true
+
+    this._unsubscribe?.()
+    this._unsubscribe = null
+
+    for (const [pluginId, state] of this._pluginNodes) {
+      if (this._activePluginIds.has(pluginId)) {
+        this._callManagedHook(pluginId, state.managedSlot, "onDeactivate", "dispose")
+      }
+
+      this._callManagedHook(pluginId, state.managedSlot, "onDispose", "dispose")
+
+      for (const node of state.nodes) {
+        this._detachNodeFromMount(node)
+      }
+
+      if (state.ownership === "host") {
+        for (const node of state.nodes) {
+          node.destroyRecursively()
+        }
+      }
+    }
+
+    this._pluginNodes.clear()
+    this._activePluginIds = new Set()
+
+    if (this._fallbackNodes) {
+      for (const node of this._fallbackNodes) {
+        node.destroyRecursively()
+      }
+      this._fallbackNodes = null
+    }
+
+    this._mountedNodes = []
+  }
+
+  private _ensureFallbackNodes(): BaseRenderable[] {
+    if (this._fallbackNodes !== null) {
+      return this._fallbackNodes
+    }
+
+    const source = typeof this._fallbackOption === "function" ? this._fallbackOption() : this._fallbackOption
+    const nodes = asArray(source)
+    for (const node of nodes) {
+      ensureValidNode(node, "fallback", this)
+    }
+
+    this._fallbackNodes = nodes
+    return this._fallbackNodes
+  }
+
+  private _callManagedHook(
     pluginId: string,
     managedSlot: CoreManagedSlot<TContext> | undefined,
     hook: "onActivate" | "onDeactivate" | "onDispose",
     phase: "setup" | "dispose",
-  ): void => {
+  ): void {
     const callback = managedSlot?.[hook]
     if (!callback) {
       return
     }
 
     try {
-      callback(options.registry.context)
+      callback(this._slotRegistry.context)
     } catch (error) {
-      options.registry.reportPluginError({
+      this._slotRegistry.reportPluginError({
         pluginId,
-        slot: slotName,
+        slot: String(this._slotName),
         phase,
         source: "core",
         error,
@@ -266,28 +404,28 @@ export function mountCoreSlot<
     }
   }
 
-  const detachNodeFromMount = (node: BaseRenderable): void => {
-    if (node.parent === options.mount) {
-      options.mount.remove(node.id)
+  private _detachNodeFromMount(node: BaseRenderable): void {
+    if (node.parent === this) {
+      this.remove(node.id)
     }
   }
 
-  const cleanupInactivePluginNodes = (nextActivePluginIds: Set<string>, registeredPluginIds: Set<string>): void => {
-    for (const [pluginId, state] of pluginNodes) {
+  private _cleanupInactivePluginNodes(nextActivePluginIds: Set<string>, registeredPluginIds: Set<string>): void {
+    for (const [pluginId, state] of this._pluginNodes) {
       if (nextActivePluginIds.has(pluginId)) {
         continue
       }
 
-      if (activePluginIds.has(pluginId)) {
-        callManagedHook(pluginId, state.managedSlot, "onDeactivate", "dispose")
+      if (this._activePluginIds.has(pluginId)) {
+        this._callManagedHook(pluginId, state.managedSlot, "onDeactivate", "dispose")
       }
 
       for (const node of state.nodes) {
-        detachNodeFromMount(node)
+        this._detachNodeFromMount(node)
       }
 
       if (!registeredPluginIds.has(pluginId)) {
-        callManagedHook(pluginId, state.managedSlot, "onDispose", "dispose")
+        this._callManagedHook(pluginId, state.managedSlot, "onDispose", "dispose")
 
         if (state.ownership === "host") {
           for (const node of state.nodes) {
@@ -295,7 +433,7 @@ export function mountCoreSlot<
           }
         }
 
-        pluginNodes.delete(pluginId)
+        this._pluginNodes.delete(pluginId)
         continue
       }
 
@@ -303,7 +441,7 @@ export function mountCoreSlot<
         for (const node of state.nodes) {
           node.destroyRecursively()
         }
-        pluginNodes.delete(pluginId)
+        this._pluginNodes.delete(pluginId)
         continue
       }
 
@@ -311,24 +449,24 @@ export function mountCoreSlot<
     }
   }
 
-  const resolvePluginFailurePlaceholder = (failure: PluginErrorEvent): BaseRenderable[] => {
-    if (!options.pluginFailurePlaceholder) {
+  private _resolvePluginFailurePlaceholder(failure: PluginErrorEvent): BaseRenderable[] {
+    if (!this._pluginFailurePlaceholder) {
       return []
     }
 
     try {
-      const placeholderSource = options.pluginFailurePlaceholder(failure, options.registry.context)
+      const placeholderSource = this._pluginFailurePlaceholder(failure, this._slotRegistry.context)
       const placeholderNodes = asArray(placeholderSource)
 
       for (const node of placeholderNodes) {
-        ensureValidNode(node, `${failure.pluginId}:error-placeholder`, options.mount)
+        ensureValidNode(node, `${failure.pluginId}:error-placeholder`, this)
       }
 
       return placeholderNodes
     } catch (placeholderError) {
-      options.registry.reportPluginError({
+      this._slotRegistry.reportPluginError({
         pluginId: failure.pluginId,
-        slot: slotName,
+        slot: String(this._slotName),
         phase: "error_placeholder",
         source: "core",
         error: placeholderError,
@@ -337,13 +475,13 @@ export function mountCoreSlot<
     }
   }
 
-  const reconcileMountedNodes = (desiredNodes: BaseRenderable[]): void => {
+  private _reconcileMountedNodes(desiredNodes: BaseRenderable[]): void {
     const desiredNodeSet = new Set(desiredNodes)
 
-    for (const node of mountedNodes) {
+    for (const node of this._mountedNodes) {
       if (!desiredNodeSet.has(node)) {
-        if (node.parent === options.mount) {
-          options.mount.remove(node.id)
+        if (node.parent === this) {
+          this.remove(node.id)
         }
       }
     }
@@ -351,143 +489,17 @@ export function mountCoreSlot<
     for (let index = 0; index < desiredNodes.length; index++) {
       const node = desiredNodes[index]
 
-      if (node.parent !== options.mount) {
-        options.mount.add(node, index)
+      if (node.parent !== this) {
+        this.add(node, index)
         continue
       }
 
-      const childAtIndex = options.mount.getChildren()[index]
+      const childAtIndex = this.getChildren()[index]
       if (childAtIndex?.id !== node.id) {
-        options.mount.add(node, index)
+        this.add(node, index)
       }
     }
 
-    mountedNodes = [...desiredNodes]
-  }
-
-  const refresh = (): void => {
-    if (disposed) {
-      return
-    }
-
-    const allEntries = resolveCoreSlotEntries(options.registry, options.name)
-    const activeEntries = mode === "single_winner" && allEntries.length > 0 ? [allEntries[0]] : allEntries
-    const nextActivePluginIds = new Set(activeEntries.map((entry) => entry.id))
-    const registeredPluginIds = new Set(allEntries.map((entry) => entry.id))
-
-    cleanupInactivePluginNodes(nextActivePluginIds, registeredPluginIds)
-
-    for (const entry of activeEntries) {
-      let state = pluginNodes.get(entry.id)
-
-      if (!state || (state.ownership === "plugin" && state.nodes.length === 0)) {
-        try {
-          const node = entry.renderer(options.registry.context)
-          ensureValidNode(node, entry.id, options.mount)
-          state = {
-            nodes: [node],
-            ownership: entry.ownership,
-            managedSlot: entry.managedSlot ?? state?.managedSlot,
-          }
-        } catch (error) {
-          const failure = options.registry.reportPluginError({
-            pluginId: entry.id,
-            slot: slotName,
-            phase: "render",
-            source: "core",
-            error,
-          })
-
-          state = {
-            nodes: resolvePluginFailurePlaceholder(failure),
-            ownership: "host",
-            managedSlot: entry.managedSlot ?? state?.managedSlot,
-          }
-        }
-
-        pluginNodes.set(entry.id, state)
-      }
-
-      if (!activePluginIds.has(entry.id)) {
-        callManagedHook(entry.id, state.managedSlot, "onActivate", "setup")
-      }
-    }
-
-    const desiredNodes: BaseRenderable[] = []
-
-    if (mode === "append" || activeEntries.length === 0) {
-      desiredNodes.push(...ensureFallbackNodes())
-    }
-
-    for (const entry of activeEntries) {
-      const state = pluginNodes.get(entry.id)
-      if (state) {
-        desiredNodes.push(...state.nodes)
-      }
-    }
-
-    if (mode !== "append" && desiredNodes.length === 0) {
-      desiredNodes.push(...ensureFallbackNodes())
-    }
-
-    reconcileMountedNodes(desiredNodes)
-    activePluginIds = nextActivePluginIds
-  }
-
-  const unsubscribe = options.registry.subscribe(refresh)
-
-  const dispose = (): void => {
-    if (disposed) {
-      return
-    }
-    disposed = true
-
-    unsubscribe()
-
-    for (const [pluginId, state] of pluginNodes) {
-      if (activePluginIds.has(pluginId)) {
-        callManagedHook(pluginId, state.managedSlot, "onDeactivate", "dispose")
-      }
-
-      callManagedHook(pluginId, state.managedSlot, "onDispose", "dispose")
-
-      for (const node of state.nodes) {
-        detachNodeFromMount(node)
-      }
-
-      if (state.ownership === "host") {
-        for (const node of state.nodes) {
-          node.destroyRecursively()
-        }
-      }
-    }
-
-    pluginNodes.clear()
-    activePluginIds = new Set()
-
-    if (fallbackNodes) {
-      for (const node of fallbackNodes) {
-        node.destroyRecursively()
-      }
-      fallbackNodes = null
-    }
-
-    mountedNodes = []
-  }
-
-  try {
-    refresh()
-  } catch (error) {
-    dispose()
-    throw error
-  }
-
-  return {
-    refresh,
-    setMode(nextMode: CoreSlotMode): void {
-      mode = nextMode
-      refresh()
-    },
-    dispose,
+    this._mountedNodes = [...desiredNodes]
   }
 }
