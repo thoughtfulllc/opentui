@@ -98,7 +98,7 @@ describe("Core slot binding", () => {
     handle.dispose()
   })
 
-  test("single_winner mode swaps active plugin without recreating previous active instance", () => {
+  test("single_winner mode recreates plugins that re-enter as winner", () => {
     const registry = createCoreSlotRegistry<AppSlot>(renderer, { appName: "core-only", version: "1.0.0" })
     let pluginACreateCount = 0
     let pluginBCreateCount = 0
@@ -144,11 +144,74 @@ describe("Core slot binding", () => {
 
     registry.updateOrder("plugin-a", -2)
 
-    expect(pluginACreateCount).toBe(1)
+    expect(pluginACreateCount).toBe(2)
     expect(pluginBCreateCount).toBe(1)
-    expect(slotMount.getChildren().map((child) => child.id)).toEqual(["plugin-a-1"])
+    expect(slotMount.getChildren().map((child) => child.id)).toEqual(["plugin-a-2"])
 
     handle.dispose()
+  })
+
+  test("single_winner destroys non-winning plugin nodes when winner changes", () => {
+    const registry = createCoreSlotRegistry<AppSlot>(renderer, { appName: "core-only", version: "1.0.0" })
+    let pluginACreateCount = 0
+    let pluginBCreateCount = 0
+    const pluginANodes: TestRenderable[] = []
+    const pluginBNodes: TestRenderable[] = []
+
+    registerCorePlugin(registry, {
+      id: "plugin-a",
+      order: 0,
+      slots: {
+        statusbar() {
+          pluginACreateCount++
+          const node = new TestRenderable(renderer, `plugin-a-${pluginACreateCount}`)
+          pluginANodes.push(node)
+          return node
+        },
+      },
+    })
+
+    registerCorePlugin(registry, {
+      id: "plugin-b",
+      order: 10,
+      slots: {
+        statusbar() {
+          pluginBCreateCount++
+          const node = new TestRenderable(renderer, `plugin-b-${pluginBCreateCount}`)
+          pluginBNodes.push(node)
+          return node
+        },
+      },
+    })
+
+    const handle = mountCoreSlot({
+      registry,
+      name: "statusbar",
+      mount: slotMount,
+      mode: "single_winner",
+    })
+
+    expect(slotMount.getChildren().map((child) => child.id)).toEqual(["plugin-a-1"])
+    expect(pluginANodes[0]?.isDestroyed).toBe(false)
+
+    registry.updateOrder("plugin-b", -1)
+
+    expect(slotMount.getChildren().map((child) => child.id)).toEqual(["plugin-b-1"])
+    expect(pluginANodes[0]?.isDestroyed).toBe(true)
+    expect(pluginBNodes[0]?.isDestroyed).toBe(false)
+
+    registry.updateOrder("plugin-a", -2)
+
+    expect(slotMount.getChildren().map((child) => child.id)).toEqual(["plugin-a-2"])
+    expect(pluginACreateCount).toBe(2)
+    expect(pluginBCreateCount).toBe(1)
+    expect(pluginANodes[1]?.isDestroyed).toBe(false)
+    expect(pluginBNodes[0]?.isDestroyed).toBe(true)
+
+    handle.dispose()
+
+    expect(pluginANodes[1]?.isDestroyed).toBe(true)
+    expect(pluginBNodes[0]?.isDestroyed).toBe(true)
   })
 
   test("replace mode hides fallback and renders all ordered plugins", () => {

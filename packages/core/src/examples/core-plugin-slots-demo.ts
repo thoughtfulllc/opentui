@@ -191,11 +191,19 @@ function createClockPlugin(rendererInstance: CliRenderer): CorePlugin<DemoSlot> 
     const timestamp = new Date().toLocaleTimeString()
 
     if (statusText) {
-      statusText.content = `Clock plugin ${timestamp}`
+      if (statusText.isDestroyed) {
+        statusText = null
+      } else {
+        statusText.content = `Clock plugin ${timestamp}`
+      }
     }
 
     if (sidebarText) {
-      sidebarText.content = `Last tick: ${timestamp}`
+      if (sidebarText.isDestroyed) {
+        sidebarText = null
+      } else {
+        sidebarText.content = `Last tick: ${timestamp}`
+      }
     }
   }
 
@@ -297,7 +305,11 @@ function createActivityPlugin(rendererInstance: CliRenderer): CorePlugin<DemoSlo
   const updateActivityText = () => {
     phase = (phase + 1) % pulse.length
     if (activityText) {
-      activityText.content = `Activity${pulse[phase]}`
+      if (activityText.isDestroyed) {
+        activityText = null
+      } else {
+        activityText.content = `Activity${pulse[phase]}`
+      }
     }
   }
 

@@ -104,16 +104,6 @@ function ensureValidNode(node: unknown, pluginId: string, mount: BaseRenderable)
   }
 }
 
-function removeFromParent(node: BaseRenderable, mount: BaseRenderable): void {
-  if (node.parent === mount) {
-    mount.remove(node.id)
-  }
-}
-
-function destroyNode(node: BaseRenderable): void {
-  node.destroyRecursively()
-}
-
 export function createCoreSlotRegistry<TSlotName extends string, TContext extends PluginContext = PluginContext>(
   renderer: CliRenderer,
   context: TContext,
@@ -181,8 +171,7 @@ export function mountCoreSlot<
       }
 
       for (const node of nodes) {
-        removeFromParent(node, options.mount)
-        destroyNode(node)
+        node.destroyRecursively()
       }
       pluginNodes.delete(pluginId)
     }
@@ -219,7 +208,9 @@ export function mountCoreSlot<
 
     for (const node of mountedNodes) {
       if (!desiredNodeSet.has(node)) {
-        removeFromParent(node, options.mount)
+        if (node.parent === options.mount) {
+          options.mount.remove(node.id)
+        }
       }
     }
 
@@ -246,9 +237,8 @@ export function mountCoreSlot<
     }
 
     const allEntries = resolveCoreSlot(options.registry, options.name)
-    cleanupRemovedPluginNodes(new Set(allEntries.map((entry) => entry.id)))
-
     const activeEntries = mode === "single_winner" && allEntries.length > 0 ? [allEntries[0]] : allEntries
+    cleanupRemovedPluginNodes(new Set(activeEntries.map((entry) => entry.id)))
 
     for (const entry of activeEntries) {
       if (pluginNodes.has(entry.id)) {
@@ -302,26 +292,21 @@ export function mountCoreSlot<
 
     unsubscribe()
 
-    for (const node of mountedNodes) {
-      removeFromParent(node, options.mount)
-    }
-    mountedNodes = []
-
     for (const nodes of pluginNodes.values()) {
       for (const node of nodes) {
-        removeFromParent(node, options.mount)
-        destroyNode(node)
+        node.destroyRecursively()
       }
     }
     pluginNodes.clear()
 
     if (fallbackNodes) {
       for (const node of fallbackNodes) {
-        removeFromParent(node, options.mount)
-        destroyNode(node)
+        node.destroyRecursively()
       }
       fallbackNodes = null
     }
+
+    mountedNodes = []
   }
 
   try {
