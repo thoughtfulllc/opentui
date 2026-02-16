@@ -31,6 +31,8 @@ export function createReactSlotRegistry<TSlots extends SlotMap, TContext extends
   context: TContext,
   options: SlotRegistryOptions = {},
 ): SlotRegistry<ReactNode, TSlots, TContext> {
+  // React slots intentionally use one registry key per renderer instance.
+  // Use createSlotRegistry from @opentui/core/plugins with a custom key for independent registries.
   return createSlotRegistry<ReactNode, TSlots, TContext>(renderer, "react:slot-registry", context, options)
 }
 
