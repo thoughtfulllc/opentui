@@ -1,9 +1,9 @@
 import { BaseRenderable } from "../Renderable"
 import type { CliRenderer } from "../renderer"
 import { createSlotRegistry, SlotRegistry, type SlotRegistryOptions } from "./registry"
-import type { Plugin, PluginContext, PluginErrorEvent } from "./types"
+import type { Plugin, PluginContext, PluginErrorEvent, SlotMode } from "./types"
 
-export type CoreSlotMode = "append" | "replace" | "single_winner"
+export type CoreSlotMode = SlotMode
 
 type CoreSlotProps<TSlotName extends string> = {
   [K in TSlotName]: undefined

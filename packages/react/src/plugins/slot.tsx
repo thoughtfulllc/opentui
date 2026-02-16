@@ -1,9 +1,9 @@
 import { createSlotRegistry, SlotRegistry, type SlotRegistryOptions } from "@opentui/core/plugins"
-import type { CliRenderer, Plugin, PluginContext, PluginErrorEvent } from "@opentui/core"
+import type { CliRenderer, Plugin, PluginContext, PluginErrorEvent, SlotMode } from "@opentui/core"
 import React, { Fragment, useEffect, useMemo, useRef, useState } from "react"
 import type { ReactNode } from "react"
 
-export type SlotMode = "append" | "replace" | "single_winner"
+export type { SlotMode }
 type SlotMap = Record<string, object>
 
 export type ReactPlugin<TSlots extends SlotMap, TContext extends PluginContext = PluginContext> = Plugin<
