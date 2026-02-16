@@ -1,6 +1,6 @@
 import { createSlotRegistry, SlotRegistry, type SlotRegistryOptions } from "@opentui/core/plugins"
 import type { CliRenderer, Plugin, PluginContext, PluginErrorEvent } from "@opentui/core"
-import { createMemo, createSignal, ErrorBoundary, onCleanup, splitProps, type JSX } from "solid-js"
+import { children, createMemo, createSignal, ErrorBoundary, onCleanup, splitProps, type JSX } from "solid-js"
 
 export type SlotMode = "append" | "replace" | "single_winner"
 type SlotMap = Record<string, object>
@@ -97,6 +97,15 @@ export function createSlot<TSlots extends SlotMap, TContext extends PluginContex
         return renderPluginFailurePlaceholder(failure, fallbackValue)
       }
 
+      const resolvedInitialRender = children(() => initialRender)
+      const hasInitialOutput = resolvedInitialRender
+        .toArray()
+        .some((node) => node !== null && node !== undefined && node !== false)
+
+      if (!hasInitialOutput) {
+        return fallbackValue
+      }
+
       return (
         <ErrorBoundary
           fallback={(error) => {
@@ -111,7 +120,7 @@ export function createSlot<TSlots extends SlotMap, TContext extends PluginContex
             return renderPluginFailurePlaceholder(failure, fallbackValue)
           }}
         >
-          {initialRender}
+          {resolvedInitialRender()}
         </ErrorBoundary>
       )
     }

@@ -437,6 +437,35 @@ describe("Solid Slot System", () => {
     expect(frame).toContain("replace-fallback-visible")
   })
 
+  it("replace mode falls back when plugin renders empty output", async () => {
+    const { setup } = await setupSlotTest(
+      (registry) => {
+        registry.register({
+          id: "empty-plugin",
+          slots: {
+            statusbar() {
+              return <></>
+            },
+          },
+        })
+
+        const Slot = createSlot(registry)
+        return (
+          <Slot name="statusbar" user="sam" mode="replace">
+            <text>replace-fallback-empty</text>
+          </Slot>
+        )
+      },
+      { width: 70, height: 6 },
+    )
+    testSetup = setup
+
+    await testSetup.renderOnce()
+    const frame = testSetup.captureCharFrame()
+
+    expect(frame).toContain("replace-fallback-empty")
+  })
+
   it("replace mode falls back when plugin subtree crashes and no placeholder is configured", async () => {
     const errors: string[] = []
 
