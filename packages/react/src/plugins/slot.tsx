@@ -47,11 +47,32 @@ export function createSlot<TSlots extends SlotMap, TContext extends PluginContex
     pluginId: string
     slotName: string
     resetToken: number
+    fallbackOnFailure?: ReactNode
     children: ReactNode
   }
 
   type PluginErrorBoundaryState = {
     failure: PluginErrorEvent | null
+  }
+
+  const renderPluginFailurePlaceholder = (failure: PluginErrorEvent, pluginId: string, slot: string): ReactNode => {
+    if (!options.pluginFailurePlaceholder) {
+      return null
+    }
+
+    try {
+      return options.pluginFailurePlaceholder(failure)
+    } catch (error) {
+      registry.reportPluginError({
+        pluginId,
+        slot,
+        phase: "error_placeholder",
+        source: "react",
+        error,
+      })
+
+      return null
+    }
   }
 
   class PluginErrorBoundary extends React.Component<PluginErrorBoundaryProps, PluginErrorBoundaryState> {
@@ -80,7 +101,12 @@ export function createSlot<TSlots extends SlotMap, TContext extends PluginContex
 
     override render(): ReactNode {
       if (this.state.failure) {
-        return options.pluginFailurePlaceholder ? options.pluginFailurePlaceholder(this.state.failure) : null
+        const placeholder = renderPluginFailurePlaceholder(this.state.failure, this.props.pluginId, this.props.slotName)
+        if (placeholder === null || placeholder === undefined || placeholder === false) {
+          return this.props.fallbackOnFailure ?? null
+        }
+
+        return placeholder
       }
 
       return this.props.children
@@ -89,6 +115,7 @@ export function createSlot<TSlots extends SlotMap, TContext extends PluginContex
 
   return function Slot<K extends keyof TSlots>(props: ReactSlotProps<TSlots, K>): ReactNode {
     const [version, setVersion] = useState(0)
+    const slotName = String(props.name)
 
     useEffect(() => {
       return registry.subscribe(() => {
@@ -98,15 +125,20 @@ export function createSlot<TSlots extends SlotMap, TContext extends PluginContex
 
     const entries = useMemo(() => registry.resolveEntries(props.name), [registry, props.name, version])
     const slotProps = getSlotProps(props)
-    const slotName = String(props.name)
 
-    const renderEntry = (entry: (typeof entries)[number]): ReactNode => {
+    const renderEntry = (entry: (typeof entries)[number], fallbackOnFailure?: ReactNode): ReactNode => {
       const key = `${slotName}:${entry.id}`
 
       try {
         const rendered = entry.renderer(registry.context, slotProps)
         return (
-          <PluginErrorBoundary key={key} pluginId={entry.id} slotName={slotName} resetToken={version}>
+          <PluginErrorBoundary
+            key={key}
+            pluginId={entry.id}
+            slotName={slotName}
+            resetToken={version}
+            fallbackOnFailure={fallbackOnFailure}
+          >
             {rendered}
           </PluginErrorBoundary>
         )
@@ -119,11 +151,12 @@ export function createSlot<TSlots extends SlotMap, TContext extends PluginContex
           error,
         })
 
-        if (!options.pluginFailurePlaceholder) {
-          return null
+        const placeholder = renderPluginFailurePlaceholder(failure, entry.id, slotName)
+        if (placeholder === null || placeholder === undefined || placeholder === false) {
+          return fallbackOnFailure ?? null
         }
 
-        return <Fragment key={key}>{options.pluginFailurePlaceholder(failure)}</Fragment>
+        return <Fragment key={key}>{placeholder}</Fragment>
       }
     }
 
@@ -132,7 +165,12 @@ export function createSlot<TSlots extends SlotMap, TContext extends PluginContex
     }
 
     if (props.mode === "single_winner") {
-      const rendered = renderEntry(entries[0])
+      const winner = entries[0]
+      if (!winner) {
+        return <>{props.children}</>
+      }
+
+      const rendered = renderEntry(winner, props.children)
       if (rendered === null || rendered === undefined || rendered === false) {
         return <>{props.children}</>
       }
@@ -141,7 +179,16 @@ export function createSlot<TSlots extends SlotMap, TContext extends PluginContex
     }
 
     if (props.mode === "replace") {
-      const renderedEntries = entries.map(renderEntry)
+      if (entries.length === 1) {
+        const rendered = renderEntry(entries[0], props.children)
+        if (rendered === null || rendered === undefined || rendered === false) {
+          return <>{props.children}</>
+        }
+
+        return <>{rendered}</>
+      }
+
+      const renderedEntries = entries.map((entry) => renderEntry(entry))
       const hasPluginOutput = renderedEntries.some((node) => node !== null && node !== undefined && node !== false)
 
       if (!hasPluginOutput) {
@@ -154,7 +201,7 @@ export function createSlot<TSlots extends SlotMap, TContext extends PluginContex
     return (
       <>
         {props.children}
-        {entries.map(renderEntry)}
+        {entries.map((entry) => renderEntry(entry))}
       </>
     )
   }
