@@ -1,5 +1,13 @@
-import { createSlotRegistry, SlotRegistry, type SlotRegistryOptions } from "@opentui/core/plugins"
-import type { CliRenderer, Plugin, PluginContext, PluginErrorEvent, SlotMode } from "@opentui/core"
+import {
+  createSlotRegistry,
+  SlotRegistry,
+  type CliRenderer,
+  type Plugin,
+  type PluginContext,
+  type PluginErrorEvent,
+  type SlotMode,
+  type SlotRegistryOptions,
+} from "@opentui/core"
 import React, { Fragment, useEffect, useMemo, useRef, useState } from "react"
 import type { ReactNode } from "react"
 
@@ -32,7 +40,7 @@ export function createReactSlotRegistry<TSlots extends SlotMap, TContext extends
   options: SlotRegistryOptions = {},
 ): SlotRegistry<ReactNode, TSlots, TContext> {
   // React slots intentionally use one registry key per renderer instance.
-  // Use createSlotRegistry from @opentui/core/plugins with a custom key for independent registries.
+  // Use createSlotRegistry from @opentui/core with a custom key for independent registries.
   return createSlotRegistry<ReactNode, TSlots, TContext>(renderer, "react:slot-registry", context, options)
 }
 
