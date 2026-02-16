@@ -57,12 +57,12 @@ createRoot(renderer).render(<App />)
 
 ## `<Slot>` props
 
-| Prop        | Type          | Required | Description                                                                                                  |
-| ----------- | ------------- | -------- | ------------------------------------------------------------------------------------------------------------ |
-| `name`      | `keyof Slots` | yes      | Which slot to render                                                                                         |
-| `mode`      | `SlotMode`    | no       | `"append"` (default), `"replace"`, or `"single_winner"`. See [slot modes](/docs/plugins/slots#4-slot-modes). |
-| `children`  | `ReactNode`   | no       | Fallback UI                                                                                                  |
-| _remaining_ | `Slots[name]` | —        | Slot-specific props forwarded to plugin renderers                                                            |
+| Prop        | Type          | Required | Description                                                                                                |
+| ----------- | ------------- | -------- | ---------------------------------------------------------------------------------------------------------- |
+| `name`      | `keyof Slots` | yes      | Which slot to render                                                                                       |
+| `mode`      | `SlotMode`    | no       | `"append"` (default), `"replace"`, or `"single_winner"`. See [slot modes](/docs/plugins/slots#slot-modes). |
+| `children`  | `ReactNode`   | no       | Fallback UI                                                                                                |
+| _remaining_ | `Slots[name]` | —        | Slot-specific props forwarded to plugin renderers                                                          |
 
 ## `ReactSlotOptions`
 

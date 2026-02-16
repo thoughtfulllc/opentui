@@ -19,7 +19,7 @@ On top of `createSlotRegistry`, core provides:
 - `SlotRenderable` — a `Renderable` that mounts a slot into the renderable tree
 - `resolveCoreSlot` — resolve slot entries without mounting
 
-Core slots do not have per-slot props. Each slot renderer receives only the host context: `(ctx) => BaseRenderable`. Use the overview page's `createSlotRegistry` directly if you need per-slot props without a framework binding.
+**Important:** Unlike the generic `Plugin` interface on the [overview page](/docs/plugins/slots), core slots do not have per-slot props. Each slot renderer receives only the host context — `(ctx) => BaseRenderable` — not `(ctx, props)`. This is because core slots are framework-free renderables that mount directly into the tree rather than being called with JSX props. If you need per-slot props without a framework binding, use `createSlotRegistry` from the overview page directly.
 
 `createCoreSlotRegistry` accepts the same [`SlotRegistryOptions`](/docs/plugins/slots#registry-options) as `createSlotRegistry`.
 
@@ -98,23 +98,23 @@ Because `SlotRenderable` extends `Renderable`, it accepts all standard layout op
 
 ## `SlotRenderable` options
 
-| Option                     | Type                                                                | Required | Description                                                                                                  |
-| -------------------------- | ------------------------------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------ |
-| `id`                       | `string`                                                            | yes      | Unique renderable identifier (inherited from `RenderableOptions`)                                            |
-| `registry`                 | `CoreSlotRegistry`                                                  | yes      | The registry to read plugins from                                                                            |
-| `name`                     | slot name                                                           | yes      | Which slot to mount                                                                                          |
-| `mode`                     | `SlotMode`                                                          | no       | `"append"` (default), `"replace"`, or `"single_winner"`. See [slot modes](/docs/plugins/slots#4-slot-modes). |
-| `fallback`                 | `BaseRenderable \| BaseRenderable[] \| () => ...`                   | no       | Fallback nodes or a factory that creates them                                                                |
-| `pluginFailurePlaceholder` | `(failure, ctx) => BaseRenderable \| BaseRenderable[] \| undefined` | no       | Creates placeholder UI when a plugin throws                                                                  |
-| _...layout options_        | `RenderableOptions`                                                 | no       | Standard layout props: `width`, `height`, `flexDirection`, `padding`, etc.                                   |
+| Option                     | Type                                                                | Required | Description                                                                                                |
+| -------------------------- | ------------------------------------------------------------------- | -------- | ---------------------------------------------------------------------------------------------------------- |
+| `id`                       | `string`                                                            | yes      | Unique renderable identifier (inherited from `RenderableOptions`)                                          |
+| `registry`                 | `CoreSlotRegistry`                                                  | yes      | The registry to read plugins from                                                                          |
+| `name`                     | slot name                                                           | yes      | Which slot to mount                                                                                        |
+| `mode`                     | `SlotMode`                                                          | no       | `"append"` (default), `"replace"`, or `"single_winner"`. See [slot modes](/docs/plugins/slots#slot-modes). |
+| `fallback`                 | `BaseRenderable \| BaseRenderable[] \| () => ...`                   | no       | Fallback nodes or a factory that creates them                                                              |
+| `pluginFailurePlaceholder` | `(failure, ctx) => BaseRenderable \| BaseRenderable[] \| undefined` | no       | Creates placeholder UI when a plugin throws                                                                |
+| _...layout options_        | `RenderableOptions`                                                 | no       | Standard layout props: `width`, `height`, `flexDirection`, `padding`, etc.                                 |
 
 ## Instance API
 
-| Member      | Description                                                                                               |
-| ----------- | --------------------------------------------------------------------------------------------------------- |
-| `mode`      | Getter/setter. Changing the mode automatically refreshes the slot.                                        |
-| `refresh()` | Re-resolve plugins and reconcile mounted children.                                                        |
-| `destroy()` | Standard `Renderable.destroy()` — unsubscribes, detaches all nodes, calls managed slot `onDispose` hooks. |
+| Member      | Description                                                                                                                                                                                                                                                                                                                                                                                  |
+| ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `mode`      | Getter/setter. Changing the mode automatically refreshes the slot.                                                                                                                                                                                                                                                                                                                           |
+| `refresh()` | Re-resolve plugins and reconcile mounted children.                                                                                                                                                                                                                                                                                                                                           |
+| `destroy()` | Inherits from `Renderable`. In addition to the standard cleanup, `SlotRenderable` unsubscribes from the registry, calls `onDeactivate` on active managed slots, then calls `onDispose` on all managed slots. Host-owned nodes (plain function contributions) are destroyed; plugin-owned nodes (managed slot contributions) are detached but left for the plugin to clean up in `onDispose`. |
 
 ## `resolveCoreSlot`
 
