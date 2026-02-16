@@ -214,6 +214,187 @@ describe("Core slot binding", () => {
     expect(pluginBNodes[0]?.isDestroyed).toBe(true)
   })
 
+  test("single_winner object slots use activate/deactivate lifecycle and are not host-destroyed", () => {
+    const registry = createCoreSlotRegistry<AppSlot>(renderer, { appName: "core-only", version: "1.0.0" })
+    const lifecycleEvents: string[] = []
+    let pluginARenderCount = 0
+    let pluginBRenderCount = 0
+    let pluginANode: TestRenderable | null = null
+    let pluginBNode: TestRenderable | null = null
+
+    registerCorePlugin(registry, {
+      id: "plugin-a",
+      order: 0,
+      slots: {
+        statusbar: {
+          render() {
+            pluginARenderCount++
+            if (!pluginANode) {
+              pluginANode = new TestRenderable(renderer, "plugin-a-object")
+            }
+            return pluginANode
+          },
+          onActivate() {
+            lifecycleEvents.push("a:activate")
+          },
+          onDeactivate() {
+            lifecycleEvents.push("a:deactivate")
+          },
+          onDispose() {
+            lifecycleEvents.push("a:dispose")
+          },
+        },
+      },
+    })
+
+    registerCorePlugin(registry, {
+      id: "plugin-b",
+      order: 10,
+      slots: {
+        statusbar: {
+          render() {
+            pluginBRenderCount++
+            if (!pluginBNode) {
+              pluginBNode = new TestRenderable(renderer, "plugin-b-object")
+            }
+            return pluginBNode
+          },
+          onActivate() {
+            lifecycleEvents.push("b:activate")
+          },
+          onDeactivate() {
+            lifecycleEvents.push("b:deactivate")
+          },
+          onDispose() {
+            lifecycleEvents.push("b:dispose")
+          },
+        },
+      },
+    })
+
+    const handle = mountCoreSlot({
+      registry,
+      name: "statusbar",
+      mount: slotMount,
+      mode: "single_winner",
+    })
+
+    expect(slotMount.getChildren().map((child) => child.id)).toEqual(["plugin-a-object"])
+
+    registry.updateOrder("plugin-b", -1)
+
+    expect(slotMount.getChildren().map((child) => child.id)).toEqual(["plugin-b-object"])
+    expect(pluginANode?.isDestroyed).toBe(false)
+
+    registry.updateOrder("plugin-a", -2)
+
+    expect(slotMount.getChildren().map((child) => child.id)).toEqual(["plugin-a-object"])
+    expect(pluginARenderCount).toBe(2)
+    expect(pluginBRenderCount).toBe(1)
+
+    handle.dispose()
+
+    expect(pluginANode?.isDestroyed).toBe(false)
+    expect(pluginBNode?.isDestroyed).toBe(false)
+    expect(lifecycleEvents).toEqual([
+      "a:activate",
+      "a:deactivate",
+      "b:activate",
+      "b:deactivate",
+      "a:activate",
+      "a:deactivate",
+      "a:dispose",
+      "b:dispose",
+    ])
+  })
+
+  test("single_winner object slot dispose runs on unregister", () => {
+    const registry = createCoreSlotRegistry<AppSlot>(renderer, { appName: "core-only", version: "1.0.0" })
+    const lifecycleEvents: string[] = []
+    let pluginNode: TestRenderable | null = null
+
+    registerCorePlugin(registry, {
+      id: "plugin-object",
+      slots: {
+        statusbar: {
+          render() {
+            if (!pluginNode) {
+              pluginNode = new TestRenderable(renderer, "plugin-object")
+            }
+            return pluginNode
+          },
+          onActivate() {
+            lifecycleEvents.push("activate")
+          },
+          onDeactivate() {
+            lifecycleEvents.push("deactivate")
+          },
+          onDispose() {
+            lifecycleEvents.push("dispose")
+          },
+        },
+      },
+    })
+
+    const handle = mountCoreSlot({
+      registry,
+      name: "statusbar",
+      mount: slotMount,
+      mode: "single_winner",
+    })
+
+    registry.unregister("plugin-object")
+
+    expect(slotMount.getChildren()).toEqual([])
+    expect(pluginNode?.isDestroyed).toBe(false)
+    expect(lifecycleEvents).toEqual(["activate", "deactivate", "dispose"])
+
+    handle.dispose()
+  })
+
+  test("reports managed slot lifecycle hook failures without crashing", () => {
+    const registry = createCoreSlotRegistry<AppSlot>(renderer, { appName: "core-only", version: "1.0.0" })
+    const lifecycleErrors: string[] = []
+
+    registry.onPluginError((event) => {
+      lifecycleErrors.push(`${event.phase}:${event.error.message}`)
+    })
+
+    registerCorePlugin(registry, {
+      id: "managed-errors",
+      slots: {
+        statusbar: {
+          render() {
+            return new TestRenderable(renderer, "managed-errors")
+          },
+          onActivate() {
+            throw new Error("activate failed")
+          },
+          onDeactivate() {
+            throw new Error("deactivate failed")
+          },
+          onDispose() {
+            throw new Error("dispose failed")
+          },
+        },
+      },
+    })
+
+    const handle = mountCoreSlot({
+      registry,
+      name: "statusbar",
+      mount: slotMount,
+      mode: "single_winner",
+    })
+
+    registry.unregister("managed-errors")
+
+    expect(slotMount.getChildren()).toEqual([])
+    expect(lifecycleErrors).toEqual(["setup:activate failed", "dispose:deactivate failed", "dispose:dispose failed"])
+
+    handle.dispose()
+  })
+
   test("replace mode hides fallback and renders all ordered plugins", () => {
     const registry = createCoreSlotRegistry<AppSlot>(renderer, { appName: "core-only", version: "1.0.0" })
 
