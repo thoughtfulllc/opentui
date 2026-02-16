@@ -31,7 +31,6 @@ import {
   mountCoreSlot,
   registerCorePlugin,
   TextRenderable,
-  type CorePlugin,
 } from "@opentui/core"
 
 type Slots = "statusbar"
@@ -60,7 +59,7 @@ const unregister = registerCorePlugin(registry, {
       })
     },
   },
-} satisfies CorePlugin<Slots, typeof context>)
+})
 
 const handle = mountCoreSlot({
   registry,
