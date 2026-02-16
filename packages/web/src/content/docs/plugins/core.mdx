@@ -14,11 +14,12 @@ If you have not read the shared model yet, start with [Plugin Slots](/docs/plugi
 
 On top of `createSlotRegistry`, core provides:
 
-- `createCoreSlotRegistry`
-- `registerCorePlugin`
-- `mountCoreSlot`
+- `createCoreSlotRegistry` — create a registry typed for `BaseRenderable` nodes
+- `registerCorePlugin` — register a plugin using the core-specific `CorePlugin` interface
+- `mountCoreSlot` — mount a slot into a `BaseRenderable` container
+- `resolveCoreSlot` — resolve slot entries without mounting
 
-These APIs are for plugins that return `BaseRenderable` nodes.
+Core slots do not have per-slot props. Each slot renderer receives only the host context: `(ctx) => BaseRenderable`. Use the overview page's `createSlotRegistry` directly if you need per-slot props without a framework binding.
 
 ## Basic usage
 
@@ -48,7 +49,7 @@ renderer.root.add(mount)
 
 const registry = createCoreSlotRegistry<Slots, typeof context>(renderer, context)
 
-registerCorePlugin(registry, {
+const unregister = registerCorePlugin(registry, {
   id: "clock-plugin",
   order: 0,
   slots: {
@@ -79,13 +80,33 @@ handle.refresh()
 handle.dispose()
 ```
 
-## Slot modes
+## `mountCoreSlot` options
 
-| Mode            | Behavior                                                 |
-| --------------- | -------------------------------------------------------- |
-| `append`        | Fallback + plugin output                                 |
-| `replace`       | Plugin output only; fallback only when no output remains |
-| `single_winner` | Only first plugin by resolved order                      |
+| Option                     | Type                                                                | Required | Description                                                                                                  |
+| -------------------------- | ------------------------------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------ |
+| `registry`                 | `CoreSlotRegistry`                                                  | yes      | The registry to read plugins from                                                                            |
+| `name`                     | slot name                                                           | yes      | Which slot to mount                                                                                          |
+| `mount`                    | `BaseRenderable`                                                    | yes      | Container node to attach plugin output into                                                                  |
+| `mode`                     | `SlotMode`                                                          | no       | `"append"` (default), `"replace"`, or `"single_winner"`. See [slot modes](/docs/plugins/slots#4-slot-modes). |
+| `fallback`                 | `BaseRenderable \| BaseRenderable[] \| () => ...`                   | no       | Fallback nodes or a factory that creates them                                                                |
+| `pluginFailurePlaceholder` | `(failure, ctx) => BaseRenderable \| BaseRenderable[] \| undefined` | no       | Creates placeholder UI when a plugin throws                                                                  |
+
+The returned `CoreSlotHandle` has three methods:
+
+- `refresh()` — re-resolve plugins and reconcile mounted nodes
+- `setMode(mode)` — change the slot mode and refresh
+- `dispose()` — unsubscribe, detach all nodes, and call managed slot `onDispose` hooks
+
+## `resolveCoreSlot`
+
+Resolve slot entries without mounting them. Useful when you need to inspect or render plugin output manually.
+
+```typescript
+import { resolveCoreSlot } from "@opentui/core"
+
+const entries = resolveCoreSlot(registry, "statusbar")
+// Array<{ id: string, renderer: (ctx) => BaseRenderable }>
+```
 
 ## Plugin failure placeholders
 
@@ -97,7 +118,7 @@ const handle = mountCoreSlot({
   name: "statusbar",
   mount,
   fallback: () => new TextRenderable(renderer, { id: "fallback", content: "fallback" }),
-  pluginFailurePlaceholder(failure) {
+  pluginFailurePlaceholder(failure, ctx) {
     return new TextRenderable(renderer, {
       id: `error-${failure.pluginId}`,
       content: `plugin error: ${failure.pluginId}`,
@@ -108,7 +129,7 @@ const handle = mountCoreSlot({
 
 ## Managed slot contributions
 
-A core slot contribution can be a function, or an object with lifecycle hooks:
+A core slot contribution can be a plain function or a managed slot object with lifecycle hooks:
 
 ```typescript
 registerCorePlugin(registry, {
@@ -118,19 +139,25 @@ registerCorePlugin(registry, {
       render() {
         return new TextRenderable(renderer, { id: "managed", content: "managed" })
       },
-      onActivate() {
-        // plugin became active in this slot
+      onActivate(ctx) {
+        // plugin became active in this slot (visible)
       },
-      onDeactivate() {
-        // plugin is no longer active in this slot
+      onDeactivate(ctx) {
+        // plugin is no longer active (e.g. mode changed to single_winner and this plugin lost)
       },
-      onDispose() {
+      onDispose(ctx) {
         // plugin is removed/disposed for this slot
       },
     },
   },
 })
 ```
+
+### Node ownership
+
+When a slot contribution is a **plain function**, the host owns the returned nodes. On deactivation or disposal, the host detaches and destroys them.
+
+When a slot contribution is a **managed slot object**, the plugin owns the nodes. On deactivation the host detaches them but does _not_ destroy them — the plugin can reuse them if it becomes active again. On disposal, `onDispose` is called so the plugin can clean up.
 
 ## Observability
 

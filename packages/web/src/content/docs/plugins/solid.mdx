@@ -12,8 +12,8 @@ If you have not read the shared model yet, start with [Plugin Slots](/docs/plugi
 
 ## What Solid adds
 
-- `createSolidSlotRegistry(renderer, context)`
-- `createSlot(registry, options?)` -> typed `<Slot />` component
+- `createSolidSlotRegistry(renderer, context, options?)` — create a registry typed for `JSX.Element`
+- `createSlot(registry, options?)` — returns a typed `<Slot />` component
 
 ## Basic usage
 
@@ -30,7 +30,7 @@ const renderer = await createCliRenderer()
 
 const registry = createSolidSlotRegistry<Slots, typeof context>(renderer, context)
 
-registry.register({
+const unregister = registry.register({
   id: "clock-plugin",
   slots: {
     statusbar(ctx, props) {
@@ -50,12 +50,14 @@ const App = () => (
 render(() => <App />, renderer)
 ```
 
-## Slot props
+## `<Slot>` props
 
-- `name`: slot name (`keyof Slots`)
-- `mode`: `append` | `replace` | `single_winner`
-- remaining props: slot-specific props for the chosen `name`
-- `children`: fallback UI
+| Prop        | Type          | Required | Description                                                                                                  |
+| ----------- | ------------- | -------- | ------------------------------------------------------------------------------------------------------------ |
+| `name`      | `keyof Slots` | yes      | Which slot to render                                                                                         |
+| `mode`      | `SlotMode`    | no       | `"append"` (default), `"replace"`, or `"single_winner"`. See [slot modes](/docs/plugins/slots#4-slot-modes). |
+| `children`  | `JSX.Element` | no       | Fallback UI                                                                                                  |
+| _remaining_ | `Slots[name]` | —        | Slot-specific props forwarded to plugin renderers                                                            |
 
 ## Plugin failure placeholders
 
@@ -67,7 +69,9 @@ const Slot = createSlot(registry, {
 })
 ```
 
-If a plugin throws, the slot renders the placeholder (or fallback if no placeholder output is provided).
+If a plugin throws, the slot renders the placeholder. If no placeholder is provided (or it returns `null`), the slot falls back to `children`.
+
+Plugins that throw during the initial render call are caught inline. Plugins that throw during a Solid re-render are caught by an internal `<ErrorBoundary>` that reports the error to the registry.
 
 ## Observability
 
