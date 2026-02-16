@@ -13,10 +13,13 @@ The host application defines named slots. Plugins contribute UI for those slots.
 ## Concepts
 
 - **Host**: defines slot names and slot prop types.
-- **Plugin**: contributes one or more slot renderer callbacks.
+- **Plugin**: contributes one or more slot renderer callbacks. May include lifecycle hooks.
 - **Registry**: registers plugins and resolves contributions for a slot.
+- **Slot mode**: controls how plugin output and fallback UI combine (`append`, `replace`, or `single_winner`).
 
 ## 1) Define slots and host context
+
+Slot names map to the props each slot receives. The host context is a shared object passed to every plugin renderer.
 
 ```typescript
 import type { PluginContext } from "@opentui/core"
@@ -32,6 +35,8 @@ interface AppContext extends PluginContext {
 }
 ```
 
+`PluginContext` is an alias for `object`. Extending it is optional but communicates intent.
+
 ## 2) Create a registry
 
 ```typescript
@@ -42,14 +47,34 @@ const context = { appName: "my-app", version: "1.0.0" }
 const registry = createSlotRegistry<string, AppSlots, typeof context>(renderer, "my-app:plugins", context)
 ```
 
-`createSlotRegistry` is renderer-scoped. For a given `(renderer, key)` pair, you get the same registry instance.
+`createSlotRegistry` is renderer-scoped. For a given `(renderer, key)` pair, you always get the same registry instance. The `key` parameter namespaces registries within a renderer so multiple independent registries can coexist.
+
+When the renderer is destroyed, all registries scoped to it are automatically cleared and disposed.
+
+The framework-specific helpers (`createCoreSlotRegistry`, `createReactSlotRegistry`, `createSolidSlotRegistry`) call `createSlotRegistry` internally with a fixed key. Use `createSlotRegistry` directly only if you need multiple independent registries per renderer.
+
+### Registry options
+
+All `create*SlotRegistry` functions accept an optional `SlotRegistryOptions` object:
+
+| Option              | Type                                | Default | Description                                                 |
+| ------------------- | ----------------------------------- | ------- | ----------------------------------------------------------- |
+| `onPluginError`     | `(event: PluginErrorEvent) => void` | —       | Callback invoked on every plugin error                      |
+| `debugPluginErrors` | `boolean`                           | `false` | When `true`, errors are also logged via `console.debug`     |
+| `maxPluginErrors`   | `number`                            | `100`   | Maximum number of buffered errors before oldest are dropped |
 
 ## 3) Register plugins
 
 ```typescript
-registry.register({
+const unregister = registry.register({
   id: "clock-plugin",
   order: 0,
+  setup(ctx, renderer) {
+    // called once on registration — initialize resources here
+  },
+  dispose() {
+    // called when the plugin is unregistered — clean up resources here
+  },
   slots: {
     statusbar(ctx, props) {
       return `${ctx.appName}:${props.user}`
@@ -57,30 +82,72 @@ registry.register({
   },
 })
 
-registry.register({
-  id: "sidebar-plugin",
-  order: 10,
-  slots: {
-    sidebar(_ctx, props) {
-      return `section:${props.section}`
-    },
-  },
-})
+// later: remove this plugin
+unregister()
 ```
 
-## 4) Resolve contributions
+`register()` returns an unregister function. Calling it removes the plugin and invokes its `dispose` hook.
+
+### Plugin interface
+
+| Field     | Type                                    | Required | Description                                                                      |
+| --------- | --------------------------------------- | -------- | -------------------------------------------------------------------------------- |
+| `id`      | `string`                                | yes      | Unique identifier. Duplicate ids throw.                                          |
+| `order`   | `number`                                | no       | Sort priority (ascending). Defaults to `0`.                                      |
+| `setup`   | `(ctx, renderer) => void`               | no       | Called once at registration time. If it throws, the plugin is not registered.    |
+| `dispose` | `() => void`                            | no       | Called when the plugin is unregistered or the registry is cleared.               |
+| `slots`   | `{ [slotName]: (ctx, props) => TNode }` | yes      | Slot renderer callbacks. Each receives the host context and slot-specific props. |
+
+### Ordering
+
+Plugins are resolved in this order:
+
+1. `order` ascending (lower numbers first)
+2. Registration order (earlier registrations first)
+3. `id` lexicographic (tie-breaker)
+
+## 4) Slot modes
+
+Every slot mount or `<Slot>` component accepts a `mode`. The mode controls how plugin output and fallback UI combine.
+
+| Mode            | Behavior                                                                   |
+| --------------- | -------------------------------------------------------------------------- |
+| `append`        | Fallback first, then all plugin output (default)                           |
+| `replace`       | Plugin output only; fallback shown only when no plugins produce output     |
+| `single_winner` | Only the first plugin by resolved order; fallback if it produces no output |
+
+## 5) Resolve contributions
 
 ```typescript
 const entries = registry.resolveEntries("statusbar")
-// [{ id, renderer: slotRendererFn }, ...]
+// Array<{ id: string, renderer: (ctx, props) => TNode }>
 
 const slotRenderers = registry.resolve("statusbar")
-// [slotRendererFn, ...]
+// Array<(ctx, props) => TNode>
 ```
 
-`renderer` here means the plugin's **slot renderer callback** (`(ctx, props) => node`), not the `CliRenderer` instance.
+`renderer` here means the plugin's **slot renderer callback**, not the `CliRenderer` instance.
 
-Use `resolveEntries` when you need plugin ids. Use `resolve` when you only need callbacks.
+Use `resolveEntries` when you need plugin ids alongside the callbacks. Use `resolve` when you only need the callbacks.
+
+## Registry methods
+
+| Method                      | Description                                                                                                                 |
+| --------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `register(plugin)`          | Add a plugin. Returns an unregister function.                                                                               |
+| `unregister(id)`            | Remove a plugin by id. Returns `true` if found.                                                                             |
+| `updateOrder(id, order)`    | Change a plugin's sort order. Returns `true` if found.                                                                      |
+| `clear()`                   | Remove and dispose all plugins.                                                                                             |
+| `resolve(slot)`             | Return ordered slot renderer callbacks.                                                                                     |
+| `resolveEntries(slot)`      | Return ordered `{ id, renderer }` entries.                                                                                  |
+| `subscribe(listener)`       | Listen for registration changes. Returns an unsubscribe function. Used internally by React and Solid to trigger re-renders. |
+| `configure(options)`        | Update `SlotRegistryOptions` after creation.                                                                                |
+| `onPluginError(listener)`   | Listen for plugin errors. Returns an unsubscribe function.                                                                  |
+| `getPluginErrors()`         | Return buffered `PluginErrorEvent` array.                                                                                   |
+| `clearPluginErrors()`       | Clear the error buffer.                                                                                                     |
+| `reportPluginError(report)` | Manually report a plugin error. Used by framework integrations.                                                             |
+| `renderer`                  | Getter — the `CliRenderer` this registry is scoped to.                                                                      |
+| `context`                   | Getter — the host context object.                                                                                           |
 
 ## Error handling
 
@@ -99,10 +166,21 @@ const history = registry.getPluginErrors()
 registry.clearPluginErrors()
 ```
 
+### PluginErrorEvent
+
+| Field       | Type                  | Description                                                  |
+| ----------- | --------------------- | ------------------------------------------------------------ |
+| `pluginId`  | `string`              | The plugin that caused the error                             |
+| `slot`      | `string \| undefined` | The slot name, if the error is slot-specific                 |
+| `phase`     | `PluginErrorPhase`    | `"setup"`, `"render"`, `"dispose"`, or `"error_placeholder"` |
+| `source`    | `PluginErrorSource`   | `"registry"`, `"core"`, `"react"`, or `"solid"`              |
+| `error`     | `Error`               | The normalized error object                                  |
+| `timestamp` | `number`              | `Date.now()` at the time of the error                        |
+
 ## Next: concrete host APIs
 
 Use the shared model above with one of these host integrations:
 
-- [Core slots](/docs/plugins/core)
-- [React slots](/docs/plugins/react)
-- [Solid slots](/docs/plugins/solid)
+- [Core slots](/docs/plugins/core) — framework-free, returns `BaseRenderable` nodes
+- [React slots](/docs/plugins/react) — returns `ReactNode`
+- [Solid slots](/docs/plugins/solid) — returns `JSX.Element`
