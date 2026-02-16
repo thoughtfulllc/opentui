@@ -2,6 +2,8 @@ import type { CliRenderer } from "../renderer"
 
 export type PluginContext = object
 
+export type SlotMode = "append" | "replace" | "single_winner"
+
 export type PluginErrorPhase = "setup" | "render" | "dispose" | "error_placeholder"
 
 export type PluginErrorSource = "registry" | "core" | "react" | "solid"
