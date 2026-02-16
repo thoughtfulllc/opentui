@@ -3,11 +3,10 @@ import {
   type CliRenderer,
   createCliRenderer,
   createCoreSlotRegistry,
-  mountCoreSlot,
   registerCorePlugin,
+  SlotRenderable,
   TextRenderable,
   type CorePlugin,
-  type CoreSlotHandle,
   type CoreSlotMode,
   type CoreSlotRegistry,
   type PluginErrorEvent,
@@ -24,14 +23,12 @@ interface PluginStats {
 
 let renderer: CliRenderer | null = null
 let rootContainer: BoxRenderable | null = null
-let statusbarSlotMount: BoxRenderable | null = null
-let sidebarSlotMount: BoxRenderable | null = null
+let statusbarSlot: SlotRenderable<DemoSlot> | null = null
+let sidebarSlot: SlotRenderable<DemoSlot> | null = null
 let infoPanel: BoxRenderable | null = null
 let infoText: TextRenderable | null = null
 
 let slotRegistry: CoreSlotRegistry<DemoSlot> | null = null
-let statusbarSlotHandle: CoreSlotHandle | null = null
-let sidebarSlotHandle: CoreSlotHandle | null = null
 
 let unregisterClockPlugin: (() => void) | null = null
 let unregisterActivityPlugin: (() => void) | null = null
@@ -134,8 +131,8 @@ function remountEnabledPlugins(): void {
     unregisterActivityPlugin = registerCorePlugin(slotRegistry, createActivityPlugin(renderer))
   }
 
-  statusbarSlotHandle?.refresh()
-  sidebarSlotHandle?.refresh()
+  statusbarSlot?.refresh()
+  sidebarSlot?.refresh()
 }
 
 function resetPluginFailureState(): void {
@@ -526,7 +523,9 @@ function handleKeyPress(key: KeyEvent): void {
       break
     case "m":
       statusbarMode = nextStatusbarMode(statusbarMode)
-      statusbarSlotHandle?.setMode(statusbarMode)
+      if (statusbarSlot) {
+        statusbarSlot.mode = statusbarMode
+      }
       updateInfoPanel()
       break
     case "o":
@@ -536,8 +535,8 @@ function handleKeyPress(key: KeyEvent): void {
       updateInfoPanel()
       break
     case "r":
-      statusbarSlotHandle?.refresh()
-      sidebarSlotHandle?.refresh()
+      statusbarSlot?.refresh()
+      sidebarSlot?.refresh()
       updateInfoPanel()
       break
     case "e":
@@ -576,35 +575,11 @@ function createLayout(rendererInstance: CliRenderer): void {
     backgroundColor: "#020617",
   })
 
-  statusbarSlotMount = new BoxRenderable(rendererInstance, {
-    id: "core-plugin-demo-statusbar-slot",
-    width: "100%",
-    height: 5,
-    border: true,
-    borderStyle: "single",
-    borderColor: "#334155",
-    alignItems: "center",
-    flexDirection: "row",
-    paddingLeft: 1,
-    marginBottom: 1,
-  })
-
   const body = new BoxRenderable(rendererInstance, {
     id: "core-plugin-demo-body",
     width: "100%",
     flexGrow: 1,
     flexDirection: "row",
-  })
-
-  sidebarSlotMount = new BoxRenderable(rendererInstance, {
-    id: "core-plugin-demo-sidebar-slot",
-    width: 36,
-    border: true,
-    borderStyle: "single",
-    borderColor: "#334155",
-    flexDirection: "column",
-    padding: 1,
-    marginRight: 1,
   })
 
   infoPanel = new BoxRenderable(rendererInstance, {
@@ -624,12 +599,14 @@ function createLayout(rendererInstance: CliRenderer): void {
   })
 
   infoPanel.add(infoText)
-  body.add(sidebarSlotMount)
-  body.add(infoPanel)
 
-  rootContainer.add(statusbarSlotMount)
   rootContainer.add(body)
   rendererInstance.root.add(rootContainer)
+
+  // The SlotRenderables are created later in run() after the registry exists,
+  // but we need to save the body reference to add them.
+  // We'll add the slots in run() instead.
+  ;(rootContainer as any).__body = body
 }
 
 export function run(rendererInstance: CliRenderer): void {
@@ -648,20 +625,28 @@ export function run(rendererInstance: CliRenderer): void {
     version: "1.0.0",
   })
 
-  if (!slotRegistry || !statusbarSlotMount || !sidebarSlotMount) {
+  if (!slotRegistry || !rootContainer) {
     return
   }
+
+  const body = (rootContainer as any).__body as BoxRenderable
 
   unregisterPluginErrorListener = slotRegistry.onPluginError((event) => {
     pushPluginError(event)
     updateInfoPanel()
   })
 
-  statusbarSlotHandle = mountCoreSlot({
+  statusbarSlot = new SlotRenderable(rendererInstance, {
+    id: "core-plugin-demo-statusbar-slot",
     registry: slotRegistry,
     name: "statusbar",
-    mount: statusbarSlotMount,
     mode: statusbarMode,
+    width: "100%",
+    height: 5,
+    alignItems: "center",
+    flexDirection: "row",
+    paddingLeft: 1,
+    marginBottom: 1,
     fallback: () =>
       new TextRenderable(rendererInstance, {
         id: "statusbar-fallback",
@@ -677,11 +662,15 @@ export function run(rendererInstance: CliRenderer): void {
     },
   })
 
-  sidebarSlotHandle = mountCoreSlot({
+  sidebarSlot = new SlotRenderable(rendererInstance, {
+    id: "core-plugin-demo-sidebar-slot",
     registry: slotRegistry,
     name: "sidebar",
-    mount: sidebarSlotMount,
     mode: "replace",
+    width: 36,
+    flexDirection: "column",
+    padding: 1,
+    marginRight: 1,
     fallback: () =>
       new TextRenderable(rendererInstance, {
         id: "sidebar-fallback",
@@ -696,6 +685,11 @@ export function run(rendererInstance: CliRenderer): void {
       return createPluginFailurePlaceholder(rendererInstance, failure, "#f97316")
     },
   })
+
+  // Insert statusbar before the body
+  rootContainer.add(statusbarSlot, 0)
+  body.add(sidebarSlot)
+  body.add(infoPanel!)
 
   setClockPluginEnabled(true)
   setActivityPluginEnabled(true)
@@ -714,18 +708,15 @@ export function destroy(rendererInstance: CliRenderer): void {
   unregisterActivityPlugin?.()
   unregisterActivityPlugin = null
 
-  statusbarSlotHandle?.dispose()
-  statusbarSlotHandle = null
-  sidebarSlotHandle?.dispose()
-  sidebarSlotHandle = null
+  // SlotRenderables are destroyed as part of the tree via destroyRecursively
+  statusbarSlot = null
+  sidebarSlot = null
 
   slotRegistry = null
 
   rootContainer?.destroyRecursively()
 
   rootContainer = null
-  statusbarSlotMount = null
-  sidebarSlotMount = null
   infoPanel = null
   infoText = null
 
