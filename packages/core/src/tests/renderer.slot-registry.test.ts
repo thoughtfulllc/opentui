@@ -202,6 +202,20 @@ describe("SlotRegistry", () => {
     expect(notifyCount).toBe(3)
   })
 
+  test("returns false and does not notify when updating order for unknown plugin", () => {
+    const registry = new SlotRegistry<TestNode, AppSlots, AppContext>(createMockRenderer(), hostContext)
+    let notifyCount = 0
+
+    registry.subscribe(() => {
+      notifyCount++
+    })
+
+    const changed = registry.updateOrder("missing-plugin", -1)
+
+    expect(changed).toBe(false)
+    expect(notifyCount).toBe(0)
+  })
+
   test("supports multiple slot contributions per plugin", () => {
     const registry = new SlotRegistry<TestNode, AppSlots, AppContext>(createMockRenderer(), hostContext)
 
@@ -367,6 +381,48 @@ describe("SlotRegistry", () => {
     expect(registry.resolve("statusbar")).toEqual([])
     expect(notifyCount).toBe(2)
     expect(errors).toEqual(["dispose-failure:dispose:dispose failed"])
+  })
+
+  test("supports unregister then re-register for the same plugin id", () => {
+    const registry = new SlotRegistry<TestNode, AppSlots, AppContext>(createMockRenderer(), hostContext)
+    const lifecycle: string[] = []
+
+    const plugin: TestPlugin = {
+      id: "re-register-plugin",
+      setup() {
+        lifecycle.push("setup")
+      },
+      dispose() {
+        lifecycle.push("dispose")
+      },
+      slots: {
+        statusbar() {
+          return "first-registration"
+        },
+      },
+    }
+
+    const unregisterFirst = registry.register(plugin)
+    expect(registry.resolve("statusbar").map((renderer) => renderer(hostContext, { user: "sam" }))).toEqual([
+      "first-registration",
+    ])
+
+    unregisterFirst()
+    expect(registry.resolve("statusbar")).toEqual([])
+
+    registry.register({
+      ...plugin,
+      slots: {
+        statusbar() {
+          return "second-registration"
+        },
+      },
+    })
+
+    expect(registry.resolve("statusbar").map((renderer) => renderer(hostContext, { user: "sam" }))).toEqual([
+      "second-registration",
+    ])
+    expect(lifecycle).toEqual(["setup", "dispose", "setup"])
   })
 
   test("clear disposes every plugin and reports dispose errors", () => {

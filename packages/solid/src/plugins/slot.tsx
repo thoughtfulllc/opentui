@@ -1,6 +1,6 @@
 import { createSlotRegistry, SlotRegistry, type SlotRegistryOptions } from "@opentui/core/plugins"
 import type { CliRenderer, Plugin, PluginContext, PluginErrorEvent, SlotMode } from "@opentui/core"
-import { children, createMemo, createSignal, ErrorBoundary, onCleanup, splitProps, type JSX } from "solid-js"
+import { children, createMemo, createSignal, ErrorBoundary, For, onCleanup, splitProps, type JSX } from "solid-js"
 
 export type { SlotMode }
 type SlotMap = Record<string, object>
@@ -39,6 +39,11 @@ export function createSlot<TSlots extends SlotMap, TContext extends PluginContex
   registry: SlotRegistry<JSX.Element, TSlots, TContext>,
   options: SolidSlotOptions = {},
 ): SolidSlotComponent<TSlots> {
+  type ResolvedEntry<K extends keyof TSlots> = {
+    id: string
+    renderer: (ctx: Readonly<TContext>, props: TSlots[K]) => JSX.Element
+  }
+
   return function Slot<K extends keyof TSlots>(props: SolidSlotProps<TSlots, K>): JSX.Element {
     const [local, slotProps] = splitProps(props as SolidSlotProps<TSlots, K>, ["name", "mode", "children"])
     const [version, setVersion] = createSignal(0)
@@ -48,10 +53,23 @@ export function createSlot<TSlots extends SlotMap, TContext extends PluginContex
     })
     onCleanup(unsubscribe)
 
-    const entries = createMemo(() => {
+    const entries = createMemo<Array<ResolvedEntry<K>>>((previousEntries = []) => {
       version()
-      return registry.resolveEntries(local.name)
+      const resolvedEntries = registry.resolveEntries(local.name)
+      const previousById = new Map(previousEntries.map((entry) => [entry.id, entry]))
+
+      return resolvedEntries.map((entry) => {
+        const previousEntry = previousById.get(entry.id)
+        if (previousEntry && previousEntry.renderer === entry.renderer) {
+          return previousEntry
+        }
+
+        return entry
+      })
     })
+
+    const entryIds = createMemo(() => entries().map((entry) => entry.id))
+    const entriesById = createMemo(() => new Map(entries().map((entry) => [entry.id, entry])))
 
     const slotName = () => String(local.name)
 
@@ -75,13 +93,7 @@ export function createSlot<TSlots extends SlotMap, TContext extends PluginContex
       }
     }
 
-    const renderEntry = (
-      entry: {
-        id: string
-        renderer: (ctx: Readonly<TContext>, props: TSlots[K]) => JSX.Element
-      },
-      fallbackOnError?: JSX.Element,
-    ): JSX.Element => {
+    const renderEntry = (entry: ResolvedEntry<K>, fallbackOnError?: JSX.Element): JSX.Element => {
       const fallbackValue = fallbackOnError ?? (null as unknown as JSX.Element)
       let initialRender: JSX.Element
 
@@ -127,6 +139,30 @@ export function createSlot<TSlots extends SlotMap, TContext extends PluginContex
       )
     }
 
+    const AppendEntry = (appendProps: { entryId: string }): JSX.Element => {
+      const entry = createMemo(() => entriesById().get(appendProps.entryId))
+
+      return (
+        <>
+          {(() => {
+            const resolvedEntry = entry()
+            if (!resolvedEntry) {
+              return null as unknown as JSX.Element
+            }
+
+            return renderEntry(resolvedEntry)
+          })()}
+        </>
+      )
+    }
+
+    const appendView = (
+      <>
+        {local.children}
+        <For each={entryIds()}>{(entryId) => <AppendEntry entryId={entryId} />}</For>
+      </>
+    )
+
     return (
       <>
         {(() => {
@@ -153,12 +189,7 @@ export function createSlot<TSlots extends SlotMap, TContext extends PluginContex
             return <>{renderedEntries}</>
           }
 
-          return (
-            <>
-              {local.children}
-              {resolvedEntries.map((entry) => renderEntry(entry))}
-            </>
-          )
+          return appendView
         })()}
       </>
     )

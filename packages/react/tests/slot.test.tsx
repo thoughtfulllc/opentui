@@ -346,6 +346,71 @@ describe("React Slot System", () => {
     expect(withoutPlugin).not.toContain("dynamic-plugin")
   })
 
+  it("switches rendered slot when props.name changes", async () => {
+    function DynamicNameHarness({ registry }: { registry: ReturnType<typeof createReactSlotRegistry<AppSlots>> }) {
+      const Slot = useMemo(() => createSlot(registry), [registry])
+      const [slotName, setSlotName] = useState<keyof AppSlots>("statusbar")
+
+      useKeyboard((key) => {
+        if (key.name === "tab") {
+          setSlotName((current) => (current === "statusbar" ? "sidebar" : "statusbar"))
+        }
+      })
+
+      const dynamicProps =
+        slotName === "statusbar"
+          ? ({ name: "statusbar", user: "sam", mode: "replace" } as const)
+          : ({ name: "sidebar", items: ["one"], mode: "replace" } as const)
+
+      return (
+        <Slot {...(dynamicProps as any)}>
+          <text>dynamic-name-fallback</text>
+        </Slot>
+      )
+    }
+
+    const { setup } = await setupSlotTest(
+      (slotRegistry) => {
+        slotRegistry.register({
+          id: "status-plugin",
+          slots: {
+            statusbar() {
+              return <text>status-plugin</text>
+            },
+          },
+        })
+
+        slotRegistry.register({
+          id: "sidebar-plugin",
+          slots: {
+            sidebar() {
+              return <text>sidebar-plugin</text>
+            },
+          },
+        })
+
+        return <DynamicNameHarness registry={slotRegistry} />
+      },
+      { width: 60, height: 8 },
+    )
+    testSetup = setup
+
+    await testSetup.renderOnce()
+    const initialFrame = testSetup.captureCharFrame()
+    expect(initialFrame).toContain("status-plugin")
+    expect(initialFrame).not.toContain("sidebar-plugin")
+
+    act(() => {
+      testSetup.renderer.keyInput.emit("keypress", { name: "tab" } as any)
+    })
+
+    await testSetup.renderOnce()
+    const switchedFrame = testSetup.captureCharFrame()
+    expect(switchedFrame).toContain("sidebar-plugin")
+    expect(switchedFrame).not.toContain("status-plugin")
+    expect(switchedFrame).not.toContain("dynamic-name-fallback")
+  })
+
   it("renders plugin nodes within provider context", async () => {
     const ValueContext = createContext("missing")
 

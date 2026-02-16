@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test"
 import { createTestRenderer, type TestRendererOptions } from "@opentui/core/testing"
-import { createContext, createComponent, useContext, type JSX } from "solid-js"
+import { createContext, createComponent, createSignal, onCleanup, onMount, useContext, type JSX } from "solid-js"
 import { createSlot, createSolidSlotRegistry, type SolidPlugin } from "../src/plugins/slot"
 import { _render as renderInternal } from "../src/reconciler"
 import { RendererContext } from "../src/elements"
@@ -335,6 +335,133 @@ describe("Solid Slot System", () => {
     const withoutPlugin = testSetup.captureCharFrame()
     expect(withoutPlugin).toContain("dynamic-fallback")
     expect(withoutPlugin).not.toContain("dynamic-plugin")
+  })
+
+  it("switches rendered slot when props.name changes", async () => {
+    let switchSlot: (() => void) | null = null
+
+    const DynamicNameHarness = (props: { registry: ReturnType<typeof createSolidSlotRegistry<AppSlots>> }) => {
+      const Slot = createSlot(props.registry)
+      const [slotName, setSlotName] = createSignal<keyof AppSlots>("statusbar")
+
+      switchSlot = () => {
+        setSlotName((current) => (current === "statusbar" ? "sidebar" : "statusbar"))
+      }
+
+      const dynamicProps = () =>
+        slotName() === "statusbar"
+          ? ({ name: "statusbar", user: "sam", mode: "replace" } as const)
+          : ({ name: "sidebar", items: ["one"], mode: "replace" } as const)
+
+      return (
+        <Slot {...(dynamicProps() as any)}>
+          <text>dynamic-name-fallback</text>
+        </Slot>
+      )
+    }
+
+    const { setup } = await setupSlotTest(
+      (registry) => {
+        registry.register({
+          id: "status-plugin",
+          slots: {
+            statusbar() {
+              return <text>status-plugin</text>
+            },
+          },
+        })
+
+        registry.register({
+          id: "sidebar-plugin",
+          slots: {
+            sidebar() {
+              return <text>sidebar-plugin</text>
+            },
+          },
+        })
+
+        return <DynamicNameHarness registry={registry} />
+      },
+      { width: 60, height: 8 },
+    )
+    testSetup = setup
+
+    await testSetup.renderOnce()
+    const initialFrame = testSetup.captureCharFrame()
+    expect(initialFrame).toContain("status-plugin")
+    expect(initialFrame).not.toContain("sidebar-plugin")
+
+    switchSlot?.()
+
+    await testSetup.renderOnce()
+    const switchedFrame = testSetup.captureCharFrame()
+    expect(switchedFrame).toContain("sidebar-plugin")
+    expect(switchedFrame).not.toContain("status-plugin")
+    expect(switchedFrame).not.toContain("dynamic-name-fallback")
+  })
+
+  it("keeps plugin identity stable when append order changes", async () => {
+    const mountLog: string[] = []
+
+    const StatefulPluginNode = (props: { pluginId: string }) => {
+      const createdBy = props.pluginId
+
+      onMount(() => {
+        mountLog.push(`mount:${props.pluginId}:${createdBy}`)
+      })
+
+      onCleanup(() => {
+        mountLog.push(`unmount:${props.pluginId}:${createdBy}`)
+      })
+
+      return <text>{`${props.pluginId}:${createdBy}`}</text>
+    }
+
+    const { setup, registry } = await setupSlotTest(
+      (slotRegistry) => {
+        slotRegistry.register({
+          id: "alpha",
+          order: 0,
+          slots: {
+            statusbar() {
+              return <StatefulPluginNode pluginId="alpha" />
+            },
+          },
+        })
+
+        slotRegistry.register({
+          id: "beta",
+          order: 10,
+          slots: {
+            statusbar() {
+              return <StatefulPluginNode pluginId="beta" />
+            },
+          },
+        })
+
+        const Slot = createSlot(slotRegistry)
+        return <Slot name="statusbar" user="sam" />
+      },
+      { width: 80, height: 6 },
+    )
+    testSetup = setup
+
+    await testSetup.renderOnce()
+    const beforeReorder = testSetup.captureCharFrame()
+
+    expect(beforeReorder).toContain("alpha:alpha")
+    expect(beforeReorder).toContain("beta:beta")
+
+    registry.updateOrder("beta", -1)
+
+    await testSetup.renderOnce()
+    const afterReorder = testSetup.captureCharFrame()
+
+    expect(afterReorder).toContain("beta:beta")
+    expect(afterReorder).toContain("alpha:alpha")
+    expect(afterReorder).not.toContain("beta:alpha")
+    expect(afterReorder).not.toContain("alpha:beta")
+    expect(mountLog).toEqual(["mount:alpha:alpha", "mount:beta:beta"])
   })
 
   it("renders plugin nodes within provider context", async () => {
