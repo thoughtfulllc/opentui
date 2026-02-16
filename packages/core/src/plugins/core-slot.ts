@@ -15,17 +15,32 @@ export type CoreSlotRegistry<TSlotName extends string, TContext extends PluginCo
   TContext
 >
 
+export type CoreSlotRenderer<TContext extends PluginContext = PluginContext> = (
+  ctx: Readonly<TContext>,
+) => BaseRenderable
+
+export interface CoreManagedSlot<TContext extends PluginContext = PluginContext> {
+  render: CoreSlotRenderer<TContext>
+  onActivate?: (ctx: Readonly<TContext>) => void
+  onDeactivate?: (ctx: Readonly<TContext>) => void
+  onDispose?: (ctx: Readonly<TContext>) => void
+}
+
+export type CoreSlotContribution<TContext extends PluginContext = PluginContext> =
+  | CoreSlotRenderer<TContext>
+  | CoreManagedSlot<TContext>
+
 export interface CorePlugin<TSlotName extends string, TContext extends PluginContext = PluginContext> {
   id: string
   order?: number
   setup?: (ctx: Readonly<TContext>, renderer: CliRenderer) => void
   dispose?: () => void
-  slots: Partial<Record<TSlotName, (ctx: Readonly<TContext>) => BaseRenderable>>
+  slots: Partial<Record<TSlotName, CoreSlotContribution<TContext>>>
 }
 
 export interface CoreResolvedSlotRenderer<TContext extends PluginContext = PluginContext> {
   id: string
-  renderer: (ctx: Readonly<TContext>) => BaseRenderable
+  renderer: CoreSlotRenderer<TContext>
 }
 
 type FallbackNodes = BaseRenderable | BaseRenderable[] | undefined
@@ -54,15 +69,58 @@ export interface CoreSlotHandle {
   dispose: () => void
 }
 
+type CoreSlotOwnership = "host" | "plugin"
+
+type WrappedCoreSlotRenderer<TContext extends PluginContext = PluginContext> = ((
+  ctx: Readonly<TContext>,
+  props: undefined,
+) => BaseRenderable) & {
+  __coreSlotOwnership?: CoreSlotOwnership
+  __coreManagedSlot?: CoreManagedSlot<TContext>
+}
+
+interface ResolvedCoreSlotEntry<TContext extends PluginContext = PluginContext>
+  extends CoreResolvedSlotRenderer<TContext> {
+  ownership: CoreSlotOwnership
+  managedSlot?: CoreManagedSlot<TContext>
+}
+
+interface SlotNodeState<TContext extends PluginContext = PluginContext> {
+  nodes: BaseRenderable[]
+  ownership: CoreSlotOwnership
+  managedSlot?: CoreManagedSlot<TContext>
+}
+
+function isCoreManagedSlot<TContext extends PluginContext = PluginContext>(
+  contribution: CoreSlotContribution<TContext>,
+): contribution is CoreManagedSlot<TContext> {
+  return typeof contribution === "object" && contribution !== null && "render" in contribution
+}
+
 function toCorePlugin<TSlotName extends string, TContext extends PluginContext = PluginContext>(
   plugin: CorePlugin<TSlotName, TContext>,
 ): Plugin<BaseRenderable, CoreSlotProps<TSlotName>, TContext> {
-  const slots: Partial<Record<TSlotName, (ctx: Readonly<TContext>, props: undefined) => BaseRenderable>> = {}
+  const slots: Partial<Record<TSlotName, WrappedCoreSlotRenderer<TContext>>> = {}
 
-  for (const [slotName, renderer] of Object.entries(plugin.slots) as Array<
-    [TSlotName, (ctx: Readonly<TContext>) => BaseRenderable]
+  for (const [slotName, contribution] of Object.entries(plugin.slots) as Array<
+    [TSlotName, CoreSlotContribution<TContext>]
   >) {
-    slots[slotName] = (ctx: Readonly<TContext>) => renderer(ctx)
+    const wrappedRenderer: WrappedCoreSlotRenderer<TContext> = (ctx: Readonly<TContext>) => {
+      if (isCoreManagedSlot(contribution)) {
+        return contribution.render(ctx)
+      }
+
+      return contribution(ctx)
+    }
+
+    if (isCoreManagedSlot(contribution)) {
+      wrappedRenderer.__coreSlotOwnership = "plugin"
+      wrappedRenderer.__coreManagedSlot = contribution
+    } else {
+      wrappedRenderer.__coreSlotOwnership = "host"
+    }
+
+    slots[slotName] = wrappedRenderer
   }
 
   return {
@@ -129,10 +187,27 @@ export function resolveCoreSlot<
   K extends TSlotName,
   TContext extends PluginContext = PluginContext,
 >(registry: CoreSlotRegistry<TSlotName, TContext>, slot: K): Array<CoreResolvedSlotRenderer<TContext>> {
-  return registry.resolveEntries(slot).map((entry) => {
+  return resolveCoreSlotEntries(registry, slot).map((entry) => {
     return {
       id: entry.id,
-      renderer: (ctx: Readonly<TContext>) => entry.renderer(ctx, undefined),
+      renderer: entry.renderer,
+    }
+  })
+}
+
+function resolveCoreSlotEntries<
+  TSlotName extends string,
+  K extends TSlotName,
+  TContext extends PluginContext = PluginContext,
+>(registry: CoreSlotRegistry<TSlotName, TContext>, slot: K): Array<ResolvedCoreSlotEntry<TContext>> {
+  return registry.resolveEntries(slot).map((entry) => {
+    const wrappedRenderer = entry.renderer as WrappedCoreSlotRenderer<TContext>
+
+    return {
+      id: entry.id,
+      renderer: (ctx: Readonly<TContext>) => wrappedRenderer(ctx, undefined),
+      ownership: wrappedRenderer.__coreSlotOwnership ?? "host",
+      managedSlot: wrappedRenderer.__coreManagedSlot,
     }
   })
 }
@@ -145,7 +220,8 @@ export function mountCoreSlot<
   let mode: CoreSlotMode = options.mode ?? "append"
   let disposed = false
   let mountedNodes: BaseRenderable[] = []
-  const pluginNodes = new Map<string, BaseRenderable[]>()
+  const pluginNodes = new Map<string, SlotNodeState<TContext>>()
+  let activePluginIds = new Set<string>()
   let fallbackNodes: BaseRenderable[] | null = null
   const slotName = String(options.name)
 
@@ -164,16 +240,72 @@ export function mountCoreSlot<
     return fallbackNodes
   }
 
-  const cleanupRemovedPluginNodes = (activePluginIds: Set<string>): void => {
-    for (const [pluginId, nodes] of pluginNodes) {
-      if (activePluginIds.has(pluginId)) {
+  const callManagedHook = (
+    pluginId: string,
+    managedSlot: CoreManagedSlot<TContext> | undefined,
+    hook: "onActivate" | "onDeactivate" | "onDispose",
+    phase: "setup" | "dispose",
+  ): void => {
+    const callback = managedSlot?.[hook]
+    if (!callback) {
+      return
+    }
+
+    try {
+      callback(options.registry.context)
+    } catch (error) {
+      options.registry.reportPluginError({
+        pluginId,
+        slot: slotName,
+        phase,
+        source: "core",
+        error,
+      })
+    }
+  }
+
+  const detachNodeFromMount = (node: BaseRenderable): void => {
+    if (node.parent === options.mount) {
+      options.mount.remove(node.id)
+    }
+  }
+
+  const cleanupInactivePluginNodes = (nextActivePluginIds: Set<string>, registeredPluginIds: Set<string>): void => {
+    for (const [pluginId, state] of pluginNodes) {
+      if (nextActivePluginIds.has(pluginId)) {
         continue
       }
 
-      for (const node of nodes) {
-        node.destroyRecursively()
+      if (activePluginIds.has(pluginId)) {
+        callManagedHook(pluginId, state.managedSlot, "onDeactivate", "dispose")
       }
-      pluginNodes.delete(pluginId)
+
+      for (const node of state.nodes) {
+        detachNodeFromMount(node)
+      }
+
+      if (!registeredPluginIds.has(pluginId)) {
+        callManagedHook(pluginId, state.managedSlot, "onDispose", "dispose")
+
+        if (state.ownership === "host") {
+          for (const node of state.nodes) {
+            node.destroyRecursively()
+          }
+        }
+
+        pluginNodes.delete(pluginId)
+        continue
+      }
+
+      if (state.ownership === "host") {
+        for (const node of state.nodes) {
+          node.destroyRecursively()
+        }
+        pluginNodes.delete(pluginId)
+        continue
+      }
+
+      state.nodes = []
     }
   }
 
@@ -236,29 +368,46 @@ export function mountCoreSlot<
       return
     }
 
-    const allEntries = resolveCoreSlot(options.registry, options.name)
+    const allEntries = resolveCoreSlotEntries(options.registry, options.name)
     const activeEntries = mode === "single_winner" && allEntries.length > 0 ? [allEntries[0]] : allEntries
-    cleanupRemovedPluginNodes(new Set(activeEntries.map((entry) => entry.id)))
+    const nextActivePluginIds = new Set(activeEntries.map((entry) => entry.id))
+    const registeredPluginIds = new Set(allEntries.map((entry) => entry.id))
+
+    cleanupInactivePluginNodes(nextActivePluginIds, registeredPluginIds)
 
     for (const entry of activeEntries) {
-      if (pluginNodes.has(entry.id)) {
-        continue
+      let state = pluginNodes.get(entry.id)
+
+      if (!state || (state.ownership === "plugin" && state.nodes.length === 0)) {
+        try {
+          const node = entry.renderer(options.registry.context)
+          ensureValidNode(node, entry.id, options.mount)
+          state = {
+            nodes: [node],
+            ownership: entry.ownership,
+            managedSlot: entry.managedSlot ?? state?.managedSlot,
+          }
+        } catch (error) {
+          const failure = options.registry.reportPluginError({
+            pluginId: entry.id,
+            slot: slotName,
+            phase: "render",
+            source: "core",
+            error,
+          })
+
+          state = {
+            nodes: resolvePluginFailurePlaceholder(failure),
+            ownership: "host",
+            managedSlot: entry.managedSlot ?? state?.managedSlot,
+          }
+        }
+
+        pluginNodes.set(entry.id, state)
       }
 
-      try {
-        const node = entry.renderer(options.registry.context)
-        ensureValidNode(node, entry.id, options.mount)
-        pluginNodes.set(entry.id, [node])
-      } catch (error) {
-        const failure = options.registry.reportPluginError({
-          pluginId: entry.id,
-          slot: slotName,
-          phase: "render",
-          source: "core",
-          error,
-        })
-
-        pluginNodes.set(entry.id, resolvePluginFailurePlaceholder(failure))
+      if (!activePluginIds.has(entry.id)) {
+        callManagedHook(entry.id, state.managedSlot, "onActivate", "setup")
       }
     }
 
@@ -269,9 +418,9 @@ export function mountCoreSlot<
     }
 
     for (const entry of activeEntries) {
-      const nodes = pluginNodes.get(entry.id)
-      if (nodes) {
-        desiredNodes.push(...nodes)
+      const state = pluginNodes.get(entry.id)
+      if (state) {
+        desiredNodes.push(...state.nodes)
       }
     }
 
@@ -280,6 +429,7 @@ export function mountCoreSlot<
     }
 
     reconcileMountedNodes(desiredNodes)
+    activePluginIds = nextActivePluginIds
   }
 
   const unsubscribe = options.registry.subscribe(refresh)
@@ -292,12 +442,26 @@ export function mountCoreSlot<
 
     unsubscribe()
 
-    for (const nodes of pluginNodes.values()) {
-      for (const node of nodes) {
-        node.destroyRecursively()
+    for (const [pluginId, state] of pluginNodes) {
+      if (activePluginIds.has(pluginId)) {
+        callManagedHook(pluginId, state.managedSlot, "onDeactivate", "dispose")
+      }
+
+      callManagedHook(pluginId, state.managedSlot, "onDispose", "dispose")
+
+      for (const node of state.nodes) {
+        detachNodeFromMount(node)
+      }
+
+      if (state.ownership === "host") {
+        for (const node of state.nodes) {
+          node.destroyRecursively()
+        }
       }
     }
+
     pluginNodes.clear()
+    activePluginIds = new Set()
 
     if (fallbackNodes) {
       for (const node of fallbackNodes) {
