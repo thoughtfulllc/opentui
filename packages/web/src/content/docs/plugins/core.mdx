@@ -1,0 +1,143 @@
+---
+title: Core
+description: Framework-free slot hosting with BaseRenderable nodes
+order: 2
+---
+
+# Core slots
+
+This page shows the core host API for plugin slots.
+
+If you have not read the shared model yet, start with [Plugin Slots](/docs/plugins/slots).
+
+## What core adds
+
+On top of `createSlotRegistry`, core provides:
+
+- `createCoreSlotRegistry`
+- `registerCorePlugin`
+- `mountCoreSlot`
+
+These APIs are for plugins that return `BaseRenderable` nodes.
+
+## Basic usage
+
+```typescript
+import {
+  BoxRenderable,
+  createCliRenderer,
+  createCoreSlotRegistry,
+  mountCoreSlot,
+  registerCorePlugin,
+  TextRenderable,
+  type CorePlugin,
+} from "@opentui/core"
+
+type Slots = "statusbar"
+const context = { appName: "core-app", version: "1.0.0" }
+
+const renderer = await createCliRenderer()
+
+const mount = new BoxRenderable(renderer, {
+  id: "statusbar-slot",
+  width: "100%",
+  height: 3,
+  flexDirection: "row",
+})
+renderer.root.add(mount)
+
+const registry = createCoreSlotRegistry<Slots, typeof context>(renderer, context)
+
+registerCorePlugin(registry, {
+  id: "clock-plugin",
+  order: 0,
+  slots: {
+    statusbar() {
+      return new TextRenderable(renderer, {
+        id: "clock-status",
+        content: "clock: ok",
+      })
+    },
+  },
+} satisfies CorePlugin<Slots, typeof context>)
+
+const handle = mountCoreSlot({
+  registry,
+  name: "statusbar",
+  mount,
+  mode: "append",
+  fallback: () =>
+    new TextRenderable(renderer, {
+      id: "statusbar-fallback",
+      content: "fallback",
+    }),
+})
+
+// later
+handle.setMode("replace")
+handle.refresh()
+handle.dispose()
+```
+
+## Slot modes
+
+| Mode            | Behavior                                                 |
+| --------------- | -------------------------------------------------------- |
+| `append`        | Fallback + plugin output                                 |
+| `replace`       | Plugin output only; fallback only when no output remains |
+| `single_winner` | Only first plugin by resolved order                      |
+
+## Plugin failure placeholders
+
+If a plugin throws during slot render, you can provide host-controlled fallback UI for that plugin failure:
+
+```typescript
+const handle = mountCoreSlot({
+  registry,
+  name: "statusbar",
+  mount,
+  fallback: () => new TextRenderable(renderer, { id: "fallback", content: "fallback" }),
+  pluginFailurePlaceholder(failure) {
+    return new TextRenderable(renderer, {
+      id: `error-${failure.pluginId}`,
+      content: `plugin error: ${failure.pluginId}`,
+    })
+  },
+})
+```
+
+## Managed slot contributions
+
+A core slot contribution can be a function, or an object with lifecycle hooks:
+
+```typescript
+registerCorePlugin(registry, {
+  id: "managed-plugin",
+  slots: {
+    statusbar: {
+      render() {
+        return new TextRenderable(renderer, { id: "managed", content: "managed" })
+      },
+      onActivate() {
+        // plugin became active in this slot
+      },
+      onDeactivate() {
+        // plugin is no longer active in this slot
+      },
+      onDispose() {
+        // plugin is removed/disposed for this slot
+      },
+    },
+  },
+})
+```
+
+## Observability
+
+```typescript
+registry.onPluginError((event) => {
+  console.error(event.pluginId, event.phase, event.source, event.error.message)
+})
+```
+
+Example: `packages/core/src/examples/core-plugin-slots-demo.ts`
