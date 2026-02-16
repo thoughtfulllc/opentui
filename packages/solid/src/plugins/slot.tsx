@@ -53,6 +53,26 @@ export function createSlot<TSlots extends SlotMap, TContext extends PluginContex
 
     const slotName = () => String(local.name)
 
+    const renderPluginFailurePlaceholder = (failure: PluginErrorEvent, fallbackValue: JSX.Element): JSX.Element => {
+      if (!options.pluginFailurePlaceholder) {
+        return fallbackValue
+      }
+
+      try {
+        return options.pluginFailurePlaceholder(failure)
+      } catch (error) {
+        registry.reportPluginError({
+          pluginId: failure.pluginId,
+          slot: failure.slot ?? slotName(),
+          phase: "error_placeholder",
+          source: "solid",
+          error,
+        })
+
+        return fallbackValue
+      }
+    }
+
     const renderEntry = (
       entry: {
         id: string
@@ -74,11 +94,7 @@ export function createSlot<TSlots extends SlotMap, TContext extends PluginContex
           error,
         })
 
-        if (options.pluginFailurePlaceholder) {
-          return options.pluginFailurePlaceholder(failure)
-        }
-
-        return fallbackValue
+        return renderPluginFailurePlaceholder(failure, fallbackValue)
       }
 
       return (
@@ -92,11 +108,7 @@ export function createSlot<TSlots extends SlotMap, TContext extends PluginContex
               error,
             })
 
-            if (options.pluginFailurePlaceholder) {
-              return options.pluginFailurePlaceholder(failure)
-            }
-
-            return fallbackValue
+            return renderPluginFailurePlaceholder(failure, fallbackValue)
           }}
         >
           {initialRender}

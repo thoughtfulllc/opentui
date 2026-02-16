@@ -437,6 +437,136 @@ describe("Solid Slot System", () => {
     expect(frame).toContain("replace-fallback-visible")
   })
 
+  it("replace mode falls back when plugin subtree crashes and no placeholder is configured", async () => {
+    const errors: string[] = []
+
+    const ExplodingPluginNode = () => {
+      throw new Error("replace subtree exploded")
+    }
+
+    const { setup } = await setupSlotTest(
+      (registry) => {
+        registry.onPluginError((event) => {
+          errors.push(`${event.pluginId}:${event.slot}:${event.phase}:${event.source}:${event.error.message}`)
+        })
+
+        registry.register({
+          id: "replace-exploding-plugin",
+          slots: {
+            statusbar() {
+              return <ExplodingPluginNode />
+            },
+          },
+        })
+
+        const Slot = createSlot(registry)
+        return (
+          <Slot name="statusbar" user="sam" mode="replace">
+            <text>replace-safe-fallback</text>
+          </Slot>
+        )
+      },
+      { width: 80, height: 6 },
+    )
+    testSetup = setup
+
+    await testSetup.renderOnce()
+    await testSetup.renderOnce()
+    const frame = testSetup.captureCharFrame()
+
+    expect(frame).toContain("replace-safe-fallback")
+    expect(errors).toContain("replace-exploding-plugin:statusbar:render:solid:replace subtree exploded")
+  })
+
+  it("reports error_placeholder and keeps fallback when placeholder throws after plugin render error", async () => {
+    const errors: string[] = []
+
+    const { setup } = await setupSlotTest(
+      (registry) => {
+        registry.onPluginError((event) => {
+          errors.push(`${event.pluginId}:${event.slot}:${event.phase}:${event.source}:${event.error.message}`)
+        })
+
+        registry.register({
+          id: "broken-plugin",
+          slots: {
+            statusbar() {
+              throw new Error("render failed")
+            },
+          },
+        })
+
+        const Slot = createSlot(registry, {
+          pluginFailurePlaceholder() {
+            throw new Error("placeholder failed")
+          },
+        })
+
+        return (
+          <Slot name="statusbar" user="sam">
+            <text>fallback-visible</text>
+          </Slot>
+        )
+      },
+      { width: 80, height: 6 },
+    )
+    testSetup = setup
+
+    await testSetup.renderOnce()
+    const frame = testSetup.captureCharFrame()
+
+    expect(frame).toContain("fallback-visible")
+    expect(errors).toContain("broken-plugin:statusbar:render:solid:render failed")
+    expect(errors).toContain("broken-plugin:statusbar:error_placeholder:solid:placeholder failed")
+  })
+
+  it("reports error_placeholder and keeps fallback when placeholder throws after subtree crash", async () => {
+    const errors: string[] = []
+
+    const ExplodingPluginNode = () => {
+      throw new Error("component exploded")
+    }
+
+    const { setup } = await setupSlotTest(
+      (registry) => {
+        registry.onPluginError((event) => {
+          errors.push(`${event.pluginId}:${event.slot}:${event.phase}:${event.source}:${event.error.message}`)
+        })
+
+        registry.register({
+          id: "exploding-plugin",
+          slots: {
+            statusbar() {
+              return <ExplodingPluginNode />
+            },
+          },
+        })
+
+        const Slot = createSlot(registry, {
+          pluginFailurePlaceholder() {
+            throw new Error("placeholder crashed")
+          },
+        })
+
+        return (
+          <Slot name="statusbar" user="sam">
+            <text>safe-host-content</text>
+          </Slot>
+        )
+      },
+      { width: 80, height: 6 },
+    )
+    testSetup = setup
+
+    await testSetup.renderOnce()
+    await testSetup.renderOnce()
+    const frame = testSetup.captureCharFrame()
+
+    expect(frame).toContain("safe-host-content")
+    expect(errors).toContain("exploding-plugin:statusbar:render:solid:component exploded")
+    expect(errors).toContain("exploding-plugin:statusbar:error_placeholder:solid:placeholder crashed")
+  })
+
   it("catches plugin subtree errors via per-plugin boundary", async () => {
     const errors: string[] = []
 
