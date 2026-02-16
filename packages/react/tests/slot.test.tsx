@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test"
 import { createTestRenderer, type TestRendererOptions } from "@opentui/core/testing"
-import { createContext, useContext, useEffect, useState } from "react"
+import { createContext, useContext, useEffect, useMemo, useState } from "react"
 import { act, type ReactNode } from "react"
 import { createReactSlotRegistry, createSlot, type ReactPlugin } from "../src/plugins/slot"
+import { useKeyboard } from "../src/hooks/use-keyboard"
 import { createRoot, type Root } from "../src/reconciler/renderer"
 
 interface AppSlots {
@@ -713,5 +714,149 @@ describe("React Slot System", () => {
 
     expect(frame).toContain("fallback-visible")
     expect(frame).toContain("plugin-error:broken-plugin:statusbar")
+  })
+
+  it("does not continuously emit plugin errors after pressing e then d", async () => {
+    const debugEvents: string[] = []
+    let pluginErrorEventCount = 0
+    let listenerStateUpdates = 0
+    const maxListenerStateUpdates = 20
+
+    function ClockCrashNode() {
+      throw new Error("Forced subtree crash in clock-plugin")
+    }
+
+    function createClockPlugin(crash: boolean): ReactPlugin<AppSlots, typeof hostContext> {
+      return {
+        id: "clock-plugin",
+        order: 0,
+        slots: {
+          statusbar() {
+            if (crash) {
+              return <ClockCrashNode />
+            }
+
+            return <text>clock-ok</text>
+          },
+          sidebar() {
+            return <text>clock-sidebar-ok</text>
+          },
+        },
+      }
+    }
+
+    function createActivityPlugin(crash: boolean): ReactPlugin<AppSlots, typeof hostContext> {
+      return {
+        id: "activity-plugin",
+        order: 10,
+        slots: {
+          statusbar() {
+            if (crash) {
+              throw new Error("Forced activity render failure")
+            }
+
+            return <text>activity-ok</text>
+          },
+        },
+      }
+    }
+
+    function ErrorSequenceHarness({ registry }: { registry: ReturnType<typeof createReactSlotRegistry<AppSlots>> }) {
+      const Slot = useMemo(
+        () =>
+          createSlot(registry, {
+            pluginFailurePlaceholder(failure) {
+              return <text>{`placeholder:${failure.pluginId}:${failure.phase}`}</text>
+            },
+          }),
+        [registry],
+      )
+
+      const [clockCrashEnabled, setClockCrashEnabled] = useState(false)
+      const [activityCrashEnabled, setActivityCrashEnabled] = useState(false)
+      const [errorLines, setErrorLines] = useState<string[]>([])
+
+      useEffect(() => {
+        return registry.onPluginError((event) => {
+          pluginErrorEventCount++
+          const line = `${event.pluginId}:${event.phase}:${event.source}:${event.error.message}`
+
+          if (debugEvents.length < 40) {
+            debugEvents.push(`event#${pluginErrorEventCount} ${line}`)
+          }
+
+          if (listenerStateUpdates < maxListenerStateUpdates) {
+            listenerStateUpdates++
+            setErrorLines((current) => [line, ...current].slice(0, 6))
+          }
+        })
+      }, [registry])
+
+      useEffect(() => {
+        const unregisterCallbacks: Array<() => void> = []
+
+        unregisterCallbacks.push(registry.register(createClockPlugin(clockCrashEnabled)))
+        unregisterCallbacks.push(registry.register(createActivityPlugin(activityCrashEnabled)))
+
+        return () => {
+          for (const unregister of unregisterCallbacks.reverse()) {
+            unregister()
+          }
+        }
+      }, [registry, clockCrashEnabled, activityCrashEnabled])
+
+      useKeyboard((key) => {
+        if (key.name === "e") {
+          setClockCrashEnabled((current) => !current)
+          return
+        }
+
+        if (key.name === "d") {
+          setActivityCrashEnabled((current) => !current)
+        }
+      })
+
+      return (
+        <>
+          <Slot name="statusbar" user="sam" mode="append">
+            <text>fallback-statusbar</text>
+          </Slot>
+          <Slot name="sidebar" items={["x"]} mode="replace">
+            <text>fallback-sidebar</text>
+          </Slot>
+          <text>{`errors:${errorLines.length}`}</text>
+        </>
+      )
+    }
+
+    const { setup } = await setupSlotTest((registry) => <ErrorSequenceHarness registry={registry} />, {
+      width: 80,
+      height: 10,
+    })
+    testSetup = setup
+
+    await testSetup.renderOnce()
+
+    act(() => {
+      testSetup.renderer.keyInput.emit("keypress", { name: "e" } as any)
+    })
+    await testSetup.renderOnce()
+
+    act(() => {
+      testSetup.renderer.keyInput.emit("keypress", { name: "d" } as any)
+    })
+
+    for (let index = 0; index < 5; index++) {
+      await testSetup.renderOnce()
+    }
+
+    const frame = testSetup.captureCharFrame()
+    console.log("[react-slot-debug] frame after e,d:\n" + frame)
+    console.log("[react-slot-debug] plugin error events:", pluginErrorEventCount)
+    console.log("[react-slot-debug] listener state updates:", listenerStateUpdates)
+    console.log("[react-slot-debug] sample events:\n" + debugEvents.join("\n"))
+
+    expect(pluginErrorEventCount).toBeLessThanOrEqual(4)
+    expect(listenerStateUpdates).toBeLessThanOrEqual(4)
   })
 })
