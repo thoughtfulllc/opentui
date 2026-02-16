@@ -53,6 +53,8 @@ const context = { appName: "my-app", version: "1.0.0" }
 const registry = createSlotRegistry<string, AppSlots, typeof context>(renderer, "my-app:plugins", context)
 ```
 
+The first type parameter (`TNode`) is the node type your framework returns — `BaseRenderable` for core, `ReactNode` for React, `JSX.Element` for Solid. The framework-specific helpers fill this in for you.
+
 `createSlotRegistry` is renderer-scoped. For a given `(renderer, key)` pair, you always get the same registry instance. The `key` parameter namespaces registries within a renderer so multiple independent registries can coexist.
 
 When the renderer is destroyed, all registries scoped to it are automatically cleared and disposed.
@@ -103,6 +105,8 @@ unregister()
 | `setup`   | `(ctx, renderer) => void`               | no       | Called once at registration time. If it throws, the plugin is not registered.    |
 | `dispose` | `() => void`                            | no       | Called when the plugin is unregistered or the registry is cleared.               |
 | `slots`   | `{ [slotName]: (ctx, props) => TNode }` | yes      | Slot renderer callbacks. Each receives the host context and slot-specific props. |
+
+The core binding extends this with [managed slot objects](/docs/plugins/core#managed-slot-contributions) that add lifecycle hooks.
 
 ### Ordering
 
@@ -171,6 +175,18 @@ You can also read and clear buffered errors:
 const history = registry.getPluginErrors()
 registry.clearPluginErrors()
 ```
+
+### PluginErrorReport
+
+The `reportPluginError` method accepts a `PluginErrorReport`:
+
+| Field      | Type                  | Required | Description                                                  |
+| ---------- | --------------------- | -------- | ------------------------------------------------------------ |
+| `pluginId` | `string`              | yes      | The plugin that caused the error                             |
+| `slot`     | `string \| undefined` | no       | The slot name, if the error is slot-specific                 |
+| `phase`    | `PluginErrorPhase`    | yes      | `"setup"`, `"render"`, `"dispose"`, or `"error_placeholder"` |
+| `source`   | `PluginErrorSource`   | no       | Defaults to `"registry"` if omitted                          |
+| `error`    | `unknown`             | yes      | The raw error — normalized to `Error` internally             |
 
 ### PluginErrorEvent
 

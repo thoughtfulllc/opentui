@@ -12,8 +12,11 @@ If you have not read the shared model yet, start with [Plugin Slots](/docs/plugi
 
 ## What React adds
 
-- `createReactSlotRegistry(renderer, context, options?)` — create a registry typed for `ReactNode`
+- `createReactSlotRegistry(renderer, context, options?)` — create a registry typed for `ReactNode`. Accepts the same [`SlotRegistryOptions`](/docs/plugins/slots#registry-options) as `createSlotRegistry`.
 - `createSlot(registry, options?)` — returns a typed `<Slot />` component
+- `ReactPlugin<TSlots, TContext>` — convenience type alias for a plugin that returns `ReactNode`
+
+Register plugins directly with `registry.register()` — no wrapper function is needed (unlike core's `registerCorePlugin`).
 
 ## Basic usage
 
@@ -60,6 +63,12 @@ createRoot(renderer).render(<App />)
 | `mode`      | `SlotMode`    | no       | `"append"` (default), `"replace"`, or `"single_winner"`. See [slot modes](/docs/plugins/slots#4-slot-modes). |
 | `children`  | `ReactNode`   | no       | Fallback UI                                                                                                  |
 | _remaining_ | `Slots[name]` | —        | Slot-specific props forwarded to plugin renderers                                                            |
+
+## `ReactSlotOptions`
+
+| Option                     | Type                                       | Required | Description                                 |
+| -------------------------- | ------------------------------------------ | -------- | ------------------------------------------- |
+| `pluginFailurePlaceholder` | `(failure: PluginErrorEvent) => ReactNode` | no       | Creates placeholder UI when a plugin throws |
 
 ## Plugin failure placeholders
 
