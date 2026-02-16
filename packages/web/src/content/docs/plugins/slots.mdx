@@ -6,9 +6,15 @@ order: 1
 
 # Plugin slots
 
-Plugin slots are typed extension points.
+Plugin slots are typed extension points. The host application defines named slots, and plugins contribute UI for those slots.
 
-The host application defines named slots. Plugins contribute UI for those slots. A slot registry stores plugins, orders them, and exposes the slot contributions so the host (or a framework binding) can render them.
+This page describes the **shared registry API** that the core, React, and Solid bindings are built on. If you are building an app, start with the page for the binding you use:
+
+- [Core slots](/docs/plugins/core) — framework-free, `BaseRenderable` nodes
+- [React slots](/docs/plugins/react) — `ReactNode`
+- [Solid slots](/docs/plugins/solid) — `JSX.Element`
+
+Read on if you need to understand the underlying model, want to build a custom binding for another framework, or need direct access to the registry API.
 
 ## Concepts
 
