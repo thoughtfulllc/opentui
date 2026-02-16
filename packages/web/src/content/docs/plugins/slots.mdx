@@ -1,0 +1,108 @@
+---
+title: Plugin Slots
+description: Shared slot registry API used by core, React, and Solid
+order: 1
+---
+
+# Plugin slots
+
+Plugin slots are typed extension points.
+
+The host application defines named slots. Plugins contribute UI for those slots. A slot registry stores plugins, orders them, and exposes the slot contributions so the host (or a framework binding) can render them.
+
+## Concepts
+
+- **Host**: defines slot names and slot prop types.
+- **Plugin**: contributes one or more slot renderer callbacks.
+- **Registry**: registers plugins and resolves contributions for a slot.
+
+## 1) Define slots and host context
+
+```typescript
+import type { PluginContext } from "@opentui/core"
+
+type AppSlots = {
+  statusbar: { user: string }
+  sidebar: { section: "left" | "right" }
+}
+
+interface AppContext extends PluginContext {
+  appName: string
+  version: string
+}
+```
+
+## 2) Create a registry
+
+```typescript
+import { createSlotRegistry } from "@opentui/core"
+
+const context = { appName: "my-app", version: "1.0.0" }
+
+const registry = createSlotRegistry<string, AppSlots, typeof context>(renderer, "my-app:plugins", context)
+```
+
+`createSlotRegistry` is renderer-scoped. For a given `(renderer, key)` pair, you get the same registry instance.
+
+## 3) Register plugins
+
+```typescript
+registry.register({
+  id: "clock-plugin",
+  order: 0,
+  slots: {
+    statusbar(ctx, props) {
+      return `${ctx.appName}:${props.user}`
+    },
+  },
+})
+
+registry.register({
+  id: "sidebar-plugin",
+  order: 10,
+  slots: {
+    sidebar(_ctx, props) {
+      return `section:${props.section}`
+    },
+  },
+})
+```
+
+## 4) Resolve contributions
+
+```typescript
+const entries = registry.resolveEntries("statusbar")
+// [{ id, renderer: slotRendererFn }, ...]
+
+const slotRenderers = registry.resolve("statusbar")
+// [slotRendererFn, ...]
+```
+
+`renderer` here means the plugin's **slot renderer callback** (`(ctx, props) => node`), not the `CliRenderer` instance.
+
+Use `resolveEntries` when you need plugin ids. Use `resolve` when you only need callbacks.
+
+## Error handling
+
+Registries expose plugin error events:
+
+```typescript
+registry.onPluginError((event) => {
+  console.error(event.pluginId, event.phase, event.source, event.error.message)
+})
+```
+
+You can also read and clear buffered errors:
+
+```typescript
+const history = registry.getPluginErrors()
+registry.clearPluginErrors()
+```
+
+## Next: concrete host APIs
+
+Use the shared model above with one of these host integrations:
+
+- [Core slots](/docs/plugins/core)
+- [React slots](/docs/plugins/react)
+- [Solid slots](/docs/plugins/solid)
