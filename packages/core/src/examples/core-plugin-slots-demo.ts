@@ -223,73 +223,89 @@ function createClockPlugin(rendererInstance: CliRenderer): CorePlugin<DemoSlot> 
       sidebarText = null
     },
     slots: {
-      statusbar() {
-        if (clockStatusbarErrorEnabled) {
-          throw new Error("Forced clock statusbar failure")
-        }
+      statusbar: {
+        render() {
+          if (clockStatusbarErrorEnabled) {
+            throw new Error("Forced clock statusbar failure")
+          }
 
-        clockStats.statusbarCreates++
+          clockStats.statusbarCreates++
 
-        const item = new BoxRenderable(rendererInstance, {
-          id: `clock-statusbar-${clockStats.statusbarCreates}`,
-          border: true,
-          borderStyle: "single",
-          borderColor: "#2563eb",
-          paddingLeft: 1,
-          paddingRight: 1,
-          height: 3,
-          marginLeft: 1,
-          backgroundColor: "#0f172a",
-        })
+          const item = new BoxRenderable(rendererInstance, {
+            id: `clock-statusbar-${clockStats.statusbarCreates}`,
+            border: true,
+            borderStyle: "single",
+            borderColor: "#2563eb",
+            paddingLeft: 1,
+            paddingRight: 1,
+            height: 3,
+            marginLeft: 1,
+            backgroundColor: "#0f172a",
+          })
 
-        statusText = new TextRenderable(rendererInstance, {
-          id: `clock-statusbar-text-${clockStats.statusbarCreates}`,
-          content: "Clock plugin",
-          fg: "#93c5fd",
-        })
+          statusText = new TextRenderable(rendererInstance, {
+            id: `clock-statusbar-text-${clockStats.statusbarCreates}`,
+            content: "Clock plugin",
+            fg: "#93c5fd",
+          })
 
-        item.add(statusText)
-        updateClockText()
-        updateInfoPanel()
-        return item
+          item.add(statusText)
+          updateClockText()
+          updateInfoPanel()
+          return item
+        },
+        onDeactivate() {
+          statusText = null
+        },
+        onDispose() {
+          statusText = null
+        },
       },
-      sidebar() {
-        if (clockSidebarErrorEnabled) {
-          throw new Error("Forced clock sidebar failure")
-        }
+      sidebar: {
+        render() {
+          if (clockSidebarErrorEnabled) {
+            throw new Error("Forced clock sidebar failure")
+          }
 
-        clockStats.sidebarCreates++
+          clockStats.sidebarCreates++
 
-        const panel = new BoxRenderable(rendererInstance, {
-          id: `clock-sidebar-${clockStats.sidebarCreates}`,
-          border: true,
-          borderStyle: "single",
-          borderColor: "#0ea5e9",
-          flexDirection: "column",
-          height: 6,
-          marginBottom: 1,
-          padding: 1,
-        })
+          const panel = new BoxRenderable(rendererInstance, {
+            id: `clock-sidebar-${clockStats.sidebarCreates}`,
+            border: true,
+            borderStyle: "single",
+            borderColor: "#0ea5e9",
+            flexDirection: "column",
+            height: 6,
+            marginBottom: 1,
+            padding: 1,
+          })
 
-        panel.add(
-          new TextRenderable(rendererInstance, {
-            id: `clock-sidebar-title-${clockStats.sidebarCreates}`,
-            content: "Clock Plugin",
-            fg: "#38bdf8",
-          }),
-        )
+          panel.add(
+            new TextRenderable(rendererInstance, {
+              id: `clock-sidebar-title-${clockStats.sidebarCreates}`,
+              content: "Clock Plugin",
+              fg: "#38bdf8",
+            }),
+          )
 
-        sidebarText = new TextRenderable(rendererInstance, {
-          id: `clock-sidebar-text-${clockStats.sidebarCreates}`,
-          content: "Last tick: --:--:--",
-          fg: "#e2e8f0",
-          marginTop: 1,
-        })
+          sidebarText = new TextRenderable(rendererInstance, {
+            id: `clock-sidebar-text-${clockStats.sidebarCreates}`,
+            content: "Last tick: --:--:--",
+            fg: "#e2e8f0",
+            marginTop: 1,
+          })
 
-        panel.add(sidebarText)
-        updateClockText()
-        updateInfoPanel()
-        return panel
+          panel.add(sidebarText)
+          updateClockText()
+          updateInfoPanel()
+          return panel
+        },
+        onDeactivate() {
+          sidebarText = null
+        },
+        onDispose() {
+          sidebarText = null
+        },
       },
     },
   }
@@ -328,35 +344,43 @@ function createActivityPlugin(rendererInstance: CliRenderer): CorePlugin<DemoSlo
       activityText = null
     },
     slots: {
-      statusbar() {
-        if (activityStatusbarErrorEnabled) {
-          throw new Error("Forced activity statusbar failure")
-        }
+      statusbar: {
+        render() {
+          if (activityStatusbarErrorEnabled) {
+            throw new Error("Forced activity statusbar failure")
+          }
 
-        activityStats.statusbarCreates++
+          activityStats.statusbarCreates++
 
-        const item = new BoxRenderable(rendererInstance, {
-          id: `activity-statusbar-${activityStats.statusbarCreates}`,
-          border: true,
-          borderStyle: "single",
-          borderColor: "#16a34a",
-          paddingLeft: 1,
-          paddingRight: 1,
-          height: 3,
-          marginLeft: 1,
-          backgroundColor: "#052e16",
-        })
+          const item = new BoxRenderable(rendererInstance, {
+            id: `activity-statusbar-${activityStats.statusbarCreates}`,
+            border: true,
+            borderStyle: "single",
+            borderColor: "#16a34a",
+            paddingLeft: 1,
+            paddingRight: 1,
+            height: 3,
+            marginLeft: 1,
+            backgroundColor: "#052e16",
+          })
 
-        activityText = new TextRenderable(rendererInstance, {
-          id: `activity-statusbar-text-${activityStats.statusbarCreates}`,
-          content: "Activity",
-          fg: "#86efac",
-        })
+          activityText = new TextRenderable(rendererInstance, {
+            id: `activity-statusbar-text-${activityStats.statusbarCreates}`,
+            content: "Activity",
+            fg: "#86efac",
+          })
 
-        item.add(activityText)
-        updateActivityText()
-        updateInfoPanel()
-        return item
+          item.add(activityText)
+          updateActivityText()
+          updateInfoPanel()
+          return item
+        },
+        onDeactivate() {
+          activityText = null
+        },
+        onDispose() {
+          activityText = null
+        },
       },
     },
   }
