@@ -1,0 +1,80 @@
+---
+title: Solid
+description: Solid slot components backed by the shared plugin registry
+order: 4
+---
+
+# Solid slots
+
+This page shows Solid integration for plugin slots.
+
+If you have not read the shared model yet, start with [Plugin Slots](/docs/plugins/slots).
+
+## What Solid adds
+
+- `createSolidSlotRegistry(renderer, context)`
+- `createSlot(registry, options?)` -> typed `<Slot />` component
+
+## Basic usage
+
+```tsx
+import { createCliRenderer } from "@opentui/core"
+import { createSolidSlotRegistry, createSlot, render, type SolidPlugin } from "@opentui/solid"
+
+type Slots = {
+  statusbar: { user: string }
+}
+
+const context = { appName: "solid-app", version: "1.0.0" }
+const renderer = await createCliRenderer()
+
+const registry = createSolidSlotRegistry<Slots, typeof context>(renderer, context)
+
+registry.register({
+  id: "clock-plugin",
+  slots: {
+    statusbar(ctx, props) {
+      return <text>{`${ctx.appName}:${props.user}`}</text>
+    },
+  },
+} satisfies SolidPlugin<Slots, typeof context>)
+
+const Slot = createSlot(registry)
+
+const App = () => (
+  <Slot name="statusbar" user="sam" mode="replace">
+    <text>fallback-statusbar</text>
+  </Slot>
+)
+
+render(() => <App />, renderer)
+```
+
+## Slot props
+
+- `name`: slot name (`keyof Slots`)
+- `mode`: `append` | `replace` | `single_winner`
+- remaining props: slot-specific props for the chosen `name`
+- `children`: fallback UI
+
+## Plugin failure placeholders
+
+```tsx
+const Slot = createSlot(registry, {
+  pluginFailurePlaceholder(failure) {
+    return <text>{`plugin-error:${failure.pluginId}:${failure.phase}`}</text>
+  },
+})
+```
+
+If a plugin throws, the slot renders the placeholder (or fallback if no placeholder output is provided).
+
+## Observability
+
+```tsx
+registry.onPluginError((event) => {
+  console.error(event.pluginId, event.phase, event.source, event.error.message)
+})
+```
+
+Example: `packages/solid/examples/components/plugin-slots-demo.tsx`

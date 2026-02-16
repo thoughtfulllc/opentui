@@ -1,0 +1,82 @@
+---
+title: React
+description: React slot components backed by the shared plugin registry
+order: 3
+---
+
+# React slots
+
+This page shows React integration for plugin slots.
+
+If you have not read the shared model yet, start with [Plugin Slots](/docs/plugins/slots).
+
+## What React adds
+
+- `createReactSlotRegistry(renderer, context)`
+- `createSlot(registry, options?)` -> typed `<Slot />` component
+
+## Basic usage
+
+```tsx
+import { createCliRenderer } from "@opentui/core"
+import { createReactSlotRegistry, createRoot, createSlot, type ReactPlugin } from "@opentui/react"
+
+type Slots = {
+  statusbar: { user: string }
+}
+
+const context = { appName: "react-app", version: "1.0.0" }
+const renderer = await createCliRenderer()
+
+const registry = createReactSlotRegistry<Slots, typeof context>(renderer, context)
+
+registry.register({
+  id: "clock-plugin",
+  slots: {
+    statusbar(ctx, props) {
+      return <text>{`${ctx.appName}:${props.user}`}</text>
+    },
+  },
+} satisfies ReactPlugin<Slots, typeof context>)
+
+const Slot = createSlot(registry)
+
+function App() {
+  return (
+    <Slot name="statusbar" user="sam" mode="replace">
+      <text>fallback-statusbar</text>
+    </Slot>
+  )
+}
+
+createRoot(renderer).render(<App />)
+```
+
+## Slot props
+
+- `name`: slot name (`keyof Slots`)
+- `mode`: `append` | `replace` | `single_winner`
+- remaining props: slot-specific props for the chosen `name`
+- `children`: fallback UI
+
+## Plugin failure placeholders
+
+```tsx
+const Slot = createSlot(registry, {
+  pluginFailurePlaceholder(failure) {
+    return <text>{`plugin-error:${failure.pluginId}:${failure.phase}`}</text>
+  },
+})
+```
+
+If a plugin throws, the slot renders the placeholder (or fallback if no placeholder output is provided).
+
+## Observability
+
+```tsx
+registry.onPluginError((event) => {
+  console.error(event.pluginId, event.phase, event.source, event.error.message)
+})
+```
+
+Example: `packages/react/examples/plugin-slots-errors.tsx`
