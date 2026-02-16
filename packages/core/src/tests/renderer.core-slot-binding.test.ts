@@ -540,6 +540,95 @@ describe("Core slot binding", () => {
     handle.dispose()
   })
 
+  test("clear removes mounted plugin nodes and restores fallback", () => {
+    const registry = createCoreSlotRegistry<AppSlot>(renderer, { appName: "core-only", version: "1.0.0" })
+    let fallbackCreateCount = 0
+    let pluginNode: TestRenderable | null = null
+
+    registerCorePlugin(registry, {
+      id: "plugin-a",
+      slots: {
+        statusbar() {
+          pluginNode = new TestRenderable(renderer, "plugin-a")
+          return pluginNode
+        },
+      },
+    })
+
+    const handle = mountCoreSlot({
+      registry,
+      name: "statusbar",
+      mount: slotMount,
+      mode: "replace",
+      fallback: () => {
+        fallbackCreateCount++
+        return new TestRenderable(renderer, "fallback")
+      },
+    })
+
+    expect(slotMount.getChildren().map((child) => child.id)).toEqual(["plugin-a"])
+
+    registry.clear()
+
+    expect(fallbackCreateCount).toBe(1)
+    expect(slotMount.getChildren().map((child) => child.id)).toEqual(["fallback"])
+    expect(pluginNode?.isDestroyed).toBe(true)
+
+    handle.dispose()
+  })
+
+  test("setMode transitions reconcile mounted output", () => {
+    const registry = createCoreSlotRegistry<AppSlot>(renderer, { appName: "core-only", version: "1.0.0" })
+    let pluginACreateCount = 0
+    let pluginBCreateCount = 0
+
+    registerCorePlugin(registry, {
+      id: "plugin-a",
+      order: 0,
+      slots: {
+        statusbar() {
+          pluginACreateCount++
+          return new TestRenderable(renderer, `plugin-a-${pluginACreateCount}`)
+        },
+      },
+    })
+
+    registerCorePlugin(registry, {
+      id: "plugin-b",
+      order: 10,
+      slots: {
+        statusbar() {
+          pluginBCreateCount++
+          return new TestRenderable(renderer, `plugin-b-${pluginBCreateCount}`)
+        },
+      },
+    })
+
+    const handle = mountCoreSlot({
+      registry,
+      name: "statusbar",
+      mount: slotMount,
+      mode: "append",
+      fallback: () => new TestRenderable(renderer, "fallback"),
+    })
+
+    expect(slotMount.getChildren().map((child) => child.id)).toEqual(["fallback", "plugin-a-1", "plugin-b-1"])
+
+    handle.setMode("replace")
+    expect(slotMount.getChildren().map((child) => child.id)).toEqual(["plugin-a-1", "plugin-b-1"])
+
+    handle.setMode("single_winner")
+    expect(slotMount.getChildren().map((child) => child.id)).toEqual(["plugin-a-1"])
+
+    handle.setMode("replace")
+    expect(slotMount.getChildren().map((child) => child.id)).toEqual(["plugin-a-1", "plugin-b-2"])
+
+    handle.setMode("append")
+    expect(slotMount.getChildren().map((child) => child.id)).toEqual(["fallback", "plugin-a-1", "plugin-b-2"])
+
+    handle.dispose()
+  })
+
   test("dispose clears mounted nodes and unsubscribes from registry updates", () => {
     const registry = createCoreSlotRegistry<AppSlot>(renderer, { appName: "core-only", version: "1.0.0" })
     let fallbackNode: TestRenderable | null = null
