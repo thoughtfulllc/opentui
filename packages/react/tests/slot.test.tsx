@@ -851,10 +851,12 @@ describe("React Slot System", () => {
     }
 
     const frame = testSetup.captureCharFrame()
-    console.log("[react-slot-debug] frame after e,d:\n" + frame)
-    console.log("[react-slot-debug] plugin error events:", pluginErrorEventCount)
-    console.log("[react-slot-debug] listener state updates:", listenerStateUpdates)
-    console.log("[react-slot-debug] sample events:\n" + debugEvents.join("\n"))
+    if (pluginErrorEventCount > 4 || listenerStateUpdates > 4) {
+      console.log("[react-slot-debug] frame after e,d:\n" + frame)
+      console.log("[react-slot-debug] plugin error events:", pluginErrorEventCount)
+      console.log("[react-slot-debug] listener state updates:", listenerStateUpdates)
+      console.log("[react-slot-debug] sample events:\n" + debugEvents.join("\n"))
+    }
 
     expect(pluginErrorEventCount).toBeLessThanOrEqual(4)
     expect(listenerStateUpdates).toBeLessThanOrEqual(4)

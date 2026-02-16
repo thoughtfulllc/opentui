@@ -1,6 +1,6 @@
 import { createSlotRegistry, SlotRegistry, type SlotRegistryOptions } from "@opentui/core/plugins"
 import type { CliRenderer, Plugin, PluginContext, PluginErrorEvent } from "@opentui/core"
-import React, { Fragment, useEffect, useMemo, useState } from "react"
+import React, { Fragment, useEffect, useMemo, useRef, useState } from "react"
 import type { ReactNode } from "react"
 
 export type SlotMode = "append" | "replace" | "single_winner"
@@ -116,6 +116,8 @@ export function createSlot<TSlots extends SlotMap, TContext extends PluginContex
   return function Slot<K extends keyof TSlots>(props: ReactSlotProps<TSlots, K>): ReactNode {
     const [version, setVersion] = useState(0)
     const slotName = String(props.name)
+    const renderFailuresByPluginRef = useRef<Map<string, PluginErrorEvent>>(new Map())
+    const pendingRenderReportsRef = useRef<Map<string, { pluginId: string; slot: string; error: Error }>>(new Map())
 
     useEffect(() => {
       return registry.subscribe(() => {
@@ -123,14 +125,38 @@ export function createSlot<TSlots extends SlotMap, TContext extends PluginContex
       })
     }, [registry])
 
+    useEffect(() => {
+      if (pendingRenderReportsRef.current.size === 0) {
+        return
+      }
+
+      const pendingReports = [...pendingRenderReportsRef.current.values()]
+      pendingRenderReportsRef.current.clear()
+
+      for (const report of pendingReports) {
+        const failure = registry.reportPluginError({
+          pluginId: report.pluginId,
+          slot: report.slot,
+          phase: "render",
+          source: "react",
+          error: report.error,
+        })
+
+        renderFailuresByPluginRef.current.set(`${report.slot}:${report.pluginId}:render`, failure)
+      }
+    })
+
     const entries = useMemo(() => registry.resolveEntries(props.name), [registry, props.name, version])
     const slotProps = getSlotProps(props)
 
     const renderEntry = (entry: (typeof entries)[number], fallbackOnFailure?: ReactNode): ReactNode => {
       const key = `${slotName}:${entry.id}`
+      const failureKey = `${slotName}:${entry.id}:render`
 
       try {
         const rendered = entry.renderer(registry.context, slotProps)
+        renderFailuresByPluginRef.current.delete(failureKey)
+        pendingRenderReportsRef.current.delete(failureKey)
         return (
           <PluginErrorBoundary
             key={key}
@@ -143,13 +169,35 @@ export function createSlot<TSlots extends SlotMap, TContext extends PluginContex
           </PluginErrorBoundary>
         )
       } catch (error) {
-        const failure = registry.reportPluginError({
-          pluginId: entry.id,
-          slot: slotName,
-          phase: "render",
-          source: "react",
-          error,
-        })
+        const normalizedError =
+          error instanceof Error ? error : typeof error === "string" ? new Error(error) : new Error(String(error))
+        const lastFailure = renderFailuresByPluginRef.current.get(failureKey)
+        const isSameFailure = lastFailure && lastFailure.error.message === normalizedError.message
+
+        if (!isSameFailure) {
+          const queued = pendingRenderReportsRef.current.get(failureKey)
+          if (!queued || queued.error.message !== normalizedError.message) {
+            pendingRenderReportsRef.current.set(failureKey, {
+              pluginId: entry.id,
+              slot: slotName,
+              error: normalizedError,
+            })
+          }
+        }
+
+        const failure =
+          isSameFailure && lastFailure
+            ? lastFailure
+            : {
+                pluginId: entry.id,
+                slot: slotName,
+                phase: "render",
+                source: "react",
+                error: normalizedError,
+                timestamp: Date.now(),
+              }
+
+        renderFailuresByPluginRef.current.set(failureKey, failure)
 
         const placeholder = renderPluginFailurePlaceholder(failure, entry.id, slotName)
         if (placeholder === null || placeholder === undefined || placeholder === false) {
