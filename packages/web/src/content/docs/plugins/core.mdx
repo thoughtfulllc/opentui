@@ -21,6 +21,20 @@ On top of `createSlotRegistry`, core provides:
 
 Core slots do not have per-slot props. Each slot renderer receives only the host context: `(ctx) => BaseRenderable`. Use the overview page's `createSlotRegistry` directly if you need per-slot props without a framework binding.
 
+`createCoreSlotRegistry` accepts the same [`SlotRegistryOptions`](/docs/plugins/slots#registry-options) as `createSlotRegistry`.
+
+## `CorePlugin` interface
+
+| Field     | Type                                              | Required | Description                                                                                |
+| --------- | ------------------------------------------------- | -------- | ------------------------------------------------------------------------------------------ |
+| `id`      | `string`                                          | yes      | Unique identifier. Duplicate ids throw.                                                    |
+| `order`   | `number`                                          | no       | Sort priority (ascending). Defaults to `0`.                                                |
+| `setup`   | `(ctx, renderer) => void`                         | no       | Called once at registration time. If it throws, the plugin is not registered.              |
+| `dispose` | `() => void`                                      | no       | Called when the plugin is unregistered or the registry is cleared.                         |
+| `slots`   | `Partial<Record<SlotName, CoreSlotContribution>>` | yes      | Each value is a renderer function or a [managed slot object](#managed-slot-contributions). |
+
+A `CoreSlotContribution` is either a plain renderer `(ctx) => BaseRenderable` or a `CoreManagedSlot` with lifecycle hooks.
+
 ## Basic usage
 
 A `SlotRenderable` extends `Renderable`, so it can be added to any parent like a `BoxRenderable`. It resolves plugins from the registry, manages their lifecycle, and reconciles their output as its children.
@@ -78,12 +92,15 @@ slot.refresh()
 slot.destroy()
 ```
 
+`registerCorePlugin` returns an unregister function (`() => void`). Calling it removes the plugin and invokes its `dispose` hook.
+
 Because `SlotRenderable` extends `Renderable`, it accepts all standard layout options (`width`, `height`, `flexDirection`, `padding`, etc.) alongside the slot-specific options.
 
 ## `SlotRenderable` options
 
 | Option                     | Type                                                                | Required | Description                                                                                                  |
 | -------------------------- | ------------------------------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------ |
+| `id`                       | `string`                                                            | yes      | Unique renderable identifier (inherited from `RenderableOptions`)                                            |
 | `registry`                 | `CoreSlotRegistry`                                                  | yes      | The registry to read plugins from                                                                            |
 | `name`                     | slot name                                                           | yes      | Which slot to mount                                                                                          |
 | `mode`                     | `SlotMode`                                                          | no       | `"append"` (default), `"replace"`, or `"single_winner"`. See [slot modes](/docs/plugins/slots#4-slot-modes). |
@@ -153,6 +170,15 @@ registerCorePlugin(registry, {
   },
 })
 ```
+
+### `CoreManagedSlot` interface
+
+| Field          | Type                      | Required | Description                                                          |
+| -------------- | ------------------------- | -------- | -------------------------------------------------------------------- |
+| `render`       | `(ctx) => BaseRenderable` | yes      | Creates the renderable node for this slot                            |
+| `onActivate`   | `(ctx) => void`           | no       | Called when the plugin becomes active (visible) in the slot          |
+| `onDeactivate` | `(ctx) => void`           | no       | Called when the plugin is no longer active (e.g. lost single_winner) |
+| `onDispose`    | `(ctx) => void`           | no       | Called when the plugin is removed or the slot is destroyed           |
 
 ### Node ownership
 
