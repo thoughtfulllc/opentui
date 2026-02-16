@@ -1,6 +1,6 @@
 import type { CliRenderer } from "../renderer"
 
-export interface PluginContext {}
+export type PluginContext = object
 
 export type PluginErrorPhase = "setup" | "render" | "dispose" | "error_placeholder"
 
