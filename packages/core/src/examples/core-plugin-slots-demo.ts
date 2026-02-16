@@ -183,9 +183,51 @@ function updateInfoPanel(): void {
 }
 
 function createClockPlugin(rendererInstance: CliRenderer): CorePlugin<DemoSlot> {
+  let statusbarItem: BoxRenderable | null = null
   let statusText: TextRenderable | null = null
+  let sidebarPanel: BoxRenderable | null = null
   let sidebarText: TextRenderable | null = null
   let timer: ReturnType<typeof setInterval> | null = null
+  const activeSlots = new Set<DemoSlot>()
+
+  const startClockTimer = () => {
+    if (timer) {
+      return
+    }
+
+    updateClockText()
+    timer = setInterval(updateClockText, 1000)
+  }
+
+  const stopClockTimer = () => {
+    if (!timer) {
+      return
+    }
+
+    clearInterval(timer)
+    timer = null
+  }
+
+  const syncClockTimer = () => {
+    if (activeSlots.size > 0) {
+      startClockTimer()
+      return
+    }
+
+    stopClockTimer()
+  }
+
+  const disposeStatusbarNode = () => {
+    statusbarItem?.destroyRecursively()
+    statusbarItem = null
+    statusText = null
+  }
+
+  const disposeSidebarNode = () => {
+    sidebarPanel?.destroyRecursively()
+    sidebarPanel = null
+    sidebarText = null
+  }
 
   const updateClockText = () => {
     const timestamp = new Date().toLocaleTimeString()
@@ -210,17 +252,11 @@ function createClockPlugin(rendererInstance: CliRenderer): CorePlugin<DemoSlot> 
   return {
     id: "clock-plugin",
     order: getClockOrder(),
-    setup() {
-      updateClockText()
-      timer = setInterval(updateClockText, 1000)
-    },
     dispose() {
-      if (timer) {
-        clearInterval(timer)
-        timer = null
-      }
-      statusText = null
-      sidebarText = null
+      stopClockTimer()
+      activeSlots.clear()
+      disposeStatusbarNode()
+      disposeSidebarNode()
     },
     slots: {
       statusbar: {
@@ -242,6 +278,7 @@ function createClockPlugin(rendererInstance: CliRenderer): CorePlugin<DemoSlot> 
             marginLeft: 1,
             backgroundColor: "#0f172a",
           })
+          statusbarItem = item
 
           statusText = new TextRenderable(rendererInstance, {
             id: `clock-statusbar-text-${clockStats.statusbarCreates}`,
@@ -254,11 +291,19 @@ function createClockPlugin(rendererInstance: CliRenderer): CorePlugin<DemoSlot> 
           updateInfoPanel()
           return item
         },
+        onActivate() {
+          activeSlots.add("statusbar")
+          syncClockTimer()
+        },
         onDeactivate() {
-          statusText = null
+          activeSlots.delete("statusbar")
+          disposeStatusbarNode()
+          syncClockTimer()
         },
         onDispose() {
-          statusText = null
+          activeSlots.delete("statusbar")
+          disposeStatusbarNode()
+          syncClockTimer()
         },
       },
       sidebar: {
@@ -279,6 +324,7 @@ function createClockPlugin(rendererInstance: CliRenderer): CorePlugin<DemoSlot> 
             marginBottom: 1,
             padding: 1,
           })
+          sidebarPanel = panel
 
           panel.add(
             new TextRenderable(rendererInstance, {
@@ -300,11 +346,19 @@ function createClockPlugin(rendererInstance: CliRenderer): CorePlugin<DemoSlot> 
           updateInfoPanel()
           return panel
         },
+        onActivate() {
+          activeSlots.add("sidebar")
+          syncClockTimer()
+        },
         onDeactivate() {
-          sidebarText = null
+          activeSlots.delete("sidebar")
+          disposeSidebarNode()
+          syncClockTimer()
         },
         onDispose() {
-          sidebarText = null
+          activeSlots.delete("sidebar")
+          disposeSidebarNode()
+          syncClockTimer()
         },
       },
     },
@@ -312,11 +366,46 @@ function createClockPlugin(rendererInstance: CliRenderer): CorePlugin<DemoSlot> 
 }
 
 function createActivityPlugin(rendererInstance: CliRenderer): CorePlugin<DemoSlot> {
+  let activityItem: BoxRenderable | null = null
   let activityText: TextRenderable | null = null
   let timer: ReturnType<typeof setInterval> | null = null
   let phase = 0
+  let statusbarActive = false
 
   const pulse = [".", "..", "...", "...."]
+
+  const startActivityTimer = () => {
+    if (timer) {
+      return
+    }
+
+    updateActivityText()
+    timer = setInterval(updateActivityText, 700)
+  }
+
+  const stopActivityTimer = () => {
+    if (!timer) {
+      return
+    }
+
+    clearInterval(timer)
+    timer = null
+  }
+
+  const syncActivityTimer = () => {
+    if (statusbarActive) {
+      startActivityTimer()
+      return
+    }
+
+    stopActivityTimer()
+  }
+
+  const disposeStatusbarNode = () => {
+    activityItem?.destroyRecursively()
+    activityItem = null
+    activityText = null
+  }
 
   const updateActivityText = () => {
     phase = (phase + 1) % pulse.length
@@ -332,16 +421,10 @@ function createActivityPlugin(rendererInstance: CliRenderer): CorePlugin<DemoSlo
   return {
     id: "activity-plugin",
     order: getActivityOrder(),
-    setup() {
-      timer = setInterval(updateActivityText, 700)
-      updateActivityText()
-    },
     dispose() {
-      if (timer) {
-        clearInterval(timer)
-        timer = null
-      }
-      activityText = null
+      statusbarActive = false
+      stopActivityTimer()
+      disposeStatusbarNode()
     },
     slots: {
       statusbar: {
@@ -363,6 +446,7 @@ function createActivityPlugin(rendererInstance: CliRenderer): CorePlugin<DemoSlo
             marginLeft: 1,
             backgroundColor: "#052e16",
           })
+          activityItem = item
 
           activityText = new TextRenderable(rendererInstance, {
             id: `activity-statusbar-text-${activityStats.statusbarCreates}`,
@@ -375,11 +459,19 @@ function createActivityPlugin(rendererInstance: CliRenderer): CorePlugin<DemoSlo
           updateInfoPanel()
           return item
         },
+        onActivate() {
+          statusbarActive = true
+          syncActivityTimer()
+        },
         onDeactivate() {
-          activityText = null
+          statusbarActive = false
+          disposeStatusbarNode()
+          syncActivityTimer()
         },
         onDispose() {
-          activityText = null
+          statusbarActive = false
+          disposeStatusbarNode()
+          syncActivityTimer()
         },
       },
     },
