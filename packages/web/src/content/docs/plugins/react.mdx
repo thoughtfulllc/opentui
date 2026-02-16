@@ -19,7 +19,7 @@ If you have not read the shared model yet, start with [Plugin Slots](/docs/plugi
 
 ```tsx
 import { createCliRenderer } from "@opentui/core"
-import { createReactSlotRegistry, createRoot, createSlot, type ReactPlugin } from "@opentui/react"
+import { createReactSlotRegistry, createRoot, createSlot } from "@opentui/react"
 
 type Slots = {
   statusbar: { user: string }
@@ -37,7 +37,7 @@ const unregister = registry.register({
       return <text>{`${ctx.appName}:${props.user}`}</text>
     },
   },
-} satisfies ReactPlugin<Slots, typeof context>)
+})
 
 const Slot = createSlot(registry)
 
