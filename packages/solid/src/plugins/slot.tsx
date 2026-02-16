@@ -30,6 +30,8 @@ export function createSolidSlotRegistry<TSlots extends SlotMap, TContext extends
   context: TContext,
   options: SlotRegistryOptions = {},
 ): SlotRegistry<JSX.Element, TSlots, TContext> {
+  // Solid slots intentionally use one registry key per renderer instance.
+  // Use createSlotRegistry from @opentui/core/plugins with a custom key for independent registries.
   return createSlotRegistry<JSX.Element, TSlots, TContext>(renderer, "solid:slot-registry", context, options)
 }
 

@@ -167,6 +167,8 @@ export function createCoreSlotRegistry<TSlotName extends string, TContext extend
   context: TContext,
   options: SlotRegistryOptions = {},
 ): CoreSlotRegistry<TSlotName, TContext> {
+  // Core slots intentionally use one registry key per renderer instance.
+  // Use createSlotRegistry with your own key if you need multiple independent registries.
   return createSlotRegistry<BaseRenderable, CoreSlotProps<TSlotName>, TContext>(
     renderer,
     "core:slot-registry",
