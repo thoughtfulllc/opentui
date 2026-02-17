@@ -5,6 +5,7 @@ import { createCoreSlotRegistry, registerCorePlugin, SlotRenderable } from "../p
 
 type AppSlot = "statusbar"
 type AppContext = { appName: string; version: string }
+type AppData = { label: string }
 
 class TestRenderable extends Renderable {
   constructor(renderer: TestRenderer, id: string) {
@@ -57,6 +58,41 @@ describe("Core slot binding", () => {
 
     expect(fallbackCreateCount).toBe(1)
     expect(slot.getChildren().map((child) => child.id)).toEqual(["fallback"])
+
+    slot.destroy()
+  })
+
+  test("passes slot data to plugin renderers and updates on data change", () => {
+    const registry = createCoreSlotRegistry<AppSlot, AppContext, AppData>(renderer, {
+      appName: "core-only",
+      version: "1.0.0",
+    })
+    const receivedLabels: string[] = []
+
+    registerCorePlugin(registry, {
+      id: "plugin-a",
+      slots: {
+        statusbar(_ctx, data) {
+          receivedLabels.push(data.label)
+          return new TestRenderable(renderer, `plugin-${data.label}`)
+        },
+      },
+    })
+
+    const slot = new SlotRenderable<AppSlot, AppContext, AppData>(renderer, {
+      registry,
+      name: "statusbar",
+      data: { label: "initial" },
+    })
+    renderer.root.add(slot)
+
+    expect(slot.getChildren().map((child) => child.id)).toEqual(["plugin-initial"])
+    expect(receivedLabels).toEqual(["initial"])
+
+    slot.data = { label: "updated" }
+
+    expect(slot.getChildren().map((child) => child.id)).toEqual(["plugin-updated"])
+    expect(receivedLabels).toEqual(["initial", "updated"])
 
     slot.destroy()
   })
