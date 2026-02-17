@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test"
 import { createTestRenderer, type TestRendererOptions } from "@opentui/core/testing"
 import { createContext, createComponent, createSignal, onCleanup, onMount, useContext, type JSX } from "solid-js"
-import { createSlot, createSolidSlotRegistry, type SolidPlugin } from "../src/plugins/slot"
+import { createSlot, createSolidSlotRegistry, Slot, type SolidPlugin } from "../src/plugins/slot"
 import { _render as renderInternal } from "../src/reconciler"
 import { RendererContext } from "../src/elements"
 
@@ -84,11 +84,11 @@ describe("Solid Slot System", () => {
   it("renders fallback content when no plugin matches", async () => {
     const { setup } = await setupSlotTest(
       (registry) => {
-        const Slot = createSlot(registry)
+        const AppSlot = Slot<AppSlots, typeof hostContext>
         return (
-          <Slot name="statusbar" user="sam">
+          <AppSlot registry={registry} name="statusbar" user="sam">
             <text>fallback-only</text>
-          </Slot>
+          </AppSlot>
         )
       },
       { width: 50, height: 6 },
