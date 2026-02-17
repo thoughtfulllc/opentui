@@ -6,7 +6,7 @@ export type SlotMode = "append" | "replace" | "single_winner"
 
 export type PluginErrorPhase = "setup" | "render" | "dispose" | "error_placeholder"
 
-export type PluginErrorSource = "registry" | "core" | "react" | "solid"
+export type PluginErrorSource = "registry" | "core" | (string & {})
 
 export interface PluginErrorEvent {
   pluginId: string
