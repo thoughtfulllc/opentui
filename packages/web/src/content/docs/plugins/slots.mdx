@@ -207,7 +207,7 @@ The `reportPluginError` method accepts a `PluginErrorReport`:
 | `pluginId`  | `string`              | The plugin that caused the error                             |
 | `slot`      | `string \| undefined` | The slot name, if the error is slot-specific                 |
 | `phase`     | `PluginErrorPhase`    | `"setup"`, `"render"`, `"dispose"`, or `"error_placeholder"` |
-| `source`    | `PluginErrorSource`   | `"registry"`, `"core"`, `"react"`, or `"solid"`              |
+| `source`    | `PluginErrorSource`   | `"registry"`, `"core"`, or a framework-defined source string |
 | `error`     | `Error`               | The normalized error object                                  |
 | `timestamp` | `number`              | `Date.now()` at the time of the error                        |
 
