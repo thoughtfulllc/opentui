@@ -266,6 +266,99 @@ describe("SlotRegistry", () => {
     expect(entries.map((entry) => entry.renderer(hostContext, { user: "sam" }))).toEqual(["a", "b"])
   })
 
+  test("invalidates cached sorting when registering after a resolve", () => {
+    const registry = new SlotRegistry<TestNode, AppSlots, AppContext>(createMockRenderer(), hostContext)
+
+    registry.register({
+      id: "plugin-b",
+      order: 2,
+      slots: {
+        statusbar() {
+          return "b"
+        },
+      },
+    })
+
+    expect(registry.resolveEntries("statusbar").map((entry) => entry.id)).toEqual(["plugin-b"])
+
+    registry.register({
+      id: "plugin-a",
+      order: 1,
+      slots: {
+        statusbar() {
+          return "a"
+        },
+      },
+    })
+
+    expect(registry.resolveEntries("statusbar").map((entry) => entry.id)).toEqual(["plugin-a", "plugin-b"])
+  })
+
+  test("invalidates cached sorting on unregister and clear", () => {
+    const registry = new SlotRegistry<TestNode, AppSlots, AppContext>(createMockRenderer(), hostContext)
+
+    registry.register({
+      id: "plugin-a",
+      order: 1,
+      slots: {
+        statusbar() {
+          return "a"
+        },
+      },
+    })
+
+    registry.register({
+      id: "plugin-b",
+      order: 2,
+      slots: {
+        statusbar() {
+          return "b"
+        },
+      },
+    })
+
+    expect(registry.resolveEntries("statusbar").map((entry) => entry.id)).toEqual(["plugin-a", "plugin-b"])
+
+    registry.unregister("plugin-a")
+    expect(registry.resolveEntries("statusbar").map((entry) => entry.id)).toEqual(["plugin-b"])
+
+    registry.clear()
+    expect(registry.resolveEntries("statusbar")).toEqual([])
+  })
+
+  test("re-sorts when plugin order changes outside updateOrder", () => {
+    const registry = new SlotRegistry<TestNode, AppSlots, AppContext>(createMockRenderer(), hostContext)
+
+    const latePlugin: TestPlugin = {
+      id: "late-plugin",
+      order: 10,
+      slots: {
+        statusbar() {
+          return "late"
+        },
+      },
+    }
+
+    const earlyPlugin: TestPlugin = {
+      id: "early-plugin",
+      order: 0,
+      slots: {
+        statusbar() {
+          return "early"
+        },
+      },
+    }
+
+    registry.register(latePlugin)
+    registry.register(earlyPlugin)
+
+    expect(registry.resolveEntries("statusbar").map((entry) => entry.id)).toEqual(["early-plugin", "late-plugin"])
+
+    latePlugin.order = -5
+
+    expect(registry.resolveEntries("statusbar").map((entry) => entry.id)).toEqual(["late-plugin", "early-plugin"])
+  })
+
   test("slot registries are isolated per renderer and key", () => {
     const rendererA = createMockRenderer()
     const rendererB = createMockRenderer()

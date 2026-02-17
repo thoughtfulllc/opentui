@@ -33,10 +33,13 @@ export interface SlotRegistryOptions {
 interface RegisteredPlugin<TNode, TSlots extends object, TContext extends PluginContext = PluginContext> {
   plugin: Plugin<TNode, TSlots, TContext>
   registrationOrder: number
+  cachedOrder: number
+  cachedId: string
 }
 
 export class SlotRegistry<TNode, TSlots extends object, TContext extends PluginContext = PluginContext> {
   private plugins: RegisteredPlugin<TNode, TSlots, TContext>[] = []
+  private sortedPluginsCache: RegisteredPlugin<TNode, TSlots, TContext>[] | null = null
   private listeners: Set<() => void> = new Set()
   private errorListeners: Set<(event: PluginErrorEvent) => void> = new Set()
   private pluginErrors: PluginErrorEvent[] = []
@@ -99,8 +102,11 @@ export class SlotRegistry<TNode, TSlots extends object, TContext extends PluginC
     this.plugins.push({
       plugin,
       registrationOrder: this.registrationOrder++,
+      cachedOrder: plugin.order ?? 0,
+      cachedId: plugin.id,
     })
 
+    this.invalidateSortedPluginsCache()
     this.notifyListeners()
 
     return () => {
@@ -115,6 +121,8 @@ export class SlotRegistry<TNode, TSlots extends object, TContext extends PluginC
     }
 
     const [entry] = this.plugins.splice(index, 1)
+
+    this.invalidateSortedPluginsCache()
 
     try {
       entry?.plugin.dispose?.()
@@ -143,6 +151,8 @@ export class SlotRegistry<TNode, TSlots extends object, TContext extends PluginC
     }
 
     entry.plugin.order = order
+    entry.cachedOrder = order
+    this.invalidateSortedPluginsCache()
     this.notifyListeners()
     return true
   }
@@ -154,6 +164,7 @@ export class SlotRegistry<TNode, TSlots extends object, TContext extends PluginC
 
     const plugins = [...this.plugins]
     this.plugins = []
+    this.invalidateSortedPluginsCache()
 
     for (const entry of plugins) {
       try {
@@ -254,9 +265,15 @@ export class SlotRegistry<TNode, TSlots extends object, TContext extends PluginC
   }
 
   private getSortedPlugins(): RegisteredPlugin<TNode, TSlots, TContext>[] {
-    return [...this.plugins].sort((left, right) => {
-      const leftOrder = left.plugin.order ?? 0
-      const rightOrder = right.plugin.order ?? 0
+    this.syncPluginSortMetadata()
+
+    if (this.sortedPluginsCache) {
+      return this.sortedPluginsCache
+    }
+
+    this.sortedPluginsCache = [...this.plugins].sort((left, right) => {
+      const leftOrder = left.cachedOrder
+      const rightOrder = right.cachedOrder
 
       if (leftOrder !== rightOrder) {
         return leftOrder - rightOrder
@@ -266,8 +283,33 @@ export class SlotRegistry<TNode, TSlots extends object, TContext extends PluginC
         return left.registrationOrder - right.registrationOrder
       }
 
-      return left.plugin.id.localeCompare(right.plugin.id)
+      return left.cachedId.localeCompare(right.cachedId)
     })
+
+    return this.sortedPluginsCache
+  }
+
+  private syncPluginSortMetadata(): void {
+    let hasChanges = false
+
+    for (const entry of this.plugins) {
+      const nextOrder = entry.plugin.order ?? 0
+      const nextId = entry.plugin.id
+
+      if (entry.cachedOrder !== nextOrder || entry.cachedId !== nextId) {
+        entry.cachedOrder = nextOrder
+        entry.cachedId = nextId
+        hasChanges = true
+      }
+    }
+
+    if (hasChanges) {
+      this.invalidateSortedPluginsCache()
+    }
+  }
+
+  private invalidateSortedPluginsCache(): void {
+    this.sortedPluginsCache = null
   }
 
   private notifyListeners(): void {
