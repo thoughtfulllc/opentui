@@ -1,8 +1,8 @@
 import { createCliRenderer, type PluginErrorEvent } from "@opentui/core"
 import {
+  Slot,
   createReactSlotRegistry,
   createRoot,
-  createSlot,
   type ReactPlugin,
   type SlotMode,
   useKeyboard,
@@ -128,22 +128,16 @@ function App() {
   const [refreshNonce, setRefreshNonce] = useState(0)
   const [errorLines, setErrorLines] = useState<string[]>([])
 
-  const Slot = useMemo(() => {
-    if (!showPlaceholder) {
-      return createSlot(registry)
-    }
+  const AppSlot = Slot<DemoSlots, typeof hostContext>
 
-    return createSlot(registry, {
-      pluginFailurePlaceholder(failure) {
-        return (
-          <box border borderStyle="single" borderColor="#fb7185" marginLeft={1} paddingLeft={1} paddingRight={1}>
-            <text fg="#fecaca">{`Plugin error: ${failure.pluginId}`}</text>
-            <text fg="#fca5a5">{`${failure.phase}/${failure.source} @ ${failure.slot ?? "unknown"}`}</text>
-          </box>
-        )
-      },
-    })
-  }, [registry, showPlaceholder])
+  const pluginFailurePlaceholder = (failure: PluginErrorEvent) => {
+    return (
+      <box border borderStyle="single" borderColor="#fb7185" marginLeft={1} paddingLeft={1} paddingRight={1}>
+        <text fg="#fecaca">{`Plugin error: ${failure.pluginId}`}</text>
+        <text fg="#fca5a5">{`${failure.phase}/${failure.source} @ ${failure.slot ?? "unknown"}`}</text>
+      </box>
+    )
+  }
 
   useEffect(() => {
     renderer.setBackgroundColor("#000000")
@@ -242,9 +236,15 @@ function App() {
         paddingLeft={1}
         marginBottom={1}
       >
-        <Slot name="statusbar" label="status" mode={statusbarMode}>
+        <AppSlot
+          registry={registry}
+          name="statusbar"
+          label="status"
+          mode={statusbarMode}
+          pluginFailurePlaceholder={showPlaceholder ? pluginFailurePlaceholder : undefined}
+        >
           <text fg="#94a3b8">Fallback statusbar content</text>
-        </Slot>
+        </AppSlot>
       </box>
 
       <box width="100%" flexGrow={1} flexDirection="row">
@@ -257,9 +257,15 @@ function App() {
           padding={1}
           marginRight={1}
         >
-          <Slot name="sidebar" section="left" mode="replace">
+          <AppSlot
+            registry={registry}
+            name="sidebar"
+            section="left"
+            mode="replace"
+            pluginFailurePlaceholder={showPlaceholder ? pluginFailurePlaceholder : undefined}
+          >
             <text fg="#94a3b8">No sidebar plugin active</text>
-          </Slot>
+          </AppSlot>
         </box>
 
         <box flexGrow={1} border borderStyle="single" borderColor="#334155" flexDirection="column" padding={1}>
