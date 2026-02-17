@@ -35,6 +35,8 @@ flag_run=false
 flag_bench=false
 bench_runs=10
 bench_mode="help"
+flag_isolated=false
+flag_shell=false
 flag_verbose=false
 flag_dry_run=false
 expected_core_version=""
@@ -103,6 +105,8 @@ Options:
   --skip-build        Skip opentui TS builds (native may still run if missing)
   --skip-opencode     Build opentui only, skip linking/building opencode
   --run               Run opencode after build (dev mode or release binary)
+  --isolated          Run/bench with isolated config (no plugins, skills, etc.)
+  --shell             Print isolated env exports, then exit (no build)
   --bench             Benchmark startup timing
   --bench-runs <n>    Number of benchmark runs (default: 10)
   --bench-mode <m>    Benchmark mode: help | tui | tui-ready (default: help)
@@ -120,7 +124,7 @@ cleanup_register() {
 
 run_cleanup() {
   local idx
-  for ((idx=${#cleanup_tasks[@]} - 1; idx >= 0; idx--)); do
+  for ((idx = ${#cleanup_tasks[@]} - 1; idx >= 0; idx--)); do
     "${cleanup_tasks[$idx]}" || true
   done
 }
@@ -175,76 +179,85 @@ resolve_existing_dir() {
 parse_args() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --opentui)
-        opentui_root="${2:?--opentui requires a value}"
-        shift 2
-        ;;
-      --opencode)
-        opencode_root="${2:?--opencode requires a value}"
-        shift 2
-        ;;
-      --release)
-        flag_release=true
-        shift
-        ;;
-      --debug-native)
-        flag_debug_native=true
-        shift
-        ;;
-      --skip-build)
-        flag_skip_build=true
-        shift
-        ;;
-      --skip-opencode)
-        flag_skip_opencode=true
-        shift
-        ;;
-      --run)
-        flag_run=true
-        shift
-        ;;
-      --bench)
-        flag_bench=true
-        shift
-        ;;
-      --bench-runs)
-        flag_bench=true
-        bench_runs="${2:?--bench-runs requires a value}"
-        shift 2
-        ;;
-      --bench-mode)
-        flag_bench=true
-        bench_mode="${2:?--bench-mode requires a value}"
-        shift 2
-        ;;
-      --dist)
-        link_mode="dist"
-        shift
-        ;;
-      --source)
-        link_mode="source"
-        shift
-        ;;
-      --verbose|-v)
-        flag_verbose=true
-        shift
-        ;;
-      --dry-run)
-        flag_dry_run=true
-        shift
-        ;;
-      --help|-h)
-        show_usage
-        exit 0
-        ;;
-      --*)
-        err "Unknown flag: $1"
-        exit 1
-        ;;
-      *)
-        err "Unexpected positional argument: $1"
-        exit 1
-        ;;
+    --opentui)
+      opentui_root="${2:?--opentui requires a value}"
+      shift 2
+      ;;
+    --opencode)
+      opencode_root="${2:?--opencode requires a value}"
+      shift 2
+      ;;
+    --release)
+      flag_release=true
+      shift
+      ;;
+    --debug-native)
+      flag_debug_native=true
+      shift
+      ;;
+    --skip-build)
+      flag_skip_build=true
+      shift
+      ;;
+    --skip-opencode)
+      flag_skip_opencode=true
+      shift
+      ;;
+    --run)
+      flag_run=true
+      shift
+      ;;
+    --isolated)
+      flag_isolated=true
+      shift
+      ;;
+    --shell)
+      flag_shell=true
+      flag_isolated=true
+      shift
+      ;;
+    --bench)
+      flag_bench=true
+      shift
+      ;;
+    --bench-runs)
+      flag_bench=true
+      bench_runs="${2:?--bench-runs requires a value}"
+      shift 2
+      ;;
+    --bench-mode)
+      flag_bench=true
+      bench_mode="${2:?--bench-mode requires a value}"
+      shift 2
+      ;;
+    --dist)
+      link_mode="dist"
+      shift
+      ;;
+    --source)
+      link_mode="source"
+      shift
+      ;;
+    --verbose | -v)
+      flag_verbose=true
+      shift
+      ;;
+    --dry-run)
+      flag_dry_run=true
+      shift
+      ;;
+    --help | -h)
+      show_usage
+      exit 0
+      ;;
+    --*)
+      err "Unknown flag: $1"
+      exit 1
+      ;;
+    *)
+      err "Unexpected positional argument: $1"
+      exit 1
+      ;;
     esac
   done
 
@@ -259,12 +272,11 @@ parse_args() {
   fi
 
   case "$bench_mode" in
-    help|tui|tui-ready)
-      ;;
-    *)
-      err "--bench-mode must be one of: help, tui, tui-ready"
-      exit 1
-      ;;
+  help | tui | tui-ready) ;;
+  *)
+    err "--bench-mode must be one of: help, tui, tui-ready"
+    exit 1
+    ;;
   esac
 
   if $flag_bench && $flag_skip_opencode; then
@@ -284,14 +296,6 @@ validate_paths() {
       err "Not an opencode checkout: $opencode_root"
       exit 1
     }
-    [[ -d "$opencode_root/node_modules" ]] || {
-      err "opencode node_modules missing. Run: bun install --cwd $opencode_root"
-      exit 1
-    }
-    [[ -d "$opencode_root/node_modules/.bun" ]] || {
-      err "Bun cache not found in opencode. Run: bun install --cwd $opencode_root"
-      exit 1
-    }
   fi
 }
 
@@ -301,29 +305,29 @@ detect_platform() {
   arch="$(uname -m)"
 
   case "$os" in
-    Darwin)
-      os="darwin"
-      ;;
-    Linux)
-      os="linux"
-      ;;
-    *)
-      err "Unsupported OS: $os"
-      exit 1
-      ;;
+  Darwin)
+    os="darwin"
+    ;;
+  Linux)
+    os="linux"
+    ;;
+  *)
+    err "Unsupported OS: $os"
+    exit 1
+    ;;
   esac
 
   case "$arch" in
-    x86_64)
-      arch="x64"
-      ;;
-    aarch64|arm64)
-      arch="arm64"
-      ;;
-    *)
-      err "Unsupported arch: $arch"
-      exit 1
-      ;;
+  x86_64)
+    arch="x64"
+    ;;
+  aarch64 | arm64)
+    arch="arm64"
+    ;;
+  *)
+    err "Unsupported arch: $arch"
+    exit 1
+    ;;
   esac
 
   echo "$os" "$arch"
@@ -570,6 +574,15 @@ ensure_opentui_node_modules() {
   run_in_dir "$opentui_root" bun install
 }
 
+ensure_opencode_node_modules() {
+  if [[ -d "$opencode_root/node_modules/.bun" ]]; then
+    return 0
+  fi
+
+  step "Installing opencode dependencies..."
+  run_in_dir "$opencode_root" bun install
+}
+
 build_core_native() {
   local start=$SECONDS
   step "Building core native (zig)..."
@@ -757,6 +770,31 @@ opencode_binary_path() {
   return 1
 }
 
+apply_isolated_env() {
+  if ! $flag_isolated; then
+    return 0
+  fi
+
+  local sandbox
+  sandbox="$(mktemp -d "${TMPDIR:-/tmp}/opencode-isolated.XXXX")"
+  info "Isolated config at: $sandbox"
+  export XDG_CONFIG_HOME="$sandbox/config"
+  export XDG_DATA_HOME="$sandbox/data"
+  export XDG_CACHE_HOME="$sandbox/cache"
+  export XDG_STATE_HOME="$sandbox/state"
+  export OPENCODE_DISABLE_PROJECT_CONFIG=1
+}
+
+print_isolated_env() {
+  local sandbox
+  sandbox="$(mktemp -d "${TMPDIR:-/tmp}/opencode-isolated.XXXX")"
+  printf 'export XDG_CONFIG_HOME=%s/config\n' "$sandbox"
+  printf 'export XDG_DATA_HOME=%s/data\n' "$sandbox"
+  printf 'export XDG_CACHE_HOME=%s/cache\n' "$sandbox"
+  printf 'export XDG_STATE_HOME=%s/state\n' "$sandbox"
+  printf 'export OPENCODE_DISABLE_PROJECT_CONFIG=1\n'
+}
+
 run_opencode_dev() {
   local -a args=(bun run --cwd "$opencode_root/packages/opencode" --conditions=browser src/index.ts)
   if $flag_dry_run; then
@@ -817,7 +855,7 @@ run_benchmark_command() {
   step "Benchmarking ${label} (${bench_runs} runs)..."
 
   local run
-  for ((run=1; run<=bench_runs; run++)); do
+  for ((run = 1; run <= bench_runs; run++)); do
     if $flag_dry_run; then
       printf "Would benchmark run %02d: %s\n" "$run" "${cmd[*]}" >&2
     fi
@@ -830,7 +868,7 @@ run_benchmark_command() {
   local -a samples=()
   local start end elapsed
 
-  for ((run=1; run<=bench_runs; run++)); do
+  for ((run = 1; run <= bench_runs; run++)); do
     start="$(now_ms)"
     if ! "${cmd[@]}" >/dev/null 2>&1; then
       err "Benchmark run ${run} failed: ${cmd[*]}"
@@ -1016,7 +1054,7 @@ run_benchmark_tui_command() {
   step "Benchmarking ${label} (${bench_runs} runs)..."
 
   local run
-  for ((run=1; run<=bench_runs; run++)); do
+  for ((run = 1; run <= bench_runs; run++)); do
     if $flag_dry_run; then
       printf "Would benchmark run %02d: %s\n" "$run" "${cmd[*]}" >&2
     fi
@@ -1028,7 +1066,7 @@ run_benchmark_tui_command() {
 
   local -a samples=()
   local elapsed=""
-  for ((run=1; run<=bench_runs; run++)); do
+  for ((run = 1; run <= bench_runs; run++)); do
     if ! elapsed="$(measure_tui_startup_once "$marker" "${cmd[@]}")"; then
       err "Benchmark run ${run} failed: ${cmd[*]}"
       exit 1
@@ -1110,6 +1148,11 @@ main() {
   parse_args "$@"
   setup_traps
 
+  if $flag_shell; then
+    print_isolated_env
+    return 0
+  fi
+
   opentui_root="$(resolve_existing_dir "$opentui_root")"
   if ! $flag_skip_opencode; then
     opencode_root="$(resolve_existing_dir "$opencode_root")"
@@ -1139,6 +1182,7 @@ main() {
   fi
 
   step "Phase: Link into opencode"
+  ensure_opencode_node_modules
   validate_local_link_artifacts
   link_packages
   step "Phase: Verify linked opentui versions"
@@ -1153,6 +1197,7 @@ main() {
     else
       warn "Release binary path could not be determined yet"
     fi
+    apply_isolated_env
     if $flag_bench; then
       step "Phase: Benchmark opencode release startup"
       benchmark_opencode_release
@@ -1164,6 +1209,7 @@ main() {
     return 0
   fi
 
+  apply_isolated_env
   if $flag_bench; then
     step "Phase: Benchmark opencode dev startup"
     benchmark_opencode_dev
