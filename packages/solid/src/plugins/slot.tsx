@@ -5,6 +5,7 @@ import {
   type Plugin,
   type PluginContext,
   type PluginErrorEvent,
+  type ResolvedSlotRenderer,
   type SlotMode,
   type SlotRegistryOptions,
 } from "@opentui/core"
@@ -19,14 +20,32 @@ export type SolidPlugin<TSlots extends SlotMap, TContext extends PluginContext =
   TContext
 >
 
-export type SolidSlotProps<TSlots extends SlotMap, K extends keyof TSlots> = {
+export type SolidSlotProps<
+  TSlots extends SlotMap,
+  K extends keyof TSlots,
+  TContext extends PluginContext = PluginContext,
+> = {
+  registry: SlotRegistry<JSX.Element, TSlots, TContext>
+  name: K
+  mode?: SlotMode
+  children?: JSX.Element
+  pluginFailurePlaceholder?: (failure: PluginErrorEvent) => JSX.Element
+} & TSlots[K]
+
+export type SolidBoundSlotProps<TSlots extends SlotMap, K extends keyof TSlots> = {
   name: K
   mode?: SlotMode
   children?: JSX.Element
 } & TSlots[K]
 
+export type SolidRegistrySlotComponent<TSlots extends SlotMap, TContext extends PluginContext = PluginContext> = <
+  K extends keyof TSlots,
+>(
+  props: SolidSlotProps<TSlots, K, TContext>,
+) => JSX.Element
+
 export type SolidSlotComponent<TSlots extends SlotMap> = <K extends keyof TSlots>(
-  props: SolidSlotProps<TSlots, K>,
+  props: SolidBoundSlotProps<TSlots, K>,
 ) => JSX.Element
 
 export interface SolidSlotOptions {
@@ -47,159 +66,179 @@ export function createSlot<TSlots extends SlotMap, TContext extends PluginContex
   registry: SlotRegistry<JSX.Element, TSlots, TContext>,
   options: SolidSlotOptions = {},
 ): SolidSlotComponent<TSlots> {
-  type ResolvedEntry<K extends keyof TSlots> = {
-    id: string
-    renderer: (ctx: Readonly<TContext>, props: TSlots[K]) => JSX.Element
+  return function BoundSlot<K extends keyof TSlots>(props: SolidBoundSlotProps<TSlots, K>): JSX.Element {
+    return (
+      <Slot<TSlots, TContext, K>
+        {...(props as SolidBoundSlotProps<TSlots, K>)}
+        registry={registry}
+        pluginFailurePlaceholder={options.pluginFailurePlaceholder}
+      />
+    )
+  }
+}
+
+export function Slot<
+  TSlots extends SlotMap,
+  TContext extends PluginContext = PluginContext,
+  K extends keyof TSlots = keyof TSlots,
+>(props: SolidSlotProps<TSlots, K, TContext>): JSX.Element {
+  const [local, slotProps] = splitProps(props as SolidSlotProps<TSlots, K, TContext>, [
+    "registry",
+    "name",
+    "mode",
+    "children",
+    "pluginFailurePlaceholder",
+  ])
+  const registry = () => local.registry
+  const pluginFailurePlaceholder = () => local.pluginFailurePlaceholder
+  const [version, setVersion] = createSignal(0)
+
+  const unsubscribe = registry().subscribe(() => {
+    setVersion((current) => current + 1)
+  })
+  onCleanup(unsubscribe)
+
+  const entries = createMemo<Array<ResolvedSlotRenderer<JSX.Element, TSlots[K], TContext>>>((previousEntries = []) => {
+    version()
+    const resolvedEntries = registry().resolveEntries(local.name)
+    const previousById = new Map(previousEntries.map((entry) => [entry.id, entry]))
+
+    return resolvedEntries.map((entry) => {
+      const previousEntry = previousById.get(entry.id)
+      if (previousEntry && previousEntry.renderer === entry.renderer) {
+        return previousEntry
+      }
+
+      return entry
+    })
+  })
+
+  const entryIds = createMemo(() => entries().map((entry) => entry.id))
+  const entriesById = createMemo(() => new Map(entries().map((entry) => [entry.id, entry])))
+
+  const slotName = () => String(local.name)
+
+  const renderPluginFailurePlaceholder = (failure: PluginErrorEvent, fallbackValue: JSX.Element): JSX.Element => {
+    if (!pluginFailurePlaceholder()) {
+      return fallbackValue
+    }
+
+    try {
+      return pluginFailurePlaceholder()!(failure)
+    } catch (error) {
+      registry().reportPluginError({
+        pluginId: failure.pluginId,
+        slot: failure.slot ?? slotName(),
+        phase: "error_placeholder",
+        source: "solid",
+        error,
+      })
+
+      return fallbackValue
+    }
   }
 
-  return function Slot<K extends keyof TSlots>(props: SolidSlotProps<TSlots, K>): JSX.Element {
-    const [local, slotProps] = splitProps(props as SolidSlotProps<TSlots, K>, ["name", "mode", "children"])
-    const [version, setVersion] = createSignal(0)
+  const renderEntry = (
+    entry: ResolvedSlotRenderer<JSX.Element, TSlots[K], TContext>,
+    fallbackOnError?: JSX.Element,
+  ): JSX.Element => {
+    const fallbackValue = fallbackOnError ?? (null as unknown as JSX.Element)
+    let initialRender: JSX.Element
 
-    const unsubscribe = registry.subscribe(() => {
-      setVersion((current) => current + 1)
-    })
-    onCleanup(unsubscribe)
-
-    const entries = createMemo<Array<ResolvedEntry<K>>>((previousEntries = []) => {
-      version()
-      const resolvedEntries = registry.resolveEntries(local.name)
-      const previousById = new Map(previousEntries.map((entry) => [entry.id, entry]))
-
-      return resolvedEntries.map((entry) => {
-        const previousEntry = previousById.get(entry.id)
-        if (previousEntry && previousEntry.renderer === entry.renderer) {
-          return previousEntry
-        }
-
-        return entry
+    try {
+      initialRender = entry.renderer(registry().context, slotProps as TSlots[K])
+    } catch (error) {
+      const failure = registry().reportPluginError({
+        pluginId: entry.id,
+        slot: slotName(),
+        phase: "render",
+        source: "solid",
+        error,
       })
-    })
 
-    const entryIds = createMemo(() => entries().map((entry) => entry.id))
-    const entriesById = createMemo(() => new Map(entries().map((entry) => [entry.id, entry])))
-
-    const slotName = () => String(local.name)
-
-    const renderPluginFailurePlaceholder = (failure: PluginErrorEvent, fallbackValue: JSX.Element): JSX.Element => {
-      if (!options.pluginFailurePlaceholder) {
-        return fallbackValue
-      }
-
-      try {
-        return options.pluginFailurePlaceholder(failure)
-      } catch (error) {
-        registry.reportPluginError({
-          pluginId: failure.pluginId,
-          slot: failure.slot ?? slotName(),
-          phase: "error_placeholder",
-          source: "solid",
-          error,
-        })
-
-        return fallbackValue
-      }
+      return renderPluginFailurePlaceholder(failure, fallbackValue)
     }
 
-    const renderEntry = (entry: ResolvedEntry<K>, fallbackOnError?: JSX.Element): JSX.Element => {
-      const fallbackValue = fallbackOnError ?? (null as unknown as JSX.Element)
-      let initialRender: JSX.Element
+    const resolvedInitialRender = children(() => initialRender)
+    const hasInitialOutput = resolvedInitialRender
+      .toArray()
+      .some((node) => node !== null && node !== undefined && node !== false)
 
-      try {
-        initialRender = entry.renderer(registry.context, slotProps as TSlots[K])
-      } catch (error) {
-        const failure = registry.reportPluginError({
-          pluginId: entry.id,
-          slot: slotName(),
-          phase: "render",
-          source: "solid",
-          error,
-        })
-
-        return renderPluginFailurePlaceholder(failure, fallbackValue)
-      }
-
-      const resolvedInitialRender = children(() => initialRender)
-      const hasInitialOutput = resolvedInitialRender
-        .toArray()
-        .some((node) => node !== null && node !== undefined && node !== false)
-
-      if (!hasInitialOutput) {
-        return fallbackValue
-      }
-
-      return (
-        <ErrorBoundary
-          fallback={(error) => {
-            const failure = registry.reportPluginError({
-              pluginId: entry.id,
-              slot: slotName(),
-              phase: "render",
-              source: "solid",
-              error,
-            })
-
-            return renderPluginFailurePlaceholder(failure, fallbackValue)
-          }}
-        >
-          {resolvedInitialRender()}
-        </ErrorBoundary>
-      )
+    if (!hasInitialOutput) {
+      return fallbackValue
     }
 
-    const AppendEntry = (appendProps: { entryId: string }): JSX.Element => {
-      const entry = createMemo(() => entriesById().get(appendProps.entryId))
+    return (
+      <ErrorBoundary
+        fallback={(error) => {
+          const failure = registry().reportPluginError({
+            pluginId: entry.id,
+            slot: slotName(),
+            phase: "render",
+            source: "solid",
+            error,
+          })
 
-      return (
-        <>
-          {(() => {
-            const resolvedEntry = entry()
-            if (!resolvedEntry) {
-              return null as unknown as JSX.Element
-            }
-
-            return renderEntry(resolvedEntry)
-          })()}
-        </>
-      )
-    }
-
-    const appendView = (
-      <>
-        {local.children}
-        <For each={entryIds()}>{(entryId) => <AppendEntry entryId={entryId} />}</For>
-      </>
+          return renderPluginFailurePlaceholder(failure, fallbackValue)
+        }}
+      >
+        {resolvedInitialRender()}
+      </ErrorBoundary>
     )
+  }
+
+  const AppendEntry = (appendProps: { entryId: string }): JSX.Element => {
+    const entry = createMemo(() => entriesById().get(appendProps.entryId))
 
     return (
       <>
         {(() => {
-          const resolvedEntries = entries()
-
-          if (resolvedEntries.length === 0) {
-            return local.children
+          const resolvedEntry = entry()
+          if (!resolvedEntry) {
+            return null as unknown as JSX.Element
           }
 
-          if (local.mode === "single_winner") {
-            return renderEntry(resolvedEntries[0], local.children as JSX.Element)
-          }
-
-          if (local.mode === "replace") {
-            const renderedEntries = resolvedEntries.map((entry) => renderEntry(entry))
-            const hasPluginOutput = renderedEntries.some(
-              (entry) => entry !== null && entry !== undefined && entry !== false,
-            )
-
-            if (!hasPluginOutput) {
-              return local.children as JSX.Element
-            }
-
-            return <>{renderedEntries}</>
-          }
-
-          return appendView
+          return renderEntry(resolvedEntry)
         })()}
       </>
     )
   }
+
+  const appendView = (
+    <>
+      {local.children}
+      <For each={entryIds()}>{(entryId) => <AppendEntry entryId={entryId} />}</For>
+    </>
+  )
+
+  return (
+    <>
+      {(() => {
+        const resolvedEntries = entries()
+
+        if (resolvedEntries.length === 0) {
+          return local.children
+        }
+
+        if (local.mode === "single_winner") {
+          return renderEntry(resolvedEntries[0], local.children as JSX.Element)
+        }
+
+        if (local.mode === "replace") {
+          const renderedEntries = resolvedEntries.map((entry) => renderEntry(entry))
+          const hasPluginOutput = renderedEntries.some(
+            (entry) => entry !== null && entry !== undefined && entry !== false,
+          )
+
+          if (!hasPluginOutput) {
+            return local.children as JSX.Element
+          }
+
+          return <>{renderedEntries}</>
+        }
+
+        return appendView
+      })()}
+    </>
+  )
 }
