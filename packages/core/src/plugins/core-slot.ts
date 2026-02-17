@@ -6,42 +6,54 @@ import type { Plugin, PluginContext, PluginErrorEvent, SlotMode } from "./types"
 
 export type CoreSlotMode = SlotMode
 
-type CoreSlotProps<TSlotName extends string> = {
-  [K in TSlotName]: undefined
+type CoreSlotProps<TSlotName extends string, TData extends object> = {
+  [K in TSlotName]: TData
 }
 
-export type CoreSlotRegistry<TSlotName extends string, TContext extends PluginContext = PluginContext> = SlotRegistry<
-  BaseRenderable,
-  CoreSlotProps<TSlotName>,
-  TContext
->
+export type CoreSlotRegistry<
+  TSlotName extends string,
+  TContext extends PluginContext = PluginContext,
+  TData extends object = Record<string, unknown>,
+> = SlotRegistry<BaseRenderable, CoreSlotProps<TSlotName, TData>, TContext>
 
-export type CoreSlotRenderer<TContext extends PluginContext = PluginContext> = (
-  ctx: Readonly<TContext>,
-) => BaseRenderable
+export type CoreSlotRenderer<
+  TContext extends PluginContext = PluginContext,
+  TData extends object = Record<string, unknown>,
+> = (ctx: Readonly<TContext>, data: TData) => BaseRenderable
 
-export interface CoreManagedSlot<TContext extends PluginContext = PluginContext> {
-  render: CoreSlotRenderer<TContext>
+export interface CoreManagedSlot<
+  TContext extends PluginContext = PluginContext,
+  TData extends object = Record<string, unknown>,
+> {
+  render: CoreSlotRenderer<TContext, TData>
   onActivate?: (ctx: Readonly<TContext>) => void
   onDeactivate?: (ctx: Readonly<TContext>) => void
   onDispose?: (ctx: Readonly<TContext>) => void
 }
 
-export type CoreSlotContribution<TContext extends PluginContext = PluginContext> =
-  | CoreSlotRenderer<TContext>
-  | CoreManagedSlot<TContext>
+export type CoreSlotContribution<
+  TContext extends PluginContext = PluginContext,
+  TData extends object = Record<string, unknown>,
+> = CoreSlotRenderer<TContext, TData> | CoreManagedSlot<TContext, TData>
 
-export interface CorePlugin<TSlotName extends string, TContext extends PluginContext = PluginContext> {
+export interface CorePlugin<
+  TSlotName extends string,
+  TContext extends PluginContext = PluginContext,
+  TData extends object = Record<string, unknown>,
+> {
   id: string
   order?: number
   setup?: (ctx: Readonly<TContext>, renderer: CliRenderer) => void
   dispose?: () => void
-  slots: Partial<Record<TSlotName, CoreSlotContribution<TContext>>>
+  slots: Partial<Record<TSlotName, CoreSlotContribution<TContext, TData>>>
 }
 
-export interface CoreResolvedSlotRenderer<TContext extends PluginContext = PluginContext> {
+export interface CoreResolvedSlotRenderer<
+  TContext extends PluginContext = PluginContext,
+  TData extends object = Record<string, unknown>,
+> {
   id: string
-  renderer: CoreSlotRenderer<TContext>
+  renderer: CoreSlotRenderer<TContext, TData>
 }
 
 type FallbackNodes = BaseRenderable | BaseRenderable[] | undefined
@@ -53,46 +65,55 @@ export type CoreSlotFailurePlaceholder<TContext extends PluginContext = PluginCo
 
 type CoreSlotOwnership = "host" | "plugin"
 
-type WrappedCoreSlotRenderer<TContext extends PluginContext = PluginContext> = ((
-  ctx: Readonly<TContext>,
-  props: undefined,
-) => BaseRenderable) & {
+type WrappedCoreSlotRenderer<
+  TContext extends PluginContext = PluginContext,
+  TData extends object = Record<string, unknown>,
+> = ((ctx: Readonly<TContext>, props: TData) => BaseRenderable) & {
   __coreSlotOwnership?: CoreSlotOwnership
-  __coreManagedSlot?: CoreManagedSlot<TContext>
+  __coreManagedSlot?: CoreManagedSlot<TContext, TData>
 }
 
-interface ResolvedCoreSlotEntry<TContext extends PluginContext = PluginContext>
-  extends CoreResolvedSlotRenderer<TContext> {
+interface ResolvedCoreSlotEntry<
+  TContext extends PluginContext = PluginContext,
+  TData extends object = Record<string, unknown>,
+> extends CoreResolvedSlotRenderer<TContext, TData> {
   ownership: CoreSlotOwnership
-  managedSlot?: CoreManagedSlot<TContext>
+  managedSlot?: CoreManagedSlot<TContext, TData>
 }
 
-interface SlotNodeState<TContext extends PluginContext = PluginContext> {
+interface SlotNodeState<
+  TContext extends PluginContext = PluginContext,
+  TData extends object = Record<string, unknown>,
+> {
   nodes: BaseRenderable[]
   ownership: CoreSlotOwnership
-  managedSlot?: CoreManagedSlot<TContext>
+  managedSlot?: CoreManagedSlot<TContext, TData>
+  dataRef: TData
 }
 
-function isCoreManagedSlot<TContext extends PluginContext = PluginContext>(
-  contribution: CoreSlotContribution<TContext>,
-): contribution is CoreManagedSlot<TContext> {
+function isCoreManagedSlot<
+  TContext extends PluginContext = PluginContext,
+  TData extends object = Record<string, unknown>,
+>(contribution: CoreSlotContribution<TContext, TData>): contribution is CoreManagedSlot<TContext, TData> {
   return typeof contribution === "object" && contribution !== null && "render" in contribution
 }
 
-function toCorePlugin<TSlotName extends string, TContext extends PluginContext = PluginContext>(
-  plugin: CorePlugin<TSlotName, TContext>,
-): Plugin<BaseRenderable, CoreSlotProps<TSlotName>, TContext> {
-  const slots: Partial<Record<TSlotName, WrappedCoreSlotRenderer<TContext>>> = {}
+function toCorePlugin<
+  TSlotName extends string,
+  TContext extends PluginContext = PluginContext,
+  TData extends object = Record<string, unknown>,
+>(plugin: CorePlugin<TSlotName, TContext, TData>): Plugin<BaseRenderable, CoreSlotProps<TSlotName, TData>, TContext> {
+  const slots: Partial<Record<TSlotName, WrappedCoreSlotRenderer<TContext, TData>>> = {}
 
   for (const [slotName, contribution] of Object.entries(plugin.slots) as Array<
-    [TSlotName, CoreSlotContribution<TContext>]
+    [TSlotName, CoreSlotContribution<TContext, TData>]
   >) {
-    const wrappedRenderer: WrappedCoreSlotRenderer<TContext> = (ctx: Readonly<TContext>) => {
+    const wrappedRenderer: WrappedCoreSlotRenderer<TContext, TData> = (ctx: Readonly<TContext>, data: TData) => {
       if (isCoreManagedSlot(contribution)) {
-        return contribution.render(ctx)
+        return contribution.render(ctx, data)
       }
 
-      return contribution(ctx)
+      return contribution(ctx, data)
     }
 
     if (isCoreManagedSlot(contribution)) {
@@ -144,12 +165,16 @@ function ensureValidNode(node: unknown, pluginId: string, mount: BaseRenderable)
   }
 }
 
-export function createCoreSlotRegistry<TSlotName extends string, TContext extends PluginContext = PluginContext>(
+export function createCoreSlotRegistry<
+  TSlotName extends string,
+  TContext extends PluginContext = PluginContext,
+  TData extends object = Record<string, unknown>,
+>(
   renderer: CliRenderer,
   context: TContext,
   options: SlotRegistryOptions = {},
-): CoreSlotRegistry<TSlotName, TContext> {
-  return createSlotRegistry<BaseRenderable, CoreSlotProps<TSlotName>, TContext>(
+): CoreSlotRegistry<TSlotName, TContext, TData> {
+  return createSlotRegistry<BaseRenderable, CoreSlotProps<TSlotName, TData>, TContext>(
     renderer,
     "core:slot-registry",
     context,
@@ -157,10 +182,11 @@ export function createCoreSlotRegistry<TSlotName extends string, TContext extend
   )
 }
 
-export function registerCorePlugin<TSlotName extends string, TContext extends PluginContext = PluginContext>(
-  registry: CoreSlotRegistry<TSlotName, TContext>,
-  plugin: CorePlugin<TSlotName, TContext>,
-): () => void {
+export function registerCorePlugin<
+  TSlotName extends string,
+  TContext extends PluginContext = PluginContext,
+  TData extends object = Record<string, unknown>,
+>(registry: CoreSlotRegistry<TSlotName, TContext, TData>, plugin: CorePlugin<TSlotName, TContext, TData>): () => void {
   return registry.register(toCorePlugin(plugin))
 }
 
@@ -168,7 +194,8 @@ export function resolveCoreSlot<
   TSlotName extends string,
   K extends TSlotName,
   TContext extends PluginContext = PluginContext,
->(registry: CoreSlotRegistry<TSlotName, TContext>, slot: K): Array<CoreResolvedSlotRenderer<TContext>> {
+  TData extends object = Record<string, unknown>,
+>(registry: CoreSlotRegistry<TSlotName, TContext, TData>, slot: K): Array<CoreResolvedSlotRenderer<TContext, TData>> {
   return resolveCoreSlotEntries(registry, slot).map((entry) => {
     return {
       id: entry.id,
@@ -181,13 +208,14 @@ function resolveCoreSlotEntries<
   TSlotName extends string,
   K extends TSlotName,
   TContext extends PluginContext = PluginContext,
->(registry: CoreSlotRegistry<TSlotName, TContext>, slot: K): Array<ResolvedCoreSlotEntry<TContext>> {
+  TData extends object = Record<string, unknown>,
+>(registry: CoreSlotRegistry<TSlotName, TContext, TData>, slot: K): Array<ResolvedCoreSlotEntry<TContext, TData>> {
   return registry.resolveEntries(slot).map((entry) => {
-    const wrappedRenderer = entry.renderer as WrappedCoreSlotRenderer<TContext>
+    const wrappedRenderer = entry.renderer as WrappedCoreSlotRenderer<TContext, TData>
 
     return {
       id: entry.id,
-      renderer: (ctx: Readonly<TContext>) => wrappedRenderer(ctx, undefined),
+      renderer: (ctx: Readonly<TContext>, data: TData) => wrappedRenderer(ctx, data),
       ownership: wrappedRenderer.__coreSlotOwnership ?? "host",
       managedSlot: wrappedRenderer.__coreManagedSlot,
     }
@@ -200,9 +228,11 @@ export interface SlotRenderableOptions<
   TSlotName extends string,
   K extends TSlotName,
   TContext extends PluginContext = PluginContext,
+  TData extends object = Record<string, unknown>,
 > extends RenderableOptions {
-  registry: CoreSlotRegistry<TSlotName, TContext>
+  registry: CoreSlotRegistry<TSlotName, TContext, TData>
   name: K
+  data?: TData
   mode?: CoreSlotMode
   fallback?: FallbackNodes | (() => FallbackNodes)
   pluginFailurePlaceholder?: CoreSlotFailurePlaceholder<TContext>
@@ -211,24 +241,27 @@ export interface SlotRenderableOptions<
 export class SlotRenderable<
   TSlotName extends string = string,
   TContext extends PluginContext = PluginContext,
+  TData extends object = Record<string, unknown>,
 > extends Renderable {
   private _mode: CoreSlotMode
-  private _slotRegistry: CoreSlotRegistry<TSlotName, TContext>
+  private _slotRegistry: CoreSlotRegistry<TSlotName, TContext, TData>
   private _slotName: TSlotName
+  private _data: TData
   private _fallbackOption: FallbackNodes | (() => FallbackNodes)
   private _pluginFailurePlaceholder?: CoreSlotFailurePlaceholder<TContext>
   private _disposed = false
   private _mountedNodes: BaseRenderable[] = []
-  private _pluginNodes = new Map<string, SlotNodeState<TContext>>()
+  private _pluginNodes = new Map<string, SlotNodeState<TContext, TData>>()
   private _activePluginIds = new Set<string>()
   private _fallbackNodes: BaseRenderable[] | null = null
   private _unsubscribe: (() => void) | null = null
 
-  constructor(ctx: RenderContext, options: SlotRenderableOptions<TSlotName, TSlotName, TContext>) {
+  constructor(ctx: RenderContext, options: SlotRenderableOptions<TSlotName, TSlotName, TContext, TData>) {
     super(ctx, options)
 
     this._slotRegistry = options.registry
     this._slotName = options.name
+    this._data = options.data ?? ({} as TData)
     this._mode = options.mode ?? "append"
     this._fallbackOption = options.fallback
     this._pluginFailurePlaceholder = options.pluginFailurePlaceholder
@@ -252,6 +285,15 @@ export class SlotRenderable<
     this.refresh()
   }
 
+  public get data(): TData {
+    return this._data
+  }
+
+  public set data(value: TData) {
+    this._data = value
+    this.refresh()
+  }
+
   public refresh(): void {
     if (this._disposed) {
       return
@@ -266,15 +308,20 @@ export class SlotRenderable<
 
     for (const entry of activeEntries) {
       let state = this._pluginNodes.get(entry.id)
+      const shouldRender =
+        !state || (state.ownership === "plugin" && state.nodes.length === 0) || state.dataRef !== this._data
 
-      if (!state || (state.ownership === "plugin" && state.nodes.length === 0)) {
+      if (shouldRender) {
+        const previousState = state
+
         try {
-          const node = entry.renderer(this._slotRegistry.context)
+          const node = entry.renderer(this._slotRegistry.context, this._data)
           ensureValidNode(node, entry.id, this)
           state = {
             nodes: [node],
             ownership: entry.ownership,
             managedSlot: entry.managedSlot ?? state?.managedSlot,
+            dataRef: this._data,
           }
         } catch (error) {
           const failure = this._slotRegistry.reportPluginError({
@@ -289,7 +336,12 @@ export class SlotRenderable<
             nodes: this._resolvePluginFailurePlaceholder(failure),
             ownership: "host",
             managedSlot: entry.managedSlot ?? state?.managedSlot,
+            dataRef: this._data,
           }
+        }
+
+        if (previousState) {
+          this._cleanupReplacedPluginNodes(previousState, state.nodes)
         }
 
         this._pluginNodes.set(entry.id, state)
@@ -382,7 +434,7 @@ export class SlotRenderable<
 
   private _callManagedHook(
     pluginId: string,
-    managedSlot: CoreManagedSlot<TContext> | undefined,
+    managedSlot: CoreManagedSlot<TContext, TData> | undefined,
     hook: "onActivate" | "onDeactivate" | "onDispose",
     phase: "setup" | "dispose",
   ): void {
@@ -446,6 +498,25 @@ export class SlotRenderable<
       }
 
       state.nodes = []
+    }
+  }
+
+  private _cleanupReplacedPluginNodes(
+    previousState: SlotNodeState<TContext, TData>,
+    nextNodes: BaseRenderable[],
+  ): void {
+    const retainedNodes = new Set(nextNodes)
+
+    for (const node of previousState.nodes) {
+      if (retainedNodes.has(node)) {
+        continue
+      }
+
+      this._detachNodeFromMount(node)
+
+      if (previousState.ownership === "host") {
+        node.destroyRecursively()
+      }
     }
   }
 

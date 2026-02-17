@@ -19,7 +19,7 @@ On top of `createSlotRegistry`, core provides:
 - `SlotRenderable` — a `Renderable` that mounts a slot into the renderable tree
 - `resolveCoreSlot` — resolve slot entries without mounting
 
-**Important:** Unlike the generic `Plugin` interface on the [overview page](/docs/plugins/slots), core slots do not have per-slot props. Each slot renderer receives only the host context — `(ctx) => BaseRenderable` — not `(ctx, props)`. This is because core slots are framework-free renderables that mount directly into the tree rather than being called with JSX props. If you need per-slot props without a framework binding, use `createSlotRegistry` from the overview page directly.
+Core slot renderers receive both the host context and slot data: `(ctx, data) => BaseRenderable`.
 
 `createCoreSlotRegistry` accepts the same [`SlotRegistryOptions`](/docs/plugins/slots#registry-options) as `createSlotRegistry`.
 
@@ -33,7 +33,7 @@ On top of `createSlotRegistry`, core provides:
 | `dispose` | `() => void`                                      | no       | Called when the plugin is unregistered or the registry is cleared.                         |
 | `slots`   | `Partial<Record<SlotName, CoreSlotContribution>>` | yes      | Each value is a renderer function or a [managed slot object](#managed-slot-contributions). |
 
-A `CoreSlotContribution` is either a plain renderer `(ctx) => BaseRenderable` or a `CoreManagedSlot` with lifecycle hooks.
+A `CoreSlotContribution` is either a plain renderer `(ctx, data) => BaseRenderable` or a `CoreManagedSlot` with lifecycle hooks.
 
 ## Basic usage
 
@@ -50,20 +50,21 @@ import {
 } from "@opentui/core"
 
 type Slots = "statusbar"
+type SlotData = { label: string }
 const context = { appName: "core-app", version: "1.0.0" }
 
 const renderer = await createCliRenderer()
 
-const registry = createCoreSlotRegistry<Slots, typeof context>(renderer, context)
+const registry = createCoreSlotRegistry<Slots, typeof context, SlotData>(renderer, context)
 
 const unregister = registerCorePlugin(registry, {
   id: "clock-plugin",
   order: 0,
   slots: {
-    statusbar() {
+    statusbar(_ctx, data) {
       return new TextRenderable(renderer, {
         id: "clock-status",
-        content: "clock: ok",
+        content: `clock: ${data.label}`,
       })
     },
   },
@@ -73,6 +74,7 @@ const slot = new SlotRenderable(renderer, {
   id: "statusbar-slot",
   registry,
   name: "statusbar",
+  data: { label: "ok" },
   mode: "append",
   width: "100%",
   height: 3,
@@ -88,6 +90,7 @@ renderer.root.add(slot)
 
 // later
 slot.mode = "replace"
+slot.data = { label: "updated" }
 slot.refresh()
 slot.destroy()
 ```
@@ -103,6 +106,7 @@ Because `SlotRenderable` extends `Renderable`, it accepts all standard layout op
 | `id`                       | `string`                                                            | yes      | Unique renderable identifier (inherited from `RenderableOptions`)                                          |
 | `registry`                 | `CoreSlotRegistry`                                                  | yes      | The registry to read plugins from                                                                          |
 | `name`                     | slot name                                                           | yes      | Which slot to mount                                                                                        |
+| `data`                     | object                                                              | no       | Slot data passed to plugin renderers as the second argument                                                |
 | `mode`                     | `SlotMode`                                                          | no       | `"append"` (default), `"replace"`, or `"single_winner"`. See [slot modes](/docs/plugins/slots#slot-modes). |
 | `fallback`                 | `BaseRenderable \| BaseRenderable[] \| () => ...`                   | no       | Fallback nodes or a factory that creates them                                                              |
 | `pluginFailurePlaceholder` | `(failure, ctx) => BaseRenderable \| BaseRenderable[] \| undefined` | no       | Creates placeholder UI when a plugin throws                                                                |
@@ -124,7 +128,7 @@ Resolve slot entries without mounting them. Useful when you need to inspect or r
 import { resolveCoreSlot } from "@opentui/core"
 
 const entries = resolveCoreSlot(registry, "statusbar")
-// Array<{ id: string, renderer: (ctx) => BaseRenderable }>
+// Array<{ id: string, renderer: (ctx, data) => BaseRenderable }>
 ```
 
 ## Plugin failure placeholders
@@ -154,7 +158,7 @@ registerCorePlugin(registry, {
   id: "managed-plugin",
   slots: {
     statusbar: {
-      render() {
+      render(_ctx, data) {
         return new TextRenderable(renderer, { id: "managed", content: "managed" })
       },
       onActivate(ctx) {
@@ -173,12 +177,12 @@ registerCorePlugin(registry, {
 
 ### `CoreManagedSlot` interface
 
-| Field          | Type                      | Required | Description                                                          |
-| -------------- | ------------------------- | -------- | -------------------------------------------------------------------- |
-| `render`       | `(ctx) => BaseRenderable` | yes      | Creates the renderable node for this slot                            |
-| `onActivate`   | `(ctx) => void`           | no       | Called when the plugin becomes active (visible) in the slot          |
-| `onDeactivate` | `(ctx) => void`           | no       | Called when the plugin is no longer active (e.g. lost single_winner) |
-| `onDispose`    | `(ctx) => void`           | no       | Called when the plugin is removed or the slot is destroyed           |
+| Field          | Type                            | Required | Description                                                          |
+| -------------- | ------------------------------- | -------- | -------------------------------------------------------------------- |
+| `render`       | `(ctx, data) => BaseRenderable` | yes      | Creates the renderable node for this slot                            |
+| `onActivate`   | `(ctx) => void`                 | no       | Called when the plugin becomes active (visible) in the slot          |
+| `onDeactivate` | `(ctx) => void`                 | no       | Called when the plugin is no longer active (e.g. lost single_winner) |
+| `onDispose`    | `(ctx) => void`                 | no       | Called when the plugin is removed or the slot is destroyed           |
 
 ### Node ownership
 

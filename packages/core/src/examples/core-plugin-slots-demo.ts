@@ -15,6 +15,11 @@ import {
 import { setupCommonDemoKeys } from "./lib/standalone-keys"
 
 type DemoSlot = "statusbar" | "sidebar"
+type DemoContext = { appName: string; version: string }
+type DemoSlotData = { label?: string; section?: string }
+
+const DEMO_STATUS_LABEL = "host-status"
+const DEMO_SIDEBAR_SECTION = "plugins"
 
 interface PluginStats {
   statusbarCreates: number
@@ -23,12 +28,12 @@ interface PluginStats {
 
 let renderer: CliRenderer | null = null
 let rootContainer: BoxRenderable | null = null
-let statusbarSlot: SlotRenderable<DemoSlot> | null = null
-let sidebarSlot: SlotRenderable<DemoSlot> | null = null
+let statusbarSlot: SlotRenderable<DemoSlot, DemoContext, DemoSlotData> | null = null
+let sidebarSlot: SlotRenderable<DemoSlot, DemoContext, DemoSlotData> | null = null
 let infoPanel: BoxRenderable | null = null
 let infoText: TextRenderable | null = null
 
-let slotRegistry: CoreSlotRegistry<DemoSlot> | null = null
+let slotRegistry: CoreSlotRegistry<DemoSlot, DemoContext, DemoSlotData> | null = null
 
 let unregisterClockPlugin: (() => void) | null = null
 let unregisterActivityPlugin: (() => void) | null = null
@@ -169,7 +174,8 @@ function updateInfoPanel(): void {
     `Activity create counts -> statusbar: ${activityStats.statusbarCreates}`,
     "",
     "Press r to force slot refresh.",
-    "Plugins manage their own updates; slot host does not pass props.",
+    `Statusbar slot data.label: ${statusbarSlot?.data.label ?? DEMO_STATUS_LABEL}`,
+    `Sidebar slot data.section: ${sidebarSlot?.data.section ?? DEMO_SIDEBAR_SECTION}`,
     "",
     "Statusbar fallback is always shown in APPEND mode.",
     "Sidebar fallback appears only when no sidebar plugin is active.",
@@ -179,13 +185,14 @@ function updateInfoPanel(): void {
   ].join("\n")
 }
 
-function createClockPlugin(rendererInstance: CliRenderer): CorePlugin<DemoSlot> {
+function createClockPlugin(rendererInstance: CliRenderer): CorePlugin<DemoSlot, DemoContext, DemoSlotData> {
   let statusbarItem: BoxRenderable | null = null
   let statusText: TextRenderable | null = null
   let sidebarPanel: BoxRenderable | null = null
   let sidebarText: TextRenderable | null = null
   let timer: ReturnType<typeof setInterval> | null = null
   const activeSlots = new Set<DemoSlot>()
+  let statusbarLabel = "status"
 
   const startClockTimer = () => {
     if (timer) {
@@ -233,7 +240,7 @@ function createClockPlugin(rendererInstance: CliRenderer): CorePlugin<DemoSlot> 
       if (statusText.isDestroyed) {
         statusText = null
       } else {
-        statusText.content = `Clock plugin ${timestamp}`
+        statusText.content = `Clock plugin -> ${statusbarLabel} (${timestamp})`
       }
     }
 
@@ -257,10 +264,12 @@ function createClockPlugin(rendererInstance: CliRenderer): CorePlugin<DemoSlot> 
     },
     slots: {
       statusbar: {
-        render() {
+        render(_ctx, data) {
           if (clockStatusbarErrorEnabled) {
             throw new Error("Forced clock statusbar failure")
           }
+
+          statusbarLabel = data.label ?? "status"
 
           clockStats.statusbarCreates++
 
@@ -279,7 +288,7 @@ function createClockPlugin(rendererInstance: CliRenderer): CorePlugin<DemoSlot> 
 
           statusText = new TextRenderable(rendererInstance, {
             id: `clock-statusbar-text-${clockStats.statusbarCreates}`,
-            content: "Clock plugin",
+            content: `Clock plugin -> ${statusbarLabel}`,
             fg: "#93c5fd",
           })
 
@@ -304,7 +313,7 @@ function createClockPlugin(rendererInstance: CliRenderer): CorePlugin<DemoSlot> 
         },
       },
       sidebar: {
-        render() {
+        render(_ctx, data) {
           if (clockSidebarErrorEnabled) {
             throw new Error("Forced clock sidebar failure")
           }
@@ -326,7 +335,7 @@ function createClockPlugin(rendererInstance: CliRenderer): CorePlugin<DemoSlot> 
           panel.add(
             new TextRenderable(rendererInstance, {
               id: `clock-sidebar-title-${clockStats.sidebarCreates}`,
-              content: "Clock Plugin",
+              content: `Clock Sidebar (${data.section ?? "left"})`,
               fg: "#38bdf8",
             }),
           )
@@ -362,12 +371,13 @@ function createClockPlugin(rendererInstance: CliRenderer): CorePlugin<DemoSlot> 
   }
 }
 
-function createActivityPlugin(rendererInstance: CliRenderer): CorePlugin<DemoSlot> {
+function createActivityPlugin(rendererInstance: CliRenderer): CorePlugin<DemoSlot, DemoContext, DemoSlotData> {
   let activityItem: BoxRenderable | null = null
   let activityText: TextRenderable | null = null
   let timer: ReturnType<typeof setInterval> | null = null
   let phase = 0
   let statusbarActive = false
+  let statusbarLabel = "status"
 
   const pulse = [".", "..", "...", "...."]
 
@@ -410,7 +420,7 @@ function createActivityPlugin(rendererInstance: CliRenderer): CorePlugin<DemoSlo
       if (activityText.isDestroyed) {
         activityText = null
       } else {
-        activityText.content = `Activity${pulse[phase]}`
+        activityText.content = `Activity (${statusbarLabel})${pulse[phase]}`
       }
     }
   }
@@ -425,10 +435,12 @@ function createActivityPlugin(rendererInstance: CliRenderer): CorePlugin<DemoSlo
     },
     slots: {
       statusbar: {
-        render() {
+        render(_ctx, data) {
           if (activityStatusbarErrorEnabled) {
             throw new Error("Forced activity statusbar failure")
           }
+
+          statusbarLabel = data.label ?? "status"
 
           activityStats.statusbarCreates++
 
@@ -447,7 +459,7 @@ function createActivityPlugin(rendererInstance: CliRenderer): CorePlugin<DemoSlo
 
           activityText = new TextRenderable(rendererInstance, {
             id: `activity-statusbar-text-${activityStats.statusbarCreates}`,
-            content: "Activity",
+            content: `Activity (${statusbarLabel})`,
             fg: "#86efac",
           })
 
@@ -620,7 +632,7 @@ export function run(rendererInstance: CliRenderer): void {
 
   createLayout(rendererInstance)
 
-  slotRegistry = createCoreSlotRegistry<DemoSlot>(rendererInstance, {
+  slotRegistry = createCoreSlotRegistry<DemoSlot, DemoContext, DemoSlotData>(rendererInstance, {
     appName: "core-plugin-slots-demo",
     version: "1.0.0",
   })
@@ -640,6 +652,7 @@ export function run(rendererInstance: CliRenderer): void {
     id: "core-plugin-demo-statusbar-slot",
     registry: slotRegistry,
     name: "statusbar",
+    data: { label: DEMO_STATUS_LABEL },
     mode: statusbarMode,
     width: "100%",
     height: 5,
@@ -666,6 +679,7 @@ export function run(rendererInstance: CliRenderer): void {
     id: "core-plugin-demo-sidebar-slot",
     registry: slotRegistry,
     name: "sidebar",
+    data: { section: DEMO_SIDEBAR_SECTION },
     mode: "replace",
     width: 36,
     flexDirection: "column",
