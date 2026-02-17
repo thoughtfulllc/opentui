@@ -13,7 +13,8 @@ If you have not read the shared model yet, start with [Plugin Slots](/docs/plugi
 ## What Solid adds
 
 - `createSolidSlotRegistry(renderer, context, options?)` — create a registry typed for `JSX.Element`. Accepts the same [`SlotRegistryOptions`](/docs/plugins/slots#registry-options) as `createSlotRegistry`.
-- `createSlot(registry, options?)` — returns a typed `<Slot />` component
+- `Slot<TSlots, TContext>` — generic slot component that takes `registry` as a required prop
+- `createSlot(registry, options?)` — optional convenience helper that returns a registry-bound `<Slot />` component
 - `SolidPlugin<TSlots, TContext>` — convenience type alias for a plugin that returns `JSX.Element`
 
 Register plugins directly with `registry.register()` — no wrapper function is needed (unlike core's `registerCorePlugin`).
@@ -22,7 +23,7 @@ Register plugins directly with `registry.register()` — no wrapper function is 
 
 ```tsx
 import { createCliRenderer } from "@opentui/core"
-import { createSolidSlotRegistry, createSlot, render } from "@opentui/solid"
+import { createSolidSlotRegistry, Slot, render } from "@opentui/solid"
 
 type Slots = {
   statusbar: { user: string }
@@ -42,27 +43,37 @@ const unregister = registry.register({
   },
 })
 
-const Slot = createSlot(registry)
+const AppSlot = Slot<Slots, typeof context>
 
 const App = () => (
-  <Slot name="statusbar" user="sam" mode="replace">
+  <AppSlot registry={registry} name="statusbar" user="sam" mode="replace">
     <text>fallback-statusbar</text>
-  </Slot>
+  </AppSlot>
 )
 
 render(() => <App />, renderer)
 ```
 
+## Optional convenience helper
+
+If you prefer not to pass `registry` each time, you can still bind one once:
+
+```tsx
+const AppSlot = createSlot(registry)
+```
+
 ## `<Slot>` props
 
-| Prop        | Type          | Required | Description                                                                                                |
-| ----------- | ------------- | -------- | ---------------------------------------------------------------------------------------------------------- |
-| `name`      | `keyof Slots` | yes      | Which slot to render                                                                                       |
-| `mode`      | `SlotMode`    | no       | `"append"` (default), `"replace"`, or `"single_winner"`. See [slot modes](/docs/plugins/slots#slot-modes). |
-| `children`  | `JSX.Element` | no       | Fallback UI                                                                                                |
-| _remaining_ | `Slots[name]` | —        | Slot-specific props forwarded to plugin renderers                                                          |
+| Prop                       | Type                                         | Required | Description                                                                                                |
+| -------------------------- | -------------------------------------------- | -------- | ---------------------------------------------------------------------------------------------------------- |
+| `registry`                 | `SlotRegistry<JSX.Element, Slots, Context>`  | yes      | Registry to resolve plugins from                                                                           |
+| `name`                     | `keyof Slots`                                | yes      | Which slot to render                                                                                       |
+| `mode`                     | `SlotMode`                                   | no       | `"append"` (default), `"replace"`, or `"single_winner"`. See [slot modes](/docs/plugins/slots#slot-modes). |
+| `pluginFailurePlaceholder` | `(failure: PluginErrorEvent) => JSX.Element` | no       | Per-slot placeholder UI when a plugin throws                                                               |
+| `children`                 | `JSX.Element`                                | no       | Fallback UI                                                                                                |
+| _remaining_                | `Slots[name]`                                | —        | Slot-specific props forwarded to plugin renderers                                                          |
 
-## `SolidSlotOptions`
+## `SolidSlotOptions` (for `createSlot`)
 
 | Option                     | Type                                         | Required | Description                                 |
 | -------------------------- | -------------------------------------------- | -------- | ------------------------------------------- |

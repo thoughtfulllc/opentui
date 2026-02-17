@@ -1,6 +1,6 @@
 import type { PluginErrorEvent } from "@opentui/core"
 import {
-  createSlot,
+  Slot,
   createSolidSlotRegistry,
   type SlotMode,
   type SolidPlugin,
@@ -124,18 +124,16 @@ export default function PluginSlotsDemo() {
   const [refreshNonce, setRefreshNonce] = createSignal(0)
   const [errorLines, setErrorLines] = createSignal<string[]>([])
 
-  const SlotWithPlaceholder = createSlot(registry, {
-    pluginFailurePlaceholder(failure) {
-      return (
-        <box border borderStyle="single" borderColor="#fb7185" marginLeft={1} paddingLeft={1} paddingRight={1}>
-          <text fg="#fecaca">{`Plugin error: ${failure.pluginId}`}</text>
-          <text fg="#fca5a5">{`${failure.phase}/${failure.source} @ ${failure.slot ?? "unknown"}`}</text>
-        </box>
-      )
-    },
-  })
+  const AppSlot = Slot<DemoSlots, typeof hostContext>
 
-  const SlotWithoutPlaceholder = createSlot(registry)
+  const pluginFailurePlaceholder = (failure: PluginErrorEvent) => {
+    return (
+      <box border borderStyle="single" borderColor="#fb7185" marginLeft={1} paddingLeft={1} paddingRight={1}>
+        <text fg="#fecaca">{`Plugin error: ${failure.pluginId}`}</text>
+        <text fg="#fca5a5">{`${failure.phase}/${failure.source} @ ${failure.slot ?? "unknown"}`}</text>
+      </box>
+    )
+  }
 
   onMount(() => {
     renderer.setBackgroundColor("#000000")
@@ -226,32 +224,44 @@ export default function PluginSlotsDemo() {
   const renderStatusbarSlot = () => {
     if (showPlaceholder()) {
       return (
-        <SlotWithPlaceholder name="statusbar" label="status" mode={statusbarMode()}>
+        <AppSlot
+          registry={registry}
+          name="statusbar"
+          label="status"
+          mode={statusbarMode()}
+          pluginFailurePlaceholder={pluginFailurePlaceholder}
+        >
           <text fg="#94a3b8">Fallback statusbar content</text>
-        </SlotWithPlaceholder>
+        </AppSlot>
       )
     }
 
     return (
-      <SlotWithoutPlaceholder name="statusbar" label="status" mode={statusbarMode()}>
+      <AppSlot registry={registry} name="statusbar" label="status" mode={statusbarMode()}>
         <text fg="#94a3b8">Fallback statusbar content</text>
-      </SlotWithoutPlaceholder>
+      </AppSlot>
     )
   }
 
   const renderSidebarSlot = () => {
     if (showPlaceholder()) {
       return (
-        <SlotWithPlaceholder name="sidebar" section="left" mode="replace">
+        <AppSlot
+          registry={registry}
+          name="sidebar"
+          section="left"
+          mode="replace"
+          pluginFailurePlaceholder={pluginFailurePlaceholder}
+        >
           <text fg="#94a3b8">No sidebar plugin active</text>
-        </SlotWithPlaceholder>
+        </AppSlot>
       )
     }
 
     return (
-      <SlotWithoutPlaceholder name="sidebar" section="left" mode="replace">
+      <AppSlot registry={registry} name="sidebar" section="left" mode="replace">
         <text fg="#94a3b8">No sidebar plugin active</text>
-      </SlotWithoutPlaceholder>
+      </AppSlot>
     )
   }
 
