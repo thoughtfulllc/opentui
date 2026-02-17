@@ -15,6 +15,9 @@ type DemoSlots = {
   sidebar: { section: string }
 }
 
+const DEMO_STATUS_LABEL = "host-status"
+const DEMO_SIDEBAR_SECTION = "plugins"
+
 const hostContext = {
   appName: "react-plugin-slots-demo",
   version: "1.0.0",
@@ -41,6 +44,22 @@ function CrashNode({ pluginId }: { pluginId: string }) {
   return null
 }
 
+function ClockStatusText({ label }: { label: string }) {
+  const [time, setTime] = useState(() => new Date().toLocaleTimeString())
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setTime(new Date().toLocaleTimeString())
+    }, 1000)
+
+    return () => {
+      clearInterval(timer)
+    }
+  }, [])
+
+  return <text fg="#93c5fd">{`Clock plugin -> ${label} (${time})`}</text>
+}
+
 function createClockPlugin(crash: boolean): ReactPlugin<DemoSlots, typeof hostContext> {
   return {
     id: "clock-plugin",
@@ -61,11 +80,11 @@ function createClockPlugin(crash: boolean): ReactPlugin<DemoSlots, typeof hostCo
             paddingRight={1}
             height={3}
           >
-            <text fg="#93c5fd">{`Clock plugin -> ${props.label}`}</text>
+            <ClockStatusText label={props.label} />
           </box>
         )
       },
-      sidebar() {
+      sidebar(_ctx, props) {
         return (
           <box
             border
@@ -75,7 +94,7 @@ function createClockPlugin(crash: boolean): ReactPlugin<DemoSlots, typeof hostCo
             paddingLeft={1}
             paddingRight={1}
           >
-            <text fg="#38bdf8">Clock Sidebar</text>
+            <text fg="#38bdf8">{`Clock Sidebar (${props.section})`}</text>
             <text fg="#e2e8f0">Healthy</text>
           </box>
         )
@@ -216,6 +235,9 @@ function App() {
     `Activity throw: ${activityCrashEnabled ? "ON" : "OFF"} (press d)`,
     `Show placeholders: ${showPlaceholder ? "YES" : "NO"} (press p)`,
     "",
+    `Statusbar slot label: ${DEMO_STATUS_LABEL}`,
+    `Sidebar slot section: ${DEMO_SIDEBAR_SECTION}`,
+    "",
     "Press r to re-register active plugins.",
     "Press x to reset errors and clear history.",
     "",
@@ -239,7 +261,7 @@ function App() {
         <AppSlot
           registry={registry}
           name="statusbar"
-          label="status"
+          label={DEMO_STATUS_LABEL}
           mode={statusbarMode}
           pluginFailurePlaceholder={showPlaceholder ? pluginFailurePlaceholder : undefined}
         >
@@ -260,7 +282,7 @@ function App() {
           <AppSlot
             registry={registry}
             name="sidebar"
-            section="left"
+            section={DEMO_SIDEBAR_SECTION}
             mode="replace"
             pluginFailurePlaceholder={showPlaceholder ? pluginFailurePlaceholder : undefined}
           >
