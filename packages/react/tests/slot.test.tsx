@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test"
 import { createTestRenderer, type TestRendererOptions } from "@opentui/core/testing"
 import { createContext, useContext, useEffect, useMemo, useState } from "react"
 import { act, type ReactNode } from "react"
-import { createReactSlotRegistry, createSlot, type ReactPlugin } from "../src/plugins/slot"
+import { createReactSlotRegistry, createSlot, Slot, type ReactPlugin } from "../src/plugins/slot"
 import { useKeyboard } from "../src/hooks/use-keyboard"
 import { createRoot, type Root } from "../src/reconciler/renderer"
 
@@ -87,11 +87,11 @@ describe("React Slot System", () => {
   it("renders fallback content when no plugin matches", async () => {
     const { setup } = await setupSlotTest(
       (registry) => {
-        const Slot = createSlot(registry)
+        const AppSlot = Slot<AppSlots, typeof hostContext>
         return (
-          <Slot name="statusbar" user="sam">
+          <AppSlot registry={registry} name="statusbar" user="sam">
             <text>fallback-only</text>
-          </Slot>
+          </AppSlot>
         )
       },
       { width: 50, height: 6 },
