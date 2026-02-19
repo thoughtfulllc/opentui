@@ -678,6 +678,7 @@ export class MarkdownRenderable extends Renderable {
       }
 
       this.remove(state.renderable.id)
+      state.renderable.destroyRecursively()
       const newRenderable = this.createTableRenderable(newTable, `${this.id}-block-${index}`, marginBottom)
       this.add(newRenderable)
       state.renderable = newRenderable
@@ -695,6 +696,7 @@ export class MarkdownRenderable extends Renderable {
     if (!this._content) {
       for (const state of this._blockStates) {
         this.remove(state.renderable.id)
+        state.renderable.destroyRecursively()
       }
       this._blockStates = []
       this._parseState = null
@@ -710,6 +712,7 @@ export class MarkdownRenderable extends Renderable {
     if (tokens.length === 0 && this._content.length > 0) {
       for (const state of this._blockStates) {
         this.remove(state.renderable.id)
+        state.renderable.destroyRecursively()
       }
       const text = this.createTextRenderable([this.createDefaultChunk(this._content)], `${this.id}-fallback`)
       this.add(text)
@@ -763,6 +766,7 @@ export class MarkdownRenderable extends Renderable {
       // Different type or new block
       if (existing) {
         this.remove(existing.renderable.id)
+        existing.renderable.destroyRecursively()
       }
 
       let renderable: Renderable | undefined
@@ -798,12 +802,14 @@ export class MarkdownRenderable extends Renderable {
     while (this._blockStates.length > blockIndex) {
       const removed = this._blockStates.pop()!
       this.remove(removed.renderable.id)
+      removed.renderable.destroyRecursively()
     }
   }
 
   private clearBlockStates(): void {
     for (const state of this._blockStates) {
       this.remove(state.renderable.id)
+      state.renderable.destroyRecursively()
     }
     this._blockStates = []
   }
