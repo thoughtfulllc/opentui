@@ -195,13 +195,13 @@ export fn createRenderer(width: u32, height: u32, testing: bool, outputStrategy:
         return null;
     }
 
-    if (outputStrategy == 1 and feedPtr == null) {
-        logger.warn("span_feed strategy requires a non-null feed pointer", .{});
-        return null;
-    }
-
-    if (outputStrategy > 1) {
+    const strategyTag = renderer.CliRenderer.OutputStrategyTag.fromU8(outputStrategy) orelse {
         logger.warn("Invalid output strategy: {}", .{outputStrategy});
+        return null;
+    };
+
+    if (strategyTag == .span_feed and feedPtr == null) {
+        logger.warn("span_feed strategy requires a non-null feed pointer", .{});
         return null;
     }
 
@@ -209,7 +209,7 @@ export fn createRenderer(width: u32, height: u32, testing: bool, outputStrategy:
     _ = link.initGlobalLinkPool(globalArena);
     return renderer.CliRenderer.create(globalAllocator, width, height, pool, .{
         .testing = testing,
-        .output_strategy = outputStrategy,
+        .output_strategy = strategyTag,
         .remote = remote,
         .feed_ptr = feedPtr,
     }) catch |err| {

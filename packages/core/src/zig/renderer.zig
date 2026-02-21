@@ -184,6 +184,11 @@ pub const CliRenderer = struct {
         feed: *NativeSpanFeed.Stream,
     };
 
+    /// Writes data to the NativeSpanFeed stream.
+    /// All StreamError variants (NoSpace, MaxBytes, Invalid, OutOfMemory, Busy)
+    /// are collapsed into FeedWriteError because prepareRenderFrameWithWriter
+    /// catches all write errors uniformly — there is no recovery path that
+    /// differs by error kind. Revisit if richer observability is needed.
     fn feedWrite(ctx: FeedWriterContext, data: []const u8) error{FeedWriteError}!usize {
         ctx.feed.write(data) catch return error.FeedWriteError;
         return data.len;
@@ -196,23 +201,37 @@ pub const CliRenderer = struct {
         };
     }
 
+    /// ABI tag mapping from the u8 passed by TS FFI to a type-safe enum.
+    /// Convert at the lib.zig boundary via `fromU8`, then use the enum internally.
+    pub const OutputStrategyTag = enum(u8) {
+        stdout = 0,
+        span_feed = 1,
+
+        pub fn fromU8(value: u8) ?OutputStrategyTag {
+            return switch (value) {
+                0 => .stdout,
+                1 => .span_feed,
+                else => null,
+            };
+        }
+    };
+
     pub const CreateOptions = struct {
         testing: bool = false,
-        output_strategy: u8 = 0, // 0 = stdout, 1 = span_feed
+        output_strategy: OutputStrategyTag = .stdout,
         remote: bool = false,
         feed_ptr: ?*NativeSpanFeed.Stream = null,
     };
 
     pub fn create(allocator: Allocator, width: u32, height: u32, pool: *gp.GraphemePool, opts: CreateOptions) !*CliRenderer {
         // Non-stdout strategies imply remote output behavior.
-        const remote = opts.remote or (opts.output_strategy != 0);
+        const remote = opts.remote or (opts.output_strategy != .stdout);
         const outputStrategy: OutputStrategy = switch (opts.output_strategy) {
-            0 => .{ .stdout = {} },
-            1 => blk: {
+            .stdout => .{ .stdout = {} },
+            .span_feed => blk: {
                 const feed_ptr = opts.feed_ptr orelse return error.InvalidOutputStrategy;
                 break :blk .{ .span_feed = .{ .feed = feed_ptr } };
             },
-            else => return error.InvalidOutputStrategy,
         };
         const self = try allocator.create(CliRenderer);
         errdefer allocator.destroy(self);
@@ -256,7 +275,7 @@ pub const CliRenderer = struct {
         const hitScissorStack: std.ArrayListUnmanaged(buf.ClipRect) = .{};
 
         // Allocate instance output buffers only for strategies that use them.
-        const uses_instance_buffers = opts.output_strategy == 0;
+        const uses_instance_buffers = opts.output_strategy == .stdout;
         const instanceOutputA = if (uses_instance_buffers)
             try allocator.alloc(u8, OUTPUT_BUFFER_SIZE)
         else
@@ -367,14 +386,11 @@ pub const CliRenderer = struct {
         self.allocator.destroy(self);
     }
 
-    /// Free instance output buffers (called in destroy)
+    /// Free instance output buffers (called in destroy).
+    /// Always free unconditionally — Zig allocators handle zero-length slices safely.
     fn freeInstanceBuffers(self: *CliRenderer) void {
-        if (self.instanceOutputA.len > 0) {
-            self.allocator.free(self.instanceOutputA);
-        }
-        if (self.instanceOutputB.len > 0) {
-            self.allocator.free(self.instanceOutputB);
-        }
+        self.allocator.free(self.instanceOutputA);
+        self.allocator.free(self.instanceOutputB);
     }
 
     pub fn setupTerminal(self: *CliRenderer, useAlternateScreen: bool) void {
@@ -450,10 +466,17 @@ pub const CliRenderer = struct {
         // Write first batch
         self.writeOut(stream.getWritten());
 
-        // Sleep and write showCursor again (Ghostty workaround)
-        std.Thread.sleep(10 * std.time.ns_per_ms);
-        self.writeOut(ansi.ANSI.showCursor);
-        std.Thread.sleep(10 * std.time.ns_per_ms);
+        // Sleep + resend showCursor as a terminal compatibility workaround.
+        // Only needed for stdout (local terminal); span_feed delegates
+        // cursor visibility to the remote client.
+        switch (self.outputStrategy) {
+            .stdout => {
+                std.Thread.sleep(10 * std.time.ns_per_ms);
+                self.writeOut(ansi.ANSI.showCursor);
+                std.Thread.sleep(10 * std.time.ns_per_ms);
+            },
+            .span_feed => {},
+        }
     }
 
     fn addStatSample(self: *CliRenderer, comptime T: type, samples: *std.ArrayListUnmanaged(T), value: T) void {
@@ -613,6 +636,8 @@ pub const CliRenderer = struct {
     // Render once with current state
     pub fn render(self: *CliRenderer, force: bool) void {
         // Backpressure check for span_feed strategy.
+        // When skipping, lastRenderTime is intentionally NOT updated (catch-up
+        // semantics): the next successful render sees the full elapsed delta
         switch (self.outputStrategy) {
             .stdout => {},
             .span_feed => |sf| {
@@ -1021,10 +1046,21 @@ pub const CliRenderer = struct {
                 w.flush() catch {};
             },
             .span_feed => |sf| {
+                var wrote_any = false;
                 for (data_slices) |slice| {
-                    sf.feed.write(slice) catch break;
+                    sf.feed.write(slice) catch {
+                        // Flush anything already written in this batch to avoid
+                        // carrying orphaned bytes into a later commit.
+                        if (wrote_any) {
+                            sf.feed.commit() catch {};
+                        }
+                        return;
+                    };
+                    wrote_any = true;
                 }
-                sf.feed.commit() catch {};
+                if (wrote_any) {
+                    sf.feed.commit() catch {};
+                }
             },
         }
     }
@@ -1261,6 +1297,10 @@ pub const CliRenderer = struct {
         writer.flush() catch {};
     }
 
+    /// Return the last rendered output from instance buffers.
+    /// NOTE: Only meaningful for stdout strategy — span_feed renderers use
+    /// zero-length instance buffers and output goes through the feed instead.
+    /// Use drainFeedBytes() in tests for span_feed renderers.
     pub fn getLastOutputForTest(self: *CliRenderer) []const u8 {
         // Return the current active instance buffer contents
         const buffer = if (self.instanceActiveBuffer == .A) self.instanceOutputA else self.instanceOutputB;

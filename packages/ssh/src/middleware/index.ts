@@ -61,9 +61,9 @@ export function logging(options: LoggingOptions = {}): Middleware {
         onConnect(ctx)
       }
 
-      // Set up disconnect listener
+      // Set up disconnect listener (once — connection only closes once)
       if (onDisconnect) {
-        ctx.connection.on("close", () => {
+        ctx.connection.once("close", () => {
           onDisconnect(ctx)
         })
       }
@@ -76,29 +76,36 @@ export function logging(options: LoggingOptions = {}): Middleware {
 }
 
 export function publicKey(options: PublicKeyOptions): Middleware {
-  // Load authorized keys
-  let authorizedKeys = options.authorizedKeys ?? []
+  const parsedAuthorizedKeys = new Map<string, { type: string; key: string; comment?: string }>()
+
+  const addParsedKeys = (rawKeys: string[]) => {
+    if (rawKeys.length === 0) return
+
+    const parsed = parseAuthorizedKeys(rawKeys.join("\n"))
+    for (const key of parsed) {
+      parsedAuthorizedKeys.set(`${key.type}:${key.key}`, key)
+    }
+  }
+
+  addParsedKeys(options.authorizedKeys ?? [])
 
   // Load from file if path provided
   if (options.authorizedKeysPath) {
     const keyPath = options.authorizedKeysPath.replace(/^~/, homedir())
     if (existsSync(keyPath)) {
       const content = readFileSync(keyPath, "utf-8")
-      const parsedKeys = parseAuthorizedKeys(content)
-      authorizedKeys = [...authorizedKeys, ...parsedKeys.map((k) => `${k.type} ${k.key}`)]
+      addParsedKeys(content.split("\n"))
+    } else if (parsedAuthorizedKeys.size === 0) {
+      console.warn(
+        `[SSH] authorizedKeysPath "${keyPath}" not found and no authorizedKeys provided` +
+          " \u2014 all public key auth will be rejected",
+      )
+    } else {
+      console.warn(`[SSH] authorizedKeysPath "${keyPath}" not found, using inline keys only`)
     }
   }
 
-  // Parse all keys once
-  const parsedAuthorizedKeys = authorizedKeys
-    .map((keyStr) => {
-      const parts = keyStr.split(" ")
-      if (parts.length >= 2) {
-        return { type: parts[0], key: parts[1], comment: parts.slice(2).join(" ") || undefined }
-      }
-      return null
-    })
-    .filter((k): k is NonNullable<typeof k> => k !== null)
+  const keys = Array.from(parsedAuthorizedKeys.values())
 
   return async (ctx, next) => {
     if (ctx.phase !== "auth") {
@@ -118,7 +125,7 @@ export function publicKey(options: PublicKeyOptions): Middleware {
     const clientKeyData = ctx.clientKey.data.toString("base64")
 
     // Check if key is authorized
-    const isAuthorized = matchesKey(clientKeyType, clientKeyData, parsedAuthorizedKeys)
+    const isAuthorized = matchesKey(clientKeyType, clientKeyData, keys)
 
     if (isAuthorized) {
       ctx.accept?.()
@@ -126,9 +133,9 @@ export function publicKey(options: PublicKeyOptions): Middleware {
       ctx.reject?.(["publickey"])
     }
 
-    // Always call next() to allow outer middleware (like logging) to complete
-    // and let the default handler run (which is a no-op if we already decided)
-    await next()
+    // Do NOT call next() after accept/reject — downstream middleware could
+    // override the auth decision. Outer middleware (like logging) completes
+    // when control returns up the Koa onion stack, not via next() here.
   }
 }
 

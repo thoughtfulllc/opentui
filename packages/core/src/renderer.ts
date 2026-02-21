@@ -161,6 +161,9 @@ function createNullStdin(): NodeJS.ReadStream {
 /**
  * Creates a no-op WriteStream used for stream mode when stdout is omitted.
  * Carries terminal dimensions while all actual output flows through onOutput.
+ * Sets isTTY=true so existing renderer internals work without null checks.
+ * Debug features like dumpOutputCache() write to this no-op stream and are
+ * intentionally discarded in stream mode.
  */
 function createNullStdout(width: number, height: number): NodeJS.WriteStream {
   const stdout = new Writable({
@@ -337,14 +340,20 @@ export enum MouseButton {
 
 const rendererTracker = singleton("RendererTracker", () => {
   const renderers = new Set<CliRenderer>()
+  let processStdinUsers = 0
   return {
     addRenderer: (renderer: CliRenderer) => {
       renderers.add(renderer)
+      if (renderer.stdin === process.stdin) processStdinUsers++
     },
     removeRenderer: (renderer: CliRenderer) => {
       renderers.delete(renderer)
+      if (renderer.stdin === process.stdin) processStdinUsers = Math.max(0, processStdinUsers - 1)
       if (renderers.size === 0) {
-        process.stdin.pause()
+        // Only pause process.stdin if a renderer was actually using it
+        if (processStdinUsers === 0) {
+          process.stdin.pause()
+        }
 
         if (hasSingleton("tree-sitter-client")) {
           getTreeSitterClient().destroy()
@@ -367,6 +376,16 @@ export async function createCliRenderer(config: CliRendererConfig = {}): Promise
   let feed: NativeSpanFeed | null
 
   if (config.outputMode === "stream") {
+    if (typeof config.onOutput !== "function") {
+      throw new Error('outputMode "stream" requires onOutput')
+    }
+    if (!Number.isInteger(config.width) || config.width < 1) {
+      throw new Error('outputMode "stream" requires width to be a positive integer')
+    }
+    if (!Number.isInteger(config.height) || config.height < 1) {
+      throw new Error('outputMode "stream" requires height to be a positive integer')
+    }
+
     // Stream mode has no process-backed tty, so width/height come from config.
     // Null-object streams let existing renderer internals run without null checks.
     width = config.width
@@ -633,8 +652,6 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   constructor(rendererInit: CliRendererInit, config: CliRendererConfig = {}) {
     super()
 
-    rendererTracker.addRenderer(this)
-
     this.stdin = rendererInit.stdin
     this.stdout = rendererInit.stdout
     this.realStdoutWrite = rendererInit.stdout.write
@@ -662,18 +679,26 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       this.lib.setTerminalEnvVar(this.rendererPtr, key, value)
     }
 
-    this.exitOnCtrlC = config.exitOnCtrlC === undefined ? true : config.exitOnCtrlC
-    this.exitSignals = config.exitSignals || [
-      "SIGINT", // Ctrl+C
-      "SIGTERM", // Termination signal
-      "SIGQUIT", // Ctrl+\
-      "SIGABRT", // Abort signal
-      "SIGHUP", // Hangup (terminal closed)
-      "SIGBREAK", // Ctrl+Break on Windows
-      "SIGPIPE", // Broken pipe
-      "SIGBUS", // Bus error
-      "SIGFPE", // Floating point exception
-    ]
+    // Stream mode defaults: no process-level signal handlers, no console error overlay.
+    // These are designed for multi-session SSH servers where process signals should not
+    // tear down individual sessions. Callers can still override explicitly.
+    const isStreamMode = config.outputMode === "stream"
+    this.exitOnCtrlC = config.exitOnCtrlC ?? !isStreamMode
+    this.exitSignals =
+      config.exitSignals ??
+      (isStreamMode
+        ? []
+        : [
+            "SIGINT", // Ctrl+C
+            "SIGTERM", // Termination signal
+            "SIGQUIT", // Ctrl+\
+            "SIGABRT", // Abort signal
+            "SIGHUP", // Hangup (terminal closed)
+            "SIGBREAK", // Ctrl+Break on Windows
+            "SIGPIPE", // Broken pipe
+            "SIGBUS", // Bus error
+            "SIGFPE", // Floating point exception
+          ])
 
     this.clipboard = new Clipboard(this.lib, this.rendererPtr)
     this.resizeDebounceDelay = config.debounceDelay || 100
@@ -718,6 +743,9 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       throw new Error('outputMode "stream" requires NativeSpanFeed (enforced by type, this should not happen)')
     }
 
+    // Register with tracker after validation succeeds to avoid leaking entries on throw
+    rendererTracker.addRenderer(this)
+
     // Handle terminal resize (skip in stream mode - resize comes via handleResize())
     if (this._outputMode === "stdout") {
       process.on("SIGWINCH", this.sigwinchHandler)
@@ -747,7 +775,8 @@ export class CliRenderer extends EventEmitter implements RenderContext {
 
     this._console = new TerminalConsole(this, config.consoleOptions)
     this.useConsole = config.useConsole ?? true
-    this._openConsoleOnError = config.openConsoleOnError ?? process.env.NODE_ENV !== "production"
+    this._openConsoleOnError =
+      config.openConsoleOnError ?? (isStreamMode ? false : process.env.NODE_ENV !== "production")
     this._onDestroy = config.onDestroy
 
     // Initialize stream mode if enabled (variables set earlier before SIGWINCH)
@@ -1372,15 +1401,16 @@ export class CliRenderer extends EventEmitter implements RenderContext {
    * Write input data to the renderer as if it came from stdin.
    * Use this in stream mode to provide input from SSH or other streams.
    */
-  public input(data: Buffer | Uint8Array): void {
+  public input(data: Buffer): void {
     if (this._outputMode !== "stream") {
       throw new Error("input() is only available in stream output mode")
     }
+    if (this._isDestroyed) return
 
-    if (this._useMouse && this.handleMouseData(data as Buffer)) {
+    if (this._useMouse && this.handleMouseData(data)) {
       return
     }
-    this._stdinBuffer.process(data as Buffer)
+    this._stdinBuffer.process(data)
   }
 
   /**
@@ -1737,6 +1767,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
    * For terminal-driven resize, the renderer handles SIGWINCH automatically.
    */
   public resize(width: number, height: number): void {
+    if (this._isDestroyed) return
     this.processResize(width, height)
   }
 
@@ -1918,30 +1949,33 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     this.disableMouse()
     this.removeExitListeners()
     this._stdinBuffer.clear()
-    this.stdin.removeListener("data", this.stdinListener)
     this.lib.suspendRenderer(this.rendererPtr)
 
-    if (this.stdin.setRawMode) {
-      this.stdin.setRawMode(false)
+    // Skip stdin teardown in stream mode — input comes via renderer.input()
+    if (this._outputMode === "stdout") {
+      this.stdin.removeListener("data", this.stdinListener)
+      if (this.stdin.setRawMode) {
+        this.stdin.setRawMode(false)
+      }
+      this.stdin.pause()
     }
-
-    this.stdin.pause()
   }
 
   public resume(): void {
-    if (this.stdin.setRawMode) {
-      this.stdin.setRawMode(true)
+    // Skip stdin setup in stream mode — input comes via renderer.input()
+    if (this._outputMode === "stdout") {
+      if (this.stdin.setRawMode) {
+        this.stdin.setRawMode(true)
+      }
+      this.stdin.resume()
+      setImmediate(() => {
+        // Consume any existing stdin data to avoid processing stale input
+        while (this.stdin.read() !== null) {}
+        this.stdin.on("data", this.stdinListener)
+      })
     }
 
-    this.stdin.resume()
     this.addExitListeners()
-
-    setImmediate(() => {
-      // Consume any existing stdin data to avoid processing stale input
-      while (this.stdin.read() !== null) {}
-      this.stdin.on("data", this.stdinListener)
-    })
-
     this.lib.resumeRenderer(this.rendererPtr)
 
     if (this._suspendedMouseEnabled) {
@@ -2077,12 +2111,22 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       this.flushStdoutCache(this._splitHeight, true)
     }
 
-    if (this.stdin.setRawMode) {
-      this.stdin.setRawMode(false)
+    // Only restore stdin in stdout mode — stream mode uses null stdin
+    if (this._outputMode === "stdout") {
+      if (this.stdin.setRawMode) {
+        this.stdin.setRawMode(false)
+      }
+      this.stdin.removeListener("data", this.stdinListener)
     }
-    this.stdin.removeListener("data", this.stdinListener)
 
-    // Tear down stream feed callbacks before destroying native renderer
+    // Tear down stream feed callbacks before destroying native renderer.
+    //
+    // Memory ownership: the renderer's native struct (buffers, hit grids) is
+    // freed by destroyRenderer(). The feed's chunk memory is owned independently
+    // by NativeSpanFeed and freed in its own finalizeDestroy(), which defers
+    // until all pending async onOutput handlers have settled. This means
+    // destroyRenderer() does not free the memory that onOutput views
+    // reference — those views point into feed-owned chunks, not renderer memory.
     if (this._outputMode === "stream" && this._feed) {
       // Flush any committed spans (including shutdown sequences) before detaching handlers.
       try {

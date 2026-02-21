@@ -1041,7 +1041,7 @@ test "renderer - instance buffers allocated by strategy" {
         80,
         24,
         pool,
-        .{ .testing = true, .output_strategy = 1, .feed_ptr = feed },
+        .{ .testing = true, .output_strategy = .span_feed, .feed_ptr = feed },
     );
     defer renderer_stream.destroy();
 
@@ -1068,7 +1068,7 @@ test "renderer - span_feed mode writes rendered frame to feed" {
         80,
         24,
         pool,
-        .{ .testing = false, .output_strategy = 1, .feed_ptr = feed },
+        .{ .testing = false, .output_strategy = .span_feed, .feed_ptr = feed },
     );
     defer cli_renderer.destroy();
 
@@ -1097,7 +1097,7 @@ test "renderer - span_feed backpressure skips render when queue is full" {
         80,
         24,
         pool,
-        .{ .testing = false, .output_strategy = 1, .feed_ptr = feed },
+        .{ .testing = false, .output_strategy = .span_feed, .feed_ptr = feed },
     );
     defer cli_renderer.destroy();
 
@@ -1133,7 +1133,7 @@ test "renderer - span_feed strategy prevents threading" {
         80,
         24,
         pool,
-        .{ .testing = true, .output_strategy = 1, .feed_ptr = feed },
+        .{ .testing = true, .output_strategy = .span_feed, .feed_ptr = feed },
     );
     defer cli_renderer.destroy();
 
@@ -1169,7 +1169,7 @@ test "renderer - multiple span_feed renderers use independent feeds" {
         80,
         24,
         pool,
-        .{ .testing = false, .output_strategy = 1, .feed_ptr = feed1 },
+        .{ .testing = false, .output_strategy = .span_feed, .feed_ptr = feed1 },
     );
     defer renderer1.destroy();
 
@@ -1181,7 +1181,7 @@ test "renderer - multiple span_feed renderers use independent feeds" {
         80,
         24,
         pool,
-        .{ .testing = false, .output_strategy = 1, .feed_ptr = feed2 },
+        .{ .testing = false, .output_strategy = .span_feed, .feed_ptr = feed2 },
     );
     defer renderer2.destroy();
 
@@ -1208,4 +1208,38 @@ test "renderer - multiple span_feed renderers use independent feeds" {
 
     try std.testing.expect(std.mem.indexOf(u8, bytes1, "Renderer 1") != null);
     try std.testing.expect(std.mem.indexOf(u8, bytes2, "Renderer 2") != null);
+}
+
+test "renderer - span_feed writeOutMultiple flushes partial batch on write failure" {
+    const pool = gp.initGlobalPool(std.testing.allocator);
+    defer gp.deinitGlobalPool();
+
+    var feed_options = native_span_feed.defaultOptions();
+    feed_options.chunk_size = 16;
+    feed_options.initial_chunks = 1;
+    feed_options.max_bytes = 16;
+    feed_options.growth_policy = @intFromEnum(native_span_feed.GrowthPolicy.block);
+    feed_options.auto_commit_on_full = 0;
+    feed_options.span_queue_capacity = 16;
+
+    const feed = try createAttachedFeed(std.testing.allocator, feed_options);
+    defer feed.destroy();
+
+    var cli_renderer = try CliRenderer.create(
+        std.testing.allocator,
+        80,
+        24,
+        pool,
+        .{ .testing = false, .output_strategy = .span_feed, .feed_ptr = feed },
+    );
+    defer cli_renderer.destroy();
+
+    const slices = [_][]const u8{ "12345678", "ABCDEFGHIJ" };
+    cli_renderer.writeOutMultiple(slices[0..]);
+
+    const bytes = try drainFeedBytes(std.testing.allocator, feed);
+    defer std.testing.allocator.free(bytes);
+
+    try std.testing.expect(std.mem.indexOf(u8, bytes, "12345678") != null);
+    try std.testing.expect(std.mem.indexOf(u8, bytes, "ABCDEFGHIJ") == null);
 }

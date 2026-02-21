@@ -1,6 +1,6 @@
 import { test, expect, describe, afterEach } from "bun:test"
 import { ensureHostKey } from "../src/utils/host-key.ts"
-import { unlinkSync, existsSync, statSync, mkdirSync, writeFileSync, rmdirSync } from "fs"
+import { unlinkSync, existsSync, statSync, mkdirSync, writeFileSync, rmSync } from "fs"
 import { tmpdir } from "os"
 import { join, dirname } from "path"
 
@@ -24,7 +24,7 @@ describe("ensureHostKey", () => {
     // Cleanup test directory
     try {
       if (existsSync(testDir)) {
-        rmdirSync(testDir, { recursive: true })
+        rmSync(testDir, { recursive: true, force: true })
       }
     } catch {
       // Ignore
@@ -87,6 +87,21 @@ describe("ensureHostKey", () => {
     const key2 = ensureHostKey(keyPath)
 
     expect(key1.equals(key2)).toBe(true)
+  })
+
+  test("tightens permissions on existing key", () => {
+    const keyPath = join(testDir, "insecure-key")
+    cleanupPaths.push(keyPath)
+
+    mkdirSync(dirname(keyPath), { recursive: true })
+    const dummyKey = "-----BEGIN PRIVATE KEY-----\ntest\n-----END PRIVATE KEY-----"
+    writeFileSync(keyPath, dummyKey, { mode: 0o644 })
+
+    ensureHostKey(keyPath)
+
+    const stat = statSync(keyPath)
+    const mode = stat.mode & 0o777
+    expect(mode).toBe(0o600)
   })
 
   test("generates valid OpenSSH format key", () => {

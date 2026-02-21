@@ -3,6 +3,9 @@ import { EventEmitter } from "events"
 import { compose, devMode, logging, publicKey } from "../src/middleware/index.ts"
 import type { MiddlewareContext, Middleware } from "../src/types.ts"
 import type { PublicKey } from "ssh2"
+import { mkdtempSync, rmSync, writeFileSync } from "fs"
+import { join } from "path"
+import { tmpdir } from "os"
 
 function createMockContext(overrides: Partial<MiddlewareContext> = {}): MiddlewareContext {
   return {
@@ -11,6 +14,7 @@ function createMockContext(overrides: Partial<MiddlewareContext> = {}): Middlewa
     username: "testuser",
     remoteAddress: "127.0.0.1",
     state: {},
+    log: () => {},
     ...overrides,
   }
 }
@@ -362,6 +366,46 @@ describe("publicKey", () => {
     expect(rejected).toBe(false)
   })
 
+  test("does not call next() after accept to prevent downstream override", async () => {
+    const mw = publicKey({
+      authorizedKeys: [validKeyString],
+    })
+
+    let nextCalled = false
+    const ctx = createMockContext({
+      phase: "auth",
+      clientKey: createClientKey(validKeyType, validKeyData),
+      accept: () => {},
+      reject: () => {},
+    })
+
+    await mw(ctx, () => {
+      nextCalled = true
+    })
+
+    expect(nextCalled).toBe(false)
+  })
+
+  test("does not call next() after reject to prevent downstream override", async () => {
+    const mw = publicKey({
+      authorizedKeys: [validKeyString],
+    })
+
+    let nextCalled = false
+    const ctx = createMockContext({
+      phase: "auth",
+      clientKey: createClientKey("ssh-ed25519", "DIFFERENT_KEY_DATA"),
+      accept: () => {},
+      reject: () => {},
+    })
+
+    await mw(ctx, () => {
+      nextCalled = true
+    })
+
+    expect(nextCalled).toBe(false)
+  })
+
   test("passes through non-publickey auth", async () => {
     const mw = publicKey({
       authorizedKeys: [validKeyString],
@@ -389,5 +433,32 @@ describe("publicKey", () => {
     expect(nextCalled).toBe(true)
     expect(accepted).toBe(false)
     expect(rejected).toBe(false)
+  })
+
+  test("loads authorized keys from authorizedKeysPath", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "opentui-ssh-authkeys-"))
+    const keyPath = join(dir, "authorized_keys")
+    writeFileSync(keyPath, validKeyString + "\n", "utf-8")
+
+    try {
+      const mw = publicKey({
+        authorizedKeysPath: keyPath,
+      })
+
+      let accepted = false
+      const ctx = createMockContext({
+        phase: "auth",
+        clientKey: createClientKey(validKeyType, validKeyData),
+        accept: () => {
+          accepted = true
+        },
+        reject: () => {},
+      })
+
+      await mw(ctx, () => {})
+      expect(accepted).toBe(true)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })

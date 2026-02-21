@@ -82,7 +82,7 @@ Creates a new SSH server instance.
 #### Methods
 
 - `listen(): Promise<void>`: Start listening for connections
-- `close(): void`: Stop the server
+- `close(): Promise<void>`: Stop the server and wait for active sessions to finish teardown
 
 ### `SSHSession`
 
@@ -102,7 +102,7 @@ Creates a new SSH server instance.
 
 #### Methods
 
-- `close(exitCode?: number)`: Close the session
+- `close(exitCode?: number): Promise<void>`: Close the session and wait for renderer teardown
 - `handleResize(width, height)`: Manually trigger resize
 
 ## Middleware
@@ -139,7 +139,7 @@ Middleware executes in array order using the onion model:
 ```typescript
 middleware: [
   logging(), // 1. Runs first, wraps accept/reject, calls next()
-  publicKey(), // 2. Makes auth decision, calls next()
+  publicKey(), // 2. Makes auth decision and returns
 ] //    Control returns to logging for post-processing
 ```
 
@@ -197,9 +197,10 @@ const myAuth: Middleware = async (ctx, next) => {
     ctx.reject?.(["publickey", "password"]) // Allowed methods for retry
   }
 
-  // ALWAYS call next() after auth decision
-  // This allows outer middleware (like logging) to complete
-  await next()
+  // Return immediately after making an auth decision.
+  // Calling next() is optional and only needed if you intentionally want
+  // downstream auth middleware to continue running.
+  return
 }
 ```
 

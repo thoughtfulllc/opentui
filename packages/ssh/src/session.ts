@@ -24,6 +24,11 @@ export class SSHSession extends EventEmitter {
   private _pty: PtyInfo
   private _stream: ServerChannel
   private _closed = false
+  private _closePromise: Promise<void> | null = null
+
+  private static readonly MAX_WIDTH = 500
+  private static readonly MAX_HEIGHT = 200
+  private static readonly IDLE_TIMEOUT_MS = 5000
 
   public get pty(): Readonly<PtyInfo> {
     return this._pty
@@ -53,7 +58,11 @@ export class SSHSession extends EventEmitter {
       Omit<CliRendererConfig, "stdin" | "stdout" | "outputMode" | "onOutput" | "width" | "height" | "feedOptions">
     > = {},
   ): Promise<SSHSession> {
-    // Create placeholder for the session so we can reference it in onOutput
+    // Create placeholder for the session so we can reference it in onOutput.
+    // Note: `session` is null during createCliRenderer(). The optional chaining
+    // (`session?.`) evaluates to undefined (falsy), allowing initial setup output
+    // to flow through to the stream. This is intentional — the SSH stream is
+    // writable before the SSHSession wrapper is constructed.
     let session: SSHSession | null = null
 
     const renderer = await createCliRenderer({
@@ -120,27 +129,70 @@ export class SSHSession extends EventEmitter {
 
   /** Internal cleanup when stream closes/errors - idempotent */
   private _cleanup(): void {
-    if (this._closed) return
+    void this.beginClose({ closeStream: false })
+  }
+
+  private async waitForRendererIdleWithTimeout(): Promise<void> {
+    await Promise.race([
+      this.renderer.idle(),
+      new Promise<void>((resolve) => {
+        setTimeout(resolve, SSHSession.IDLE_TIMEOUT_MS)
+      }),
+    ])
+  }
+
+  private beginClose(options: { closeStream: boolean; exitCode?: number }): Promise<void> {
+    if (this._closePromise) {
+      return this._closePromise
+    }
+
     this._closed = true
 
-    // Stop renderer and clean up asynchronously
-    this.renderer.stop()
-    this.renderer
-      .idle()
-      .then(() => {
-        this.renderer.destroy()
+    this._closePromise = (async () => {
+      try {
+        if (options.closeStream) {
+          try {
+            this._stream.exit(options.exitCode ?? 0)
+            this._stream.end()
+          } catch (err) {
+            console.error(`[SSH] Error while closing stream: ${err instanceof Error ? err.message : String(err)}`)
+          }
+        }
+
+        this.renderer.stop()
+
+        try {
+          await this.waitForRendererIdleWithTimeout()
+        } catch (err) {
+          console.error(
+            `[SSH] Error while waiting for renderer idle: ${err instanceof Error ? err.message : String(err)}`,
+          )
+        }
+
+        try {
+          this.renderer.destroy()
+        } catch (err) {
+          console.error(`[SSH] Error during renderer destroy: ${err instanceof Error ? err.message : String(err)}`)
+        }
+      } finally {
         this.emit("close")
-      })
-      .catch((err) => {
-        console.error(`[SSH] Error during session cleanup: ${err instanceof Error ? err.message : String(err)}`)
-        // Still emit close event so listeners know the session is done
-        this.emit("close")
-      })
+      }
+    })()
+
+    return this._closePromise
   }
 
   public handleResize(width: number, height: number): void {
+    if (this._closed) return
     // Validate dimensions - reject invalid values from malicious/buggy clients
-    if (width < 1 || height < 1 || width > 10000 || height > 10000) {
+    if (
+      !Number.isInteger(width) ||
+      !Number.isInteger(height) ||
+      width < 1 ||
+      height < 1 ||
+      width > SSHSession.MAX_WIDTH ||
+      height > SSHSession.MAX_HEIGHT
+    ) {
       return
     }
     this._pty.width = width
@@ -149,27 +201,7 @@ export class SSHSession extends EventEmitter {
     this.emit("resize", width, height)
   }
 
-  public close(exitCode: number = 0): void {
-    if (this._closed) return
-    this._closed = true
-
-    // Close the SSH stream FIRST (immediately) so the client sees the disconnect
-    // This allows new connections to work without waiting for renderer cleanup
-    this._stream.exit(exitCode)
-    this._stream.end()
-
-    // Then clean up the renderer asynchronously
-    this.renderer.stop()
-    this.renderer
-      .idle()
-      .then(() => {
-        this.renderer.destroy()
-        this.emit("close")
-      })
-      .catch((err) => {
-        console.error(`[SSH] Error during session close: ${err instanceof Error ? err.message : String(err)}`)
-        // Still emit close event so listeners know the session is done
-        this.emit("close")
-      })
+  public close(exitCode: number = 0): Promise<void> {
+    return this.beginClose({ closeStream: true, exitCode })
   }
 }

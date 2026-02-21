@@ -24,6 +24,8 @@ export interface SSHServerConfig {
   host?: string
   hostKeyPath: string
   requirePty?: boolean
+  /** Maximum concurrent sessions (0 = unlimited, default: 0). */
+  maxSessions?: number
   // SSHSession owns stream-mode wiring (outputMode/onOutput/stdin/stdout/size).
   // rendererOptions only exposes safe app-level renderer tuning.
   rendererOptions?: Omit<

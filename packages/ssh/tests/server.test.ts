@@ -4,23 +4,23 @@ import { createSSHServer, devMode } from "../src/index.ts"
 import type { UserInfo } from "../src/types.ts"
 import { tmpdir } from "os"
 import { join } from "path"
-import { unlinkSync, existsSync, rmdirSync } from "fs"
+import { existsSync, rmSync } from "fs"
 
 describe("SSHServer", () => {
   const testDir = join(tmpdir(), "opentui-ssh-server-test-" + Date.now())
-  let serverCleanup: (() => void) | null = null
+  let serverCleanup: (() => Promise<void>) | null = null
 
-  afterEach(() => {
+  afterEach(async () => {
     // Cleanup server
     if (serverCleanup) {
-      serverCleanup()
+      await serverCleanup()
       serverCleanup = null
     }
 
     // Cleanup test directory
     try {
       if (existsSync(testDir)) {
-        rmdirSync(testDir, { recursive: true })
+        rmSync(testDir, { recursive: true, force: true })
       }
     } catch {
       // Ignore
@@ -36,7 +36,9 @@ describe("SSHServer", () => {
 
     expect(server).toBeDefined()
     expect(server.port).toBe(0)
-    serverCleanup = () => server.close()
+    serverCleanup = async () => {
+      await server.close()
+    }
   })
 
   test("emits listening event on start", async () => {
@@ -45,7 +47,9 @@ describe("SSHServer", () => {
       hostKeyPath: join(testDir, "host-key-listening"),
       middleware: [devMode()],
     })
-    serverCleanup = () => server.close()
+    serverCleanup = async () => {
+      await server.close()
+    }
 
     let listeningEmitted = false
     server.on("listening", () => {
@@ -71,7 +75,7 @@ describe("SSHServer", () => {
       closeEmitted = true
     })
 
-    server.close()
+    await server.close()
     serverCleanup = null // Already closed
 
     expect(closeEmitted).toBe(true)
@@ -87,7 +91,9 @@ describe("SSHServer", () => {
       hostKeyPath: keyPath,
       middleware: [devMode()],
     })
-    serverCleanup = () => server.close()
+    serverCleanup = async () => {
+      await server.close()
+    }
 
     await server.listen()
 
@@ -100,7 +106,9 @@ describe("SSHServer", () => {
       hostKeyPath: join(testDir, "host-key-default"),
       middleware: [devMode()],
     })
-    serverCleanup = () => server.close()
+    serverCleanup = async () => {
+      await server.close()
+    }
 
     // Just verify it creates without error
     expect(server).toBeDefined()
@@ -112,10 +120,46 @@ describe("SSHServer", () => {
       hostKeyPath: join(testDir, "host-key-pty"),
       middleware: [devMode()],
     })
-    serverCleanup = () => server.close()
+    serverCleanup = async () => {
+      await server.close()
+    }
 
     // Server should be created with requirePty default
     expect(server).toBeDefined()
+  })
+
+  test("rejects shell when maxSessions limit is reached", () => {
+    const server = createSSHServer({
+      port: 0,
+      hostKeyPath: join(testDir, "host-key-max-sessions"),
+      middleware: [devMode()],
+      requirePty: false,
+      maxSessions: 1,
+    })
+    serverCleanup = async () => {
+      await server.close()
+    }
+
+    const sshSession = new EventEmitter()
+    ;(server as any).sessions = new Set([{}])
+    ;(server as any).handleSession(
+      sshSession as any,
+      { username: "testuser" },
+      "127.0.0.1",
+      new EventEmitter() as any,
+      {},
+    )
+
+    let rejected = false
+    sshSession.emit(
+      "shell",
+      () => ({}),
+      () => {
+        rejected = true
+      },
+    )
+
+    expect(rejected).toBe(true)
   })
 
   test("sets authenticated user before session start", async () => {
@@ -124,7 +168,9 @@ describe("SSHServer", () => {
       hostKeyPath: join(testDir, "host-key-auth-order"),
       middleware: [devMode()],
     })
-    serverCleanup = () => server.close()
+    serverCleanup = async () => {
+      await server.close()
+    }
 
     const client = new EventEmitter()
     let capturedUser: UserInfo | null = null
@@ -160,5 +206,49 @@ describe("SSHServer", () => {
     const resolvedUser = capturedUser as unknown as { username: string; publicKey?: string }
     expect(resolvedUser.username).toBe("testuser")
     expect(resolvedUser.publicKey).toBe("ssh-ed25519")
+  })
+
+  test("ignores second auth decision after accept", async () => {
+    const server = createSSHServer({
+      port: 0,
+      hostKeyPath: join(testDir, "host-key-auth-guard"),
+      middleware: [
+        async (ctx, next) => {
+          if (ctx.phase === "auth") {
+            ctx.accept?.()
+            await next()
+            ctx.reject?.(["publickey"])
+            return
+          }
+          await next()
+        },
+      ],
+    })
+    serverCleanup = async () => {
+      await server.close()
+    }
+
+    let acceptCount = 0
+    let rejectCount = 0
+
+    await (server as any).handleAuth(
+      {
+        username: "testuser",
+        method: "publickey",
+        key: { algo: "ssh-ed25519", data: Buffer.from("AAAA", "base64") },
+        accept: () => {
+          acceptCount += 1
+        },
+        reject: () => {
+          rejectCount += 1
+        },
+      },
+      "127.0.0.1",
+      new EventEmitter() as any,
+      {},
+    )
+
+    expect(acceptCount).toBe(1)
+    expect(rejectCount).toBe(0)
   })
 })

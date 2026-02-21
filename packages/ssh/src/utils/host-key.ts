@@ -1,9 +1,13 @@
 import { utils } from "ssh2"
-import { writeFileSync, mkdirSync, existsSync, readFileSync, chmodSync } from "fs"
+import { writeFileSync, mkdirSync, existsSync, readFileSync, chmodSync, statSync } from "fs"
 import { dirname } from "path"
 
 export function ensureHostKey(keyPath: string): Buffer {
   if (existsSync(keyPath)) {
+    const mode = statSync(keyPath).mode & 0o777
+    if ((mode & 0o077) !== 0) {
+      chmodSync(keyPath, 0o600)
+    }
     return readFileSync(keyPath)
   }
 
