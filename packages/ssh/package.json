@@ -1,0 +1,40 @@
+{
+  "name": "@opentui/ssh",
+  "version": "0.1.0",
+  "description": "SSH server for hosting OpenTUI terminal applications",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/anomalyco/opentui",
+    "directory": "packages/ssh"
+  },
+  "module": "src/index.ts",
+  "type": "module",
+  "private": true,
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": {
+      "import": "./src/index.ts",
+      "types": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "build": "bun run scripts/build.ts",
+    "test": "bun test",
+    "example": "bun run examples/counter.ts"
+  },
+  "dependencies": {
+    "@opentui/core": "workspace:*",
+    "ssh2": "^1.16.0"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/node": "^24.0.0",
+    "@types/ssh2": "^1.15.1",
+    "typescript": "^5"
+  },
+  "peerDependencies": {
+    "bun": ">=1.2.0"
+  }
+}

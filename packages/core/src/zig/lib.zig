@@ -184,15 +184,35 @@ export fn getAllocatorStats(out_ptr: *ExternalAllocatorStats) void {
     };
 }
 
-export fn createRenderer(width: u32, height: u32, testing: bool, remote: bool) ?*renderer.CliRenderer {
+// Positional args rather than an extern struct: only 2 TS call sites and 6 params.
+// A struct-by-pointer approach would add a TS/Zig definition sync burden with no
+// compile-time guard against field drift. Reconsider if this grows past ~6 params.
+// outputStrategy is an ABI contract shared with TS: 0 = stdout, 1 = span_feed.
+// feedPtr is required for span_feed and ignored for stdout.
+export fn createRenderer(width: u32, height: u32, testing: bool, outputStrategy: u8, remote: bool, feedPtr: ?*native_span_feed.Stream) ?*renderer.CliRenderer {
     if (width == 0 or height == 0) {
         logger.warn("Invalid renderer dimensions: {}x{}", .{ width, height });
         return null;
     }
 
+    if (outputStrategy == 1 and feedPtr == null) {
+        logger.warn("span_feed strategy requires a non-null feed pointer", .{});
+        return null;
+    }
+
+    if (outputStrategy > 1) {
+        logger.warn("Invalid output strategy: {}", .{outputStrategy});
+        return null;
+    }
+
     const pool = gp.initGlobalPool(globalArena);
     _ = link.initGlobalLinkPool(globalArena);
-    return renderer.CliRenderer.createWithOptions(globalAllocator, width, height, pool, testing, remote) catch |err| {
+    return renderer.CliRenderer.create(globalAllocator, width, height, pool, .{
+        .testing = testing,
+        .output_strategy = outputStrategy,
+        .remote = remote,
+        .feed_ptr = feedPtr,
+    }) catch |err| {
         logger.err("Failed to create renderer: {}", .{err});
         return null;
     };

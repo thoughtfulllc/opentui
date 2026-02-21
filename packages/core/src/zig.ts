@@ -134,7 +134,7 @@ function getOpenTUILib(libPath?: string) {
     },
     // Renderer management
     createRenderer: {
-      args: ["u32", "u32", "bool", "bool"],
+      args: ["u32", "u32", "bool", "u8", "bool", "ptr"],
       returns: "ptr",
     },
     setTerminalEnvVar: {
@@ -1381,7 +1381,11 @@ export interface CursorState {
 export type NativeSpanFeedEventHandler = (eventId: number, arg0: Pointer, arg1: number | bigint) => void
 
 export interface RenderLib {
-  createRenderer: (width: number, height: number, options?: { testing?: boolean; remote?: boolean }) => Pointer | null
+  createRenderer: (
+    width: number,
+    height: number,
+    options?: { testing?: boolean; outputStrategy?: number; remote?: boolean; feedPtr?: Pointer | null },
+  ) => Pointer | null
   setTerminalEnvVar: (renderer: Pointer, key: string, value: string) => boolean
   destroyRenderer: (renderer: Pointer) => void
   setUseThread: (renderer: Pointer, useThread: boolean) => void
@@ -1992,10 +1996,18 @@ class FFIRenderLib implements RenderLib {
     this.opentui.symbols.setEventCallback(callbackPtr)
   }
 
-  public createRenderer(width: number, height: number, options: { testing?: boolean; remote?: boolean } = {}) {
+  public createRenderer(
+    width: number,
+    height: number,
+    options: { testing?: boolean; outputStrategy?: number; remote?: boolean; feedPtr?: Pointer | null } = {},
+  ) {
     const testing = options.testing ?? false
+    // Keep numeric strategy mapping aligned with Zig createRenderer ABI.
+    const strategy = options.outputStrategy ?? 0 // 0 = stdout (default), 1 = span_feed
     const remote = options.remote ?? false
-    return this.opentui.symbols.createRenderer(width, height, testing, remote)
+    // feedPtr is an internal wiring detail for stream mode; public callers use outputMode/onOutput.
+    const feedPtr = options.feedPtr ?? null
+    return this.opentui.symbols.createRenderer(width, height, testing, strategy, remote, feedPtr)
   }
 
   public setTerminalEnvVar(renderer: Pointer, key: string, value: string): boolean {

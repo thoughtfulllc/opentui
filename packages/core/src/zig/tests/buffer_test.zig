@@ -2387,7 +2387,7 @@ test "renderer - grapheme WrongGeneration repro with pool slot reuse" {
         40,
         5,
         pool,
-        true,
+        .{ .testing = true },
     );
     defer cli_renderer.destroy();
 

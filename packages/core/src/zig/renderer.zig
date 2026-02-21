@@ -6,6 +6,7 @@ const gp = @import("grapheme.zig");
 const link = @import("link.zig");
 const Terminal = @import("terminal.zig");
 const logger = @import("logger.zig");
+const NativeSpanFeed = @import("native-span-feed.zig");
 
 pub const RGBA = ansi.RGBA;
 pub const OptimizedBuffer = buf.OptimizedBuffer;
@@ -17,11 +18,23 @@ const MAX_STAT_SAMPLES = 30;
 const STAT_SAMPLE_CAPACITY = 30;
 
 const COLOR_EPSILON_DEFAULT: f32 = 0.00001;
-const OUTPUT_BUFFER_SIZE = 1024 * 1024 * 2; // 2MB
+pub const OUTPUT_BUFFER_SIZE = 1024 * 1024 * 2; // 2MB
+
+/// Output strategy for the renderer.
+/// Strategy is immutable after renderer creation.
+pub const OutputStrategy = union(enum) {
+    /// Write directly to stdout (default)
+    stdout: void,
+    /// Write output into NativeSpanFeed stream memory.
+    span_feed: struct {
+        feed: *NativeSpanFeed.Stream,
+    },
+};
 
 pub const RendererError = error{
     OutOfMemory,
     InvalidDimensions,
+    InvalidOutputStrategy,
     ThreadingFailed,
     WriteFailed,
 };
@@ -129,48 +142,78 @@ pub const CliRenderer = struct {
     lastCursorColorRGB: ?[3]u8 = null,
     lastMousePointerStyle: Terminal.MousePointerStyle = .default,
 
-    // Preallocated output buffer
-    var outputBuffer: [OUTPUT_BUFFER_SIZE]u8 = undefined;
-    var outputBufferLen: usize = 0;
-    var outputBufferB: [OUTPUT_BUFFER_SIZE]u8 = undefined;
-    var outputBufferBLen: usize = 0;
-    var activeBuffer: enum { A, B } = .A;
+    // Stream-agnostic output support
+    outputStrategy: OutputStrategy = .{ .stdout = {} },
 
-    const OutputBufferWriter = struct {
-        pub fn write(_: void, data: []const u8) !usize {
-            const bufferLen = if (activeBuffer == .A) &outputBufferLen else &outputBufferBLen;
-            const buffer = if (activeBuffer == .A) &outputBuffer else &outputBufferB;
+    // Per-renderer output buffers (unified architecture)
+    // These instance buffers replace the shared static buffers (removed in T9).
+    // Allocated unconditionally in create(), freed in destroy().
+    instanceOutputA: []u8,
+    instanceOutputB: []u8,
+    instanceOutputLenA: usize = 0,
+    instanceOutputLenB: usize = 0,
+    instanceActiveBuffer: enum { A, B } = .A,
 
-            if (bufferLen.* + data.len > buffer.len) {
-                // TODO: Resize buffer when necessary
-                return error.BufferFull;
-            }
-
-            @memcpy(buffer.*[bufferLen.*..][0..data.len], data);
-            bufferLen.* += data.len;
-
-            return data.len;
-        }
-
-        // TODO: std.io.GenericWriter is deprecated, however the "correct" option seems to be much more involved
-        // So I have simply used GenericWriter here, and then the proper migration can be done later
-        pub fn writer() std.io.GenericWriter(void, error{BufferFull}, write) {
-            return .{ .context = {} };
-        }
+    /// Writer context for unified buffer writer (uses instance buffers)
+    const BufferWriterContext = struct {
+        renderer: *CliRenderer,
     };
 
-    pub fn create(allocator: Allocator, width: u32, height: u32, pool: *gp.GraphemePool, testing: bool) !*CliRenderer {
-        return createWithOptions(allocator, width, height, pool, testing, false);
+    fn bufferWrite(ctx: BufferWriterContext, data: []const u8) !usize {
+        const self = ctx.renderer;
+        const bufferLen = if (self.instanceActiveBuffer == .A) &self.instanceOutputLenA else &self.instanceOutputLenB;
+        const buffer = if (self.instanceActiveBuffer == .A) self.instanceOutputA else self.instanceOutputB;
+
+        if (bufferLen.* + data.len > buffer.len) {
+            return error.BufferFull;
+        }
+
+        @memcpy(buffer[bufferLen.*..][0..data.len], data);
+        bufferLen.* += data.len;
+
+        return data.len;
     }
 
-    pub fn createWithOptions(
-        allocator: Allocator,
-        width: u32,
-        height: u32,
-        pool: *gp.GraphemePool,
-        testing: bool,
-        remote: bool,
-    ) !*CliRenderer {
+    /// Unified buffer writer for instance buffers.
+    fn bufferWriter(self: *CliRenderer) std.io.GenericWriter(BufferWriterContext, error{BufferFull}, bufferWrite) {
+        return .{ .context = .{ .renderer = self } };
+    }
+
+    /// Writer context for NativeSpanFeed stream output.
+    const FeedWriterContext = struct {
+        feed: *NativeSpanFeed.Stream,
+    };
+
+    fn feedWrite(ctx: FeedWriterContext, data: []const u8) error{FeedWriteError}!usize {
+        ctx.feed.write(data) catch return error.FeedWriteError;
+        return data.len;
+    }
+
+    fn feedWriter(self: *CliRenderer) ?std.io.GenericWriter(FeedWriterContext, error{FeedWriteError}, feedWrite) {
+        return switch (self.outputStrategy) {
+            .span_feed => |sf| .{ .context = .{ .feed = sf.feed } },
+            .stdout => null,
+        };
+    }
+
+    pub const CreateOptions = struct {
+        testing: bool = false,
+        output_strategy: u8 = 0, // 0 = stdout, 1 = span_feed
+        remote: bool = false,
+        feed_ptr: ?*NativeSpanFeed.Stream = null,
+    };
+
+    pub fn create(allocator: Allocator, width: u32, height: u32, pool: *gp.GraphemePool, opts: CreateOptions) !*CliRenderer {
+        // Non-stdout strategies imply remote output behavior.
+        const remote = opts.remote or (opts.output_strategy != 0);
+        const outputStrategy: OutputStrategy = switch (opts.output_strategy) {
+            0 => .{ .stdout = {} },
+            1 => blk: {
+                const feed_ptr = opts.feed_ptr orelse return error.InvalidOutputStrategy;
+                break :blk .{ .span_feed = .{ .feed = feed_ptr } };
+            },
+            else => return error.InvalidOutputStrategy,
+        };
         const self = try allocator.create(CliRenderer);
         errdefer allocator.destroy(self);
 
@@ -212,6 +255,19 @@ pub const CliRenderer = struct {
         @memset(nextHitGrid, 0);
         const hitScissorStack: std.ArrayListUnmanaged(buf.ClipRect) = .{};
 
+        // Allocate instance output buffers only for strategies that use them.
+        const uses_instance_buffers = opts.output_strategy == 0;
+        const instanceOutputA = if (uses_instance_buffers)
+            try allocator.alloc(u8, OUTPUT_BUFFER_SIZE)
+        else
+            try allocator.alloc(u8, 0);
+        errdefer allocator.free(instanceOutputA);
+        const instanceOutputB = if (uses_instance_buffers)
+            try allocator.alloc(u8, OUTPUT_BUFFER_SIZE)
+        else
+            try allocator.alloc(u8, 0);
+        errdefer allocator.free(instanceOutputB);
+
         self.* = .{
             .width = width,
             .height = height,
@@ -221,7 +277,7 @@ pub const CliRenderer = struct {
             .backgroundColor = .{ 0.0, 0.0, 0.0, 0.0 },
             .renderOffset = 0,
             .terminal = Terminal.init(.{ .remote = remote }),
-            .testing = testing,
+            .testing = opts.testing,
             .lastCursorStyleTag = null,
             .lastCursorBlinking = null,
             .lastCursorColorRGB = null,
@@ -258,6 +314,11 @@ pub const CliRenderer = struct {
             .hitGridWidth = width,
             .hitGridHeight = height,
             .hitScissorStack = hitScissorStack,
+            // Instance output buffers (allocated only for stdout)
+            .instanceOutputA = instanceOutputA,
+            .instanceOutputB = instanceOutputB,
+            // Output strategy (immutable after creation)
+            .outputStrategy = outputStrategy,
         };
 
         try currentBuffer.clear(.{ self.backgroundColor[0], self.backgroundColor[1], self.backgroundColor[2], self.backgroundColor[3] }, CLEAR_CHAR);
@@ -300,27 +361,41 @@ pub const CliRenderer = struct {
         self.allocator.free(self.nextHitGrid);
         self.hitScissorStack.deinit(self.allocator);
 
+        // Free instance output buffers if allocated
+        self.freeInstanceBuffers();
+
         self.allocator.destroy(self);
+    }
+
+    /// Free instance output buffers (called in destroy)
+    fn freeInstanceBuffers(self: *CliRenderer) void {
+        if (self.instanceOutputA.len > 0) {
+            self.allocator.free(self.instanceOutputA);
+        }
+        if (self.instanceOutputB.len > 0) {
+            self.allocator.free(self.instanceOutputB);
+        }
     }
 
     pub fn setupTerminal(self: *CliRenderer, useAlternateScreen: bool) void {
         self.useAlternateScreen = useAlternateScreen;
         self.terminalSetup = true;
 
-        var stdoutWriter = std.fs.File.stdout().writer(&self.stdoutBuffer);
-        const writer = &stdoutWriter.interface;
-
-        self.terminal.queryTerminalSend(writer) catch {
+        // Query terminal capabilities - write to appropriate output
+        var queryBuf: [256]u8 = undefined;
+        var queryStream = std.io.fixedBufferStream(&queryBuf);
+        self.terminal.queryTerminalSend(queryStream.writer()) catch {
             logger.warn("Failed to query terminal capabilities", .{});
         };
-        writer.flush() catch {};
+        self.writeOut(queryStream.getWritten());
 
         self.setupTerminalWithoutDetection(useAlternateScreen);
     }
 
     fn setupTerminalWithoutDetection(self: *CliRenderer, useAlternateScreen: bool) void {
-        var stdoutWriter = std.fs.File.stdout().writer(&self.stdoutBuffer);
-        const writer = &stdoutWriter.interface;
+        var setupBuf: [1024]u8 = undefined;
+        var stream = std.io.fixedBufferStream(&setupBuf);
+        const writer = stream.writer();
 
         writer.writeAll(ansi.ANSI.saveCursorState) catch {};
 
@@ -334,7 +409,7 @@ pub const CliRenderer = struct {
         const useKitty = self.terminal.opts.kitty_keyboard_flags > 0;
         self.terminal.enableDetectedFeatures(writer, useKitty) catch {};
 
-        writer.flush() catch {};
+        self.writeOut(stream.getWritten());
     }
 
     pub fn suspendRenderer(self: *CliRenderer) void {
@@ -350,35 +425,34 @@ pub const CliRenderer = struct {
     pub fn performShutdownSequence(self: *CliRenderer) void {
         if (!self.terminalSetup) return;
 
-        var stdoutWriter = std.fs.File.stdout().writer(&self.stdoutBuffer);
-        const direct = &stdoutWriter.interface;
-        self.terminal.resetState(direct) catch {
+        // Build shutdown sequence in buffer
+        var shutdownBuf: [1024]u8 = undefined;
+        var stream = std.io.fixedBufferStream(&shutdownBuf);
+        const writer = stream.writer();
+
+        self.terminal.resetState(writer) catch {
             logger.warn("Failed to reset terminal state", .{});
         };
 
-        if (self.useAlternateScreen) {
-            direct.flush() catch {};
-        } else if (self.renderOffset == 0) {
-            direct.writeAll("\x1b[H\x1b[J") catch {};
-            direct.flush() catch {};
-        } else if (self.renderOffset > 0) {
-            // Currently still handled in typescript
-            // const consoleEndLine = self.height - self.renderOffset;
-            // ansi.ANSI.moveToOutput(direct, 1, consoleEndLine) catch {};
+        if (!self.useAlternateScreen and self.renderOffset == 0) {
+            writer.writeAll("\x1b[H\x1b[J") catch {};
         }
 
         // NOTE: This messes up state after shutdown, but might be necessary for windows?
-        // direct.writeAll(ansi.ANSI.restoreCursorState) catch {};
+        // writer.writeAll(ansi.ANSI.restoreCursorState) catch {};
 
-        direct.writeAll(ansi.ANSI.resetCursorColorFallback) catch {};
-        direct.writeAll(ansi.ANSI.resetCursorColor) catch {};
-        direct.writeAll(ansi.ANSI.defaultCursorStyle) catch {};
+        writer.writeAll(ansi.ANSI.resetCursorColorFallback) catch {};
+        writer.writeAll(ansi.ANSI.resetCursorColor) catch {};
+        writer.writeAll(ansi.ANSI.defaultCursorStyle) catch {};
         // Workaround for Ghostty not showing the cursor after shutdown for some reason
-        direct.writeAll(ansi.ANSI.showCursor) catch {};
-        direct.flush() catch {};
+        writer.writeAll(ansi.ANSI.showCursor) catch {};
+
+        // Write first batch
+        self.writeOut(stream.getWritten());
+
+        // Sleep and write showCursor again (Ghostty workaround)
         std.Thread.sleep(10 * std.time.ns_per_ms);
-        direct.writeAll(ansi.ANSI.showCursor) catch {};
-        direct.flush() catch {};
+        self.writeOut(ansi.ANSI.showCursor);
         std.Thread.sleep(10 * std.time.ns_per_ms);
     }
 
@@ -410,7 +484,12 @@ pub const CliRenderer = struct {
     pub fn setUseThread(self: *CliRenderer, useThread: bool) void {
         if (self.useThread == useThread) return;
 
+        // Non-stdout strategies are kept single-threaded.
         if (useThread) {
+            switch (self.outputStrategy) {
+                .stdout => {},
+                .span_feed => return, // Keep non-stdout strategies single-threaded
+            }
             if (self.renderThread == null) {
                 self.renderThread = std.Thread.spawn(.{}, renderThreadFn, .{self}) catch |err| {
                     std.log.warn("Failed to spawn render thread: {}, falling back to non-threaded mode", .{err});
@@ -533,6 +612,16 @@ pub const CliRenderer = struct {
 
     // Render once with current state
     pub fn render(self: *CliRenderer, force: bool) void {
+        // Backpressure check for span_feed strategy.
+        switch (self.outputStrategy) {
+            .stdout => {},
+            .span_feed => |sf| {
+                const pending_spans = sf.feed.getStats().pending_spans;
+                const span_capacity = sf.feed.options.span_queue_capacity;
+                if (span_capacity > 0 and pending_spans >= span_capacity) return;
+            },
+        }
+
         const now = std.time.microTimestamp();
         const deltaTimeMs = @as(f64, @floatFromInt(now - self.lastRenderTime));
         const deltaTime = deltaTimeMs / 1000.0; // Convert to seconds
@@ -540,37 +629,56 @@ pub const CliRenderer = struct {
         self.lastRenderTime = now;
         self.renderDebugOverlay();
 
-        self.prepareRenderFrame(force);
+        switch (self.outputStrategy) {
+            .span_feed => |sf| {
+                var writer = self.feedWriter() orelse return;
+                self.prepareRenderFrameWithWriter(&writer, force);
+                if (!self.testing) {
+                    sf.feed.commit() catch {};
+                }
+            },
+            .stdout => self.prepareRenderFrame(force),
+        }
 
-        if (self.useThread) {
-            self.renderMutex.lock();
-            while (self.renderInProgress) {
-                self.renderCondition.wait(&self.renderMutex);
-            }
+        // Output dispatch based on strategy
+        switch (self.outputStrategy) {
+            .stdout => {
+                if (self.useThread) {
+                    self.renderMutex.lock();
+                    while (self.renderInProgress) {
+                        self.renderCondition.wait(&self.renderMutex);
+                    }
 
-            if (activeBuffer == .A) {
-                activeBuffer = .B;
-                self.currentOutputBuffer = &outputBuffer;
-                self.currentOutputLen = outputBufferLen;
-            } else {
-                activeBuffer = .A;
-                self.currentOutputBuffer = &outputBufferB;
-                self.currentOutputLen = outputBufferBLen;
-            }
+                    // Hand off instance buffer to render thread
+                    if (self.instanceActiveBuffer == .A) {
+                        self.currentOutputBuffer = self.instanceOutputA;
+                        self.currentOutputLen = self.instanceOutputLenA;
+                        self.instanceActiveBuffer = .B;
+                    } else {
+                        self.currentOutputBuffer = self.instanceOutputB;
+                        self.currentOutputLen = self.instanceOutputLenB;
+                        self.instanceActiveBuffer = .A;
+                    }
 
-            self.renderRequested = true;
-            self.renderInProgress = true;
-            self.renderCondition.signal();
-            self.renderMutex.unlock();
-        } else {
-            const writeStart = std.time.microTimestamp();
-            if (!self.testing) {
-                var stdoutWriter = std.fs.File.stdout().writer(&self.stdoutBuffer);
-                const w = &stdoutWriter.interface;
-                w.writeAll(outputBuffer[0..outputBufferLen]) catch {};
-                w.flush() catch {};
-            }
-            self.renderStats.stdoutWriteTime = @as(f64, @floatFromInt(std.time.microTimestamp() - writeStart));
+                    self.renderRequested = true;
+                    self.renderInProgress = true;
+                    self.renderCondition.signal();
+                    self.renderMutex.unlock();
+                } else {
+                    const writeStart = std.time.microTimestamp();
+                    if (!self.testing) {
+                        var stdoutWriter = std.fs.File.stdout().writer(&self.stdoutBuffer);
+                        const w = &stdoutWriter.interface;
+                        // Use instance buffer
+                        const buffer = if (self.instanceActiveBuffer == .A) self.instanceOutputA else self.instanceOutputB;
+                        const len = if (self.instanceActiveBuffer == .A) self.instanceOutputLenA else self.instanceOutputLenB;
+                        w.writeAll(buffer[0..len]) catch {};
+                        w.flush() catch {};
+                    }
+                    self.renderStats.stdoutWriteTime = @as(f64, @floatFromInt(std.time.microTimestamp() - writeStart));
+                }
+            },
+            .span_feed => {},
         }
 
         self.renderStats.lastFrameTime = deltaTime * 1000.0;
@@ -597,17 +705,24 @@ pub const CliRenderer = struct {
         return self.currentRenderBuffer;
     }
 
+    /// Prepare render frame using unified instance buffers.
     fn prepareRenderFrame(self: *CliRenderer, force: bool) void {
-        const renderStartTime = std.time.microTimestamp();
-        var cellsUpdated: u32 = 0;
-
-        if (activeBuffer == .A) {
-            outputBufferLen = 0;
+        // Reset the active instance buffer
+        if (self.instanceActiveBuffer == .A) {
+            self.instanceOutputLenA = 0;
         } else {
-            outputBufferBLen = 0;
+            self.instanceOutputLenB = 0;
         }
 
-        var writer = OutputBufferWriter.writer();
+        // Use unified instance buffer writer
+        var writer = self.bufferWriter();
+        self.prepareRenderFrameWithWriter(&writer, force);
+    }
+
+    /// Core render frame preparation logic, parameterized by writer type
+    fn prepareRenderFrameWithWriter(self: *CliRenderer, writer: anytype, force: bool) void {
+        const renderStartTime = std.time.microTimestamp();
+        var cellsUpdated: u32 = 0;
 
         writer.writeAll(ansi.ANSI.syncSet) catch {};
         writer.writeAll(ansi.ANSI.hideCursor) catch {};
@@ -850,34 +965,36 @@ pub const CliRenderer = struct {
         self.writeOut(ansi.ANSI.clearAndHome);
     }
 
+    /// Write data to output.
     pub fn writeOut(self: *CliRenderer, data: []const u8) void {
         if (data.len == 0) return;
         if (self.testing) return;
 
-        if (self.useThread) {
-            self.renderMutex.lock();
-            while (self.renderInProgress) {
-                self.renderCondition.wait(&self.renderMutex);
-            }
-            self.renderMutex.unlock();
-        }
+        switch (self.outputStrategy) {
+            .stdout => {
+                if (self.useThread) {
+                    self.renderMutex.lock();
+                    while (self.renderInProgress) {
+                        self.renderCondition.wait(&self.renderMutex);
+                    }
+                    self.renderMutex.unlock();
+                }
 
-        var stdoutWriter = std.fs.File.stdout().writer(&self.stdoutBuffer);
-        const w = &stdoutWriter.interface;
-        w.writeAll(data) catch {};
-        w.flush() catch {};
+                var stdoutWriter = std.fs.File.stdout().writer(&self.stdoutBuffer);
+                const w = &stdoutWriter.interface;
+                w.writeAll(data) catch {};
+                w.flush() catch {};
+            },
+            .span_feed => |sf| {
+                sf.feed.write(data) catch return;
+                sf.feed.commit() catch {};
+            },
+        }
     }
 
+    /// Write multiple data slices to output.
     pub fn writeOutMultiple(self: *CliRenderer, data_slices: []const []const u8) void {
         if (self.testing) return;
-
-        if (self.useThread) {
-            self.renderMutex.lock();
-            while (self.renderInProgress) {
-                self.renderCondition.wait(&self.renderMutex);
-            }
-            self.renderMutex.unlock();
-        }
 
         var totalLen: usize = 0;
         for (data_slices) |slice| {
@@ -886,12 +1003,30 @@ pub const CliRenderer = struct {
 
         if (totalLen == 0) return;
 
-        var stdoutWriter = std.fs.File.stdout().writer(&self.stdoutBuffer);
-        const w = &stdoutWriter.interface;
-        for (data_slices) |slice| {
-            w.writeAll(slice) catch {};
+        switch (self.outputStrategy) {
+            .stdout => {
+                if (self.useThread) {
+                    self.renderMutex.lock();
+                    while (self.renderInProgress) {
+                        self.renderCondition.wait(&self.renderMutex);
+                    }
+                    self.renderMutex.unlock();
+                }
+
+                var stdoutWriter = std.fs.File.stdout().writer(&self.stdoutBuffer);
+                const w = &stdoutWriter.interface;
+                for (data_slices) |slice| {
+                    w.writeAll(slice) catch {};
+                }
+                w.flush() catch {};
+            },
+            .span_feed => |sf| {
+                for (data_slices) |slice| {
+                    sf.feed.write(slice) catch break;
+                }
+                sf.feed.commit() catch {};
+            },
         }
-        w.flush() catch {};
     }
 
     /// Write a renderable's bounds to nextHitGrid for the upcoming frame.
@@ -1126,16 +1261,14 @@ pub const CliRenderer = struct {
         writer.flush() catch {};
     }
 
-    pub fn getLastOutputForTest(_: *CliRenderer) []const u8 {
-        // In non-threaded mode, we want the current active buffer
-        // In threaded mode, we want the previously rendered buffer
-        const currentBuffer = if (activeBuffer == .A) &outputBuffer else &outputBufferB;
-        const currentLen = if (activeBuffer == .A) outputBufferLen else outputBufferBLen;
-        return currentBuffer.*[0..currentLen];
+    pub fn getLastOutputForTest(self: *CliRenderer) []const u8 {
+        // Return the current active instance buffer contents
+        const buffer = if (self.instanceActiveBuffer == .A) self.instanceOutputA else self.instanceOutputB;
+        const len = if (self.instanceActiveBuffer == .A) self.instanceOutputLenA else self.instanceOutputLenB;
+        return buffer[0..len];
     }
 
     pub fn dumpStdoutBuffer(self: *CliRenderer, timestamp: i64) void {
-        _ = self;
         std.fs.cwd().makeDir("buffer_dump") catch |err| switch (err) {
             error.PathAlreadyExists => {},
             else => return,
@@ -1151,22 +1284,23 @@ pub const CliRenderer = struct {
         var fileWriter = file.writer(&fileBuffer);
         const writer = &fileWriter.interface;
 
-        writer.print("Stdout Buffer Output (timestamp: {d}):\n", .{timestamp}) catch return;
+        writer.print("Instance Buffer Output (timestamp: {d}):\n", .{timestamp}) catch return;
         writer.writeAll("Last Rendered ANSI Output:\n") catch return;
         writer.writeAll("================\n") catch return;
 
-        const lastBuffer = if (activeBuffer == .A) &outputBufferB else &outputBuffer;
-        const lastLen = if (activeBuffer == .A) outputBufferBLen else outputBufferLen;
+        // Use instance buffers (the non-active buffer contains last rendered output)
+        const lastBuffer = if (self.instanceActiveBuffer == .A) self.instanceOutputB else self.instanceOutputA;
+        const lastLen = if (self.instanceActiveBuffer == .A) self.instanceOutputLenB else self.instanceOutputLenA;
 
         if (lastLen > 0) {
-            writer.writeAll(lastBuffer.*[0..lastLen]) catch return;
+            writer.writeAll(lastBuffer[0..lastLen]) catch return;
         } else {
             writer.writeAll("(no output rendered yet)\n") catch return;
         }
 
         writer.writeAll("\n================\n") catch return;
         writer.print("Buffer size: {d} bytes\n", .{lastLen}) catch return;
-        writer.print("Active buffer: {s}\n", .{if (activeBuffer == .A) "A" else "B"}) catch return;
+        writer.print("Active buffer: {s}\n", .{if (self.instanceActiveBuffer == .A) "A" else "B"}) catch return;
         writer.flush() catch {};
     }
 

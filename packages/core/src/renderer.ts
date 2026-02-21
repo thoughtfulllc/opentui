@@ -10,9 +10,13 @@ import {
   type WidthMethod,
 } from "./types"
 import { RGBA, parseColor, type ColorInput } from "./lib/RGBA"
-import type { Pointer } from "bun:ffi"
+import { type Pointer } from "bun:ffi"
+import { Readable, Writable } from "stream"
 import { OptimizedBuffer } from "./buffer"
 import { resolveRenderLib, type RenderLib } from "./zig"
+import type { NativeSpanFeedOptions } from "./zig-structs"
+import { NativeSpanFeed, type DataHandler } from "./NativeSpanFeed"
+
 import { TerminalConsole, type ConsoleOptions, capture } from "./console"
 import { MouseParser, type MouseEventType, type RawMouseEvent, type ScrollInfo } from "./lib/parse.mouse"
 import { Selection } from "./lib/selection"
@@ -78,7 +82,7 @@ registerEnvVar({
   default: false,
 })
 
-export interface CliRendererConfig {
+interface BaseCliRendererConfig {
   stdin?: NodeJS.ReadStream
   stdout?: NodeJS.WriteStream
   remote?: boolean
@@ -106,6 +110,83 @@ export interface CliRendererConfig {
   openConsoleOnError?: boolean
   prependInputHandlers?: ((sequence: string) => boolean)[]
   onDestroy?: () => void
+}
+
+/**
+ * Output mode for the renderer.
+ * - "stdout": Write directly to process.stdout (default)
+ * - "stream": Deliver output via onOutput handler
+ */
+export type OutputMode = "stdout" | "stream"
+
+type OutputConfig =
+  | {
+      /**
+       * Default mode: renderer writes directly to stdout.
+       */
+      outputMode?: "stdout"
+    }
+  | {
+      /**
+       * Stream mode sends ANSI output through `onOutput` instead of writing to stdout.
+       * Width/height are required in this mode because there is no process-backed tty.
+       */
+      outputMode: "stream"
+      /**
+       * Called with zero-copy Uint8Array views into native output memory.
+       * Return a Promise to apply async backpressure.
+       */
+      onOutput: DataHandler
+      /** Initial terminal width for stream mode sessions. */
+      width: number
+      /** Initial terminal height for stream mode sessions. */
+      height: number
+      /** Optional NativeSpanFeed tuning knobs. */
+      feedOptions?: NativeSpanFeedOptions
+    }
+
+export type CliRendererConfig = BaseCliRendererConfig & OutputConfig
+
+/**
+ * Creates a no-op ReadStream used for stream mode when stdin is omitted.
+ */
+function createNullStdin(): NodeJS.ReadStream {
+  const stdin = new Readable({
+    read() {},
+  }) as NodeJS.ReadStream
+  Object.assign(stdin, { isTTY: true, setRawMode: () => stdin })
+  return stdin
+}
+
+/**
+ * Creates a no-op WriteStream used for stream mode when stdout is omitted.
+ * Carries terminal dimensions while all actual output flows through onOutput.
+ */
+function createNullStdout(width: number, height: number): NodeJS.WriteStream {
+  const stdout = new Writable({
+    write(_chunk, _encoding, callback) {
+      callback()
+    },
+  }) as NodeJS.WriteStream
+  Object.assign(stdout, {
+    isTTY: true,
+    columns: width,
+    rows: height,
+  })
+  return stdout
+}
+
+/**
+ * Resolved constructor values computed by createCliRenderer.
+ */
+type CliRendererInit = {
+  lib: RenderLib
+  rendererPtr: Pointer
+  stdin: NodeJS.ReadStream
+  stdout: NodeJS.WriteStream
+  width: number
+  height: number
+  feed: NativeSpanFeed | null
 }
 
 export type PixelResolution = {
@@ -278,20 +359,41 @@ export async function createCliRenderer(config: CliRendererConfig = {}): Promise
   if (process.argv.includes("--delay-start")) {
     await new Promise((resolve) => setTimeout(resolve, 5000))
   }
-  const stdin = config.stdin || process.stdin
-  const stdout = config.stdout || process.stdout
+  const isStreamMode = config.outputMode === "stream"
+  let stdin: NodeJS.ReadStream
+  let stdout: NodeJS.WriteStream
+  let width: number
+  let height: number
+  let feed: NativeSpanFeed | null
 
-  const width = stdout.columns || 80
-  const height = stdout.rows || 24
+  if (config.outputMode === "stream") {
+    // Stream mode has no process-backed tty, so width/height come from config.
+    // Null-object streams let existing renderer internals run without null checks.
+    width = config.width
+    height = config.height
+    stdin = config.stdin ?? createNullStdin()
+    stdout = config.stdout ?? createNullStdout(width, height)
+    feed = NativeSpanFeed.create(config.feedOptions ?? {})
+  } else {
+    stdin = config.stdin || process.stdin
+    stdout = config.stdout || process.stdout
+    width = stdout.columns || 80
+    height = stdout.rows || 24
+    feed = null
+  }
+
   const renderHeight =
     config.experimental_splitHeight && config.experimental_splitHeight > 0 ? config.experimental_splitHeight : height
 
   const ziglib = resolveRenderLib()
   const rendererPtr = ziglib.createRenderer(width, renderHeight, {
-    remote: config.remote ?? false,
     testing: config.testing ?? false,
+    outputStrategy: isStreamMode ? 1 : 0,
+    remote: config.remote ?? false,
+    feedPtr: feed?.streamPtr ?? null,
   })
   if (!rendererPtr) {
+    feed?.close()
     throw new Error("Failed to create renderer")
   }
   if (config.useThread === undefined) {
@@ -310,11 +412,17 @@ export async function createCliRenderer(config: CliRendererConfig = {}): Promise
 
   ziglib.setKittyKeyboardFlags(rendererPtr, kittyFlags)
 
-  const renderer = new CliRenderer(ziglib, rendererPtr, stdin, stdout, width, height, config)
-  if (!config.testing) {
-    await renderer.setupTerminal()
+  try {
+    const rendererInit: CliRendererInit = { lib: ziglib, rendererPtr, stdin, stdout, width, height, feed }
+    const renderer = new CliRenderer(rendererInit, config)
+    if (!config.testing) {
+      await renderer.setupTerminal()
+    }
+    return renderer
+  } catch (error) {
+    feed?.close()
+    throw error
   }
-  return renderer
 }
 
 export enum CliRenderEvents {
@@ -469,6 +577,13 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   private _debugInputs: Array<{ timestamp: string; sequence: string }> = []
   private _debugModeEnabled: boolean = env.OTUI_DEBUG
 
+  // Output mode fields
+  private _outputMode: OutputMode = "stdout"
+  private _onOutput?: DataHandler
+  private _feed: NativeSpanFeed | null = null
+  private _detachFeedDataHandler: (() => void) | null = null
+  private _detachFeedErrorHandler: (() => void) | null = null
+
   private handleError: (error: Error) => void = ((error: Error) => {
     console.error(error)
 
@@ -515,38 +630,30 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     return this._controlState
   }
 
-  constructor(
-    lib: RenderLib,
-    rendererPtr: Pointer,
-    stdin: NodeJS.ReadStream,
-    stdout: NodeJS.WriteStream,
-    width: number,
-    height: number,
-    config: CliRendererConfig = {},
-  ) {
+  constructor(rendererInit: CliRendererInit, config: CliRendererConfig = {}) {
     super()
 
     rendererTracker.addRenderer(this)
 
-    this.stdin = stdin
-    this.stdout = stdout
-    this.realStdoutWrite = stdout.write
-    this.lib = lib
-    this._terminalWidth = stdout.columns ?? width
-    this._terminalHeight = stdout.rows ?? height
-    this.width = width
-    this.height = height
+    this.stdin = rendererInit.stdin
+    this.stdout = rendererInit.stdout
+    this.realStdoutWrite = rendererInit.stdout.write
+    this.lib = rendererInit.lib
+    this._terminalWidth = rendererInit.stdout.columns ?? rendererInit.width
+    this._terminalHeight = rendererInit.stdout.rows ?? rendererInit.height
+    this.width = rendererInit.width
+    this.height = rendererInit.height
     this._useThread = config.useThread === undefined ? false : config.useThread
     this._splitHeight = config.experimental_splitHeight || 0
 
     if (this._splitHeight > 0) {
       capture.on("write", this.captureCallback)
-      this.renderOffset = height - this._splitHeight
+      this.renderOffset = rendererInit.height - this._splitHeight
       this.height = this._splitHeight
-      lib.setRenderOffset(rendererPtr, this.renderOffset)
+      rendererInit.lib.setRenderOffset(rendererInit.rendererPtr, this.renderOffset)
     }
 
-    this.rendererPtr = rendererPtr
+    this.rendererPtr = rendererInit.rendererPtr
 
     const forwardEnvKeys = config.forwardEnvKeys ?? [...DEFAULT_FORWARDED_ENV_KEYS]
     for (const key of forwardEnvKeys) {
@@ -596,8 +703,25 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       this.stdout.write = this.interceptStdoutWrite.bind(this)
     }
 
-    // Handle terminal resize
-    process.on("SIGWINCH", this.sigwinchHandler)
+    // Output mode setup (must be before SIGWINCH binding)
+    this._outputMode = config.outputMode ?? "stdout"
+    this._onOutput = config.outputMode === "stream" ? config.onOutput : undefined
+    this._feed = rendererInit.feed
+
+    if (this._outputMode === "stream" && !this._onOutput) {
+      this.lib.destroyRenderer(this.rendererPtr)
+      throw new Error('outputMode "stream" requires onOutput (enforced by type, this should not happen)')
+    }
+
+    if (this._outputMode === "stream" && !this._feed) {
+      this.lib.destroyRenderer(this.rendererPtr)
+      throw new Error('outputMode "stream" requires NativeSpanFeed (enforced by type, this should not happen)')
+    }
+
+    // Handle terminal resize (skip in stream mode - resize comes via handleResize())
+    if (this._outputMode === "stdout") {
+      process.on("SIGWINCH", this.sigwinchHandler)
+    }
 
     process.on("warning", this.warningHandler)
 
@@ -625,6 +749,11 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     this.useConsole = config.useConsole ?? true
     this._openConsoleOnError = config.openConsoleOnError ?? process.env.NODE_ENV !== "production"
     this._onDestroy = config.onDestroy
+
+    // Initialize stream mode if enabled (variables set earlier before SIGWINCH)
+    if (this._outputMode === "stream") {
+      this.initStreamMode()
+    }
 
     global.requestAnimationFrame = (callback: FrameRequestCallback) => {
       const id = CliRenderer.animationFrameId++
@@ -1153,6 +1282,28 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       return this._keyHandler.processInput(sequence)
     })
 
+    // Skip stdin setup in stream mode
+    if (this._outputMode === "stream") {
+      this._stdinBuffer.on("data", (sequence: string) => {
+        if (this._debugModeEnabled) {
+          this._debugInputs.push({
+            timestamp: new Date().toISOString(),
+            sequence,
+          })
+        }
+
+        for (const handler of this.inputHandlers) {
+          if (handler(sequence)) {
+            return
+          }
+        }
+      })
+      this._stdinBuffer.on("paste", (data: string) => {
+        this._keyHandler.processPaste(data)
+      })
+      return
+    }
+
     if (this.stdin.setRawMode) {
       this.stdin.setRawMode(true)
     }
@@ -1199,6 +1350,44 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     }
 
     return event
+  }
+
+  private initStreamMode(): void {
+    if (!this._feed || !this._onOutput) {
+      return
+    }
+
+    // If onOutput returns a Promise, NativeSpanFeed keeps the chunk pinned
+    // until that Promise resolves, which provides natural async backpressure.
+    this._detachFeedDataHandler = this._feed.onData((data: Uint8Array) => {
+      return this._onOutput?.(data)
+    })
+
+    this._detachFeedErrorHandler = this._feed.onError((code: number) => {
+      console.error(`[CliRenderer] NativeSpanFeed error: code=${code}`)
+    })
+  }
+
+  /**
+   * Write input data to the renderer as if it came from stdin.
+   * Use this in stream mode to provide input from SSH or other streams.
+   */
+  public input(data: Buffer | Uint8Array): void {
+    if (this._outputMode !== "stream") {
+      throw new Error("input() is only available in stream output mode")
+    }
+
+    if (this._useMouse && this.handleMouseData(data as Buffer)) {
+      return
+    }
+    this._stdinBuffer.process(data as Buffer)
+  }
+
+  /**
+   * Get the current output mode.
+   */
+  public get outputMode(): OutputMode {
+    return this._outputMode
   }
 
   private handleMouseData(data: Buffer): boolean {
@@ -1274,9 +1463,9 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     ) {
       const canStartSelection = Boolean(
         maybeRenderable &&
-          maybeRenderable.selectable &&
-          !maybeRenderable.isDestroyed &&
-          maybeRenderable.shouldStartSelection(mouseEvent.x, mouseEvent.y),
+        maybeRenderable.selectable &&
+        !maybeRenderable.isDestroyed &&
+        maybeRenderable.shouldStartSelection(mouseEvent.x, mouseEvent.y),
       )
 
       if (canStartSelection && maybeRenderable) {
@@ -1540,6 +1729,15 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     this.root.resize(this.width, this.height)
     this.emit("resize", this.width, this.height)
     this.requestRender()
+  }
+
+  /**
+   * Programmatically resize the renderer to new dimensions.
+   * Use this for external resize events (e.g., SSH window-change).
+   * For terminal-driven resize, the renderer handles SIGWINCH automatically.
+   */
+  public resize(width: number, height: number): void {
+    this.processResize(width, height)
   }
 
   public setBackgroundColor(color: ColorInput): void {
@@ -1821,7 +2019,10 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     this._destroyFinalized = true
     this._destroyPending = false
 
-    process.removeListener("SIGWINCH", this.sigwinchHandler)
+    // Only remove SIGWINCH if we registered it (not in stream mode)
+    if (this._outputMode === "stdout") {
+      process.removeListener("SIGWINCH", this.sigwinchHandler)
+    }
     process.removeListener("uncaughtException", this.handleError)
     process.removeListener("unhandledRejection", this.handleError)
     process.removeListener("warning", this.warningHandler)
@@ -1880,6 +2081,24 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       this.stdin.setRawMode(false)
     }
     this.stdin.removeListener("data", this.stdinListener)
+
+    // Tear down stream feed callbacks before destroying native renderer
+    if (this._outputMode === "stream" && this._feed) {
+      // Flush any committed spans (including shutdown sequences) before detaching handlers.
+      try {
+        this._feed.drainAll()
+      } catch (error) {
+        console.error("Error draining NativeSpanFeed during destroy:", error)
+      }
+
+      this._detachFeedDataHandler?.()
+      this._detachFeedDataHandler = null
+      this._detachFeedErrorHandler?.()
+      this._detachFeedErrorHandler = null
+
+      this._feed.close()
+      this._feed = null
+    }
 
     this.lib.destroyRenderer(this.rendererPtr)
     rendererTracker.removeRenderer(this)

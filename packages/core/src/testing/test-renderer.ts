@@ -1,11 +1,12 @@
 import { Readable } from "stream"
 import { CliRenderer, type CliRendererConfig } from "../renderer"
 import { resolveRenderLib } from "../zig"
+import { NativeSpanFeed } from "../NativeSpanFeed"
 import { createMockKeys } from "./mock-keys"
 import { createMockMouse } from "./mock-mouse"
 import type { CapturedFrame } from "../types"
 
-export interface TestRendererOptions extends CliRendererConfig {
+export type TestRendererOptions = CliRendererConfig & {
   width?: number
   height?: number
   kittyKeyboard?: boolean
@@ -73,8 +74,7 @@ export async function createTestRenderer(options: TestRendererOptions): Promise<
       }
     },
     resize: (width: number, height: number) => {
-      //@ts-expect-error - this is a test renderer
-      renderer.processResize(width, height)
+      renderer.resize(width, height)
     },
   }
 }
@@ -89,11 +89,16 @@ async function setupTestRenderer(config: TestRendererOptions) {
     config.experimental_splitHeight && config.experimental_splitHeight > 0 ? config.experimental_splitHeight : height
 
   const ziglib = resolveRenderLib()
+  const feed = config.outputMode === "stream" ? NativeSpanFeed.create(config.feedOptions ?? {}) : null
+
   const rendererPtr = ziglib.createRenderer(width, renderHeight, {
     testing: true,
+    outputStrategy: config.outputMode === "stream" ? 1 : 0,
     remote: config.remote ?? false,
+    feedPtr: feed?.streamPtr ?? null,
   })
   if (!rendererPtr) {
+    feed?.close()
     throw new Error("Failed to create test renderer")
   }
   if (config.useThread === undefined) {
@@ -105,7 +110,13 @@ async function setupTestRenderer(config: TestRendererOptions) {
   }
   ziglib.setUseThread(rendererPtr, config.useThread)
 
-  const renderer = new CliRenderer(ziglib, rendererPtr, stdin, stdout, width, height, config)
+  let renderer: CliRenderer
+  try {
+    renderer = new CliRenderer({ lib: ziglib, rendererPtr, stdin, stdout, width, height, feed }, config)
+  } catch (error) {
+    feed?.close()
+    throw error
+  }
 
   process.off("SIGWINCH", renderer["sigwinchHandler"])
 

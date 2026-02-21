@@ -693,6 +693,10 @@ export class TerminalConsole extends EventEmitter {
   }
 
   public toggle(): void {
+    if (!this.renderer.useConsole) {
+      return
+    }
+
     if (this.isVisible) {
       if (this.isFocused) {
         this.hide()
@@ -719,6 +723,10 @@ export class TerminalConsole extends EventEmitter {
   }
 
   public show(): void {
+    if (!this.renderer.useConsole) {
+      return
+    }
+
     if (!this.isVisible) {
       this.isVisible = true
       this._processCachedLogs()
