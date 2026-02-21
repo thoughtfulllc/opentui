@@ -461,4 +461,29 @@ describe("publicKey", () => {
       rmSync(dir, { recursive: true, force: true })
     }
   })
+
+  test("rejects keys with authorized_keys options to avoid unsupported restriction bypass", async () => {
+    const mw = publicKey({
+      authorizedKeys: [`from="127.0.0.1" ${validKeyString}`],
+    })
+
+    let accepted = false
+    let rejected = false
+
+    const ctx = createMockContext({
+      phase: "auth",
+      clientKey: createClientKey(validKeyType, validKeyData),
+      accept: () => {
+        accepted = true
+      },
+      reject: () => {
+        rejected = true
+      },
+    })
+
+    await mw(ctx, () => {})
+
+    expect(accepted).toBe(false)
+    expect(rejected).toBe(true)
+  })
 })

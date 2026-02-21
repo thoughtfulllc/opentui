@@ -1,6 +1,7 @@
 import { test, expect, describe, afterEach } from "bun:test"
 import { EventEmitter } from "events"
 import { createSSHServer, devMode } from "../src/index.ts"
+import { SSHSession } from "../src/session.ts"
 import type { UserInfo } from "../src/types.ts"
 import { tmpdir } from "os"
 import { join } from "path"
@@ -208,6 +209,213 @@ describe("SSHServer", () => {
     expect(resolvedUser.publicKey).toBe("ssh-ed25519")
   })
 
+  test("falls back to default PTY size when client sends invalid dimensions", async () => {
+    const server = createSSHServer({
+      port: 0,
+      hostKeyPath: join(testDir, "host-key-invalid-pty"),
+      middleware: [devMode()],
+      requirePty: false,
+    })
+
+    const originalCreate = SSHSession.create
+    let capturedPty: { term: string; width: number; height: number } | null = null
+
+    ;(SSHSession as any).create = (
+      _stream: unknown,
+      pty: { term: string; width: number; height: number },
+      _user: unknown,
+      _remoteAddress: unknown,
+      _rendererOptions: unknown,
+    ) => {
+      capturedPty = pty
+      const session = new EventEmitter() as any
+      session.handleResize = () => {}
+      session.close = async () => {
+        session.emit("close")
+      }
+      return Promise.resolve(session)
+    }
+
+    try {
+      const sshSession = new EventEmitter()
+      ;(server as any).handleSession(
+        sshSession as any,
+        { username: "testuser" },
+        "127.0.0.1",
+        new EventEmitter() as any,
+        {},
+      )
+
+      sshSession.emit(
+        "pty",
+        () => {},
+        () => {},
+        { term: "xterm-256color", cols: 0, rows: 0 },
+      )
+
+      const stream = new EventEmitter() as any
+      stream.writable = true
+      stream.exit = () => {}
+      stream.end = () => {}
+
+      sshSession.emit(
+        "shell",
+        () => stream,
+        () => {
+          throw new Error("shell should not be rejected")
+        },
+      )
+
+      await Bun.sleep(0)
+
+      if (!capturedPty) {
+        throw new Error("Expected SSHSession.create to be called")
+      }
+      const resolvedPty = capturedPty as { term: string; width: number; height: number }
+      expect(resolvedPty.term).toBe("xterm-256color")
+      expect(resolvedPty.width).toBe(80)
+      expect(resolvedPty.height).toBe(24)
+    } finally {
+      ;(SSHSession as any).create = originalCreate
+      ;(server as any).sessions.clear()
+      ;(server as any).pendingSessions = 0
+    }
+  })
+
+  test("enforces maxSessions while session creation is pending", async () => {
+    const server = createSSHServer({
+      port: 0,
+      hostKeyPath: join(testDir, "host-key-max-sessions-pending"),
+      middleware: [devMode()],
+      requirePty: false,
+      maxSessions: 1,
+    })
+
+    const originalCreate = SSHSession.create
+    let resolveCreate!: (session: SSHSession) => void
+    const createPromise = new Promise<SSHSession>((resolve) => {
+      resolveCreate = resolve
+    })
+    ;(SSHSession as any).create = () => createPromise
+
+    try {
+      const sshSession = new EventEmitter()
+      ;(server as any).handleSession(
+        sshSession as any,
+        { username: "testuser" },
+        "127.0.0.1",
+        new EventEmitter() as any,
+        {},
+      )
+
+      const stream1 = new EventEmitter() as any
+      stream1.writable = true
+      stream1.exit = () => {}
+      stream1.end = () => {}
+
+      let rejectedSecond = false
+
+      sshSession.emit(
+        "shell",
+        () => stream1,
+        () => {
+          throw new Error("first shell should not be rejected")
+        },
+      )
+
+      sshSession.emit(
+        "shell",
+        () => {
+          throw new Error("second shell should be rejected before accept")
+        },
+        () => {
+          rejectedSecond = true
+        },
+      )
+
+      expect(rejectedSecond).toBe(true)
+      expect((server as any).pendingSessions).toBe(1)
+
+      const createdSession = new EventEmitter() as any
+      createdSession.handleResize = () => {}
+      createdSession.close = async () => {
+        createdSession.emit("close")
+      }
+      resolveCreate(createdSession)
+      await Bun.sleep(0)
+    } finally {
+      ;(SSHSession as any).create = originalCreate
+      ;(server as any).sessions.clear()
+      ;(server as any).pendingSessions = 0
+    }
+  })
+
+  test("closes session created after close() begins", async () => {
+    const server = createSSHServer({
+      port: 0,
+      hostKeyPath: join(testDir, "host-key-close-race"),
+      middleware: [devMode()],
+      requirePty: false,
+    })
+
+    ;(server as any).server = {
+      close: (cb: () => void) => cb(),
+      address: () => ({ port: 0 }),
+    }
+
+    const originalCreate = SSHSession.create
+    let resolveCreate!: (session: SSHSession) => void
+    const createPromise = new Promise<SSHSession>((resolve) => {
+      resolveCreate = resolve
+    })
+    ;(SSHSession as any).create = () => createPromise
+
+    try {
+      const sshSession = new EventEmitter()
+      ;(server as any).handleSession(
+        sshSession as any,
+        { username: "testuser" },
+        "127.0.0.1",
+        new EventEmitter() as any,
+        {},
+      )
+
+      const stream = new EventEmitter() as any
+      stream.writable = true
+      stream.exit = () => {}
+      stream.end = () => {}
+
+      sshSession.emit(
+        "shell",
+        () => stream,
+        () => {
+          throw new Error("shell should not be rejected before close starts")
+        },
+      )
+
+      const closePromise = server.close()
+
+      let closeCalls = 0
+      const createdSession = new EventEmitter() as any
+      createdSession.handleResize = () => {}
+      createdSession.close = async () => {
+        closeCalls += 1
+        createdSession.emit("close")
+      }
+      resolveCreate(createdSession)
+
+      await closePromise
+      await Bun.sleep(0)
+
+      expect(closeCalls).toBe(1)
+      expect(server.activeSessions).toBe(0)
+    } finally {
+      ;(SSHSession as any).create = originalCreate
+      ;(server as any).sessions.clear()
+      ;(server as any).pendingSessions = 0
+    }
+  })
+
   test("ignores second auth decision after accept", async () => {
     const server = createSSHServer({
       port: 0,
@@ -250,5 +458,48 @@ describe("SSHServer", () => {
 
     expect(acceptCount).toBe(1)
     expect(rejectCount).toBe(0)
+  })
+
+  test("does not reject after accept when auth middleware throws", async () => {
+    const server = createSSHServer({
+      port: 0,
+      hostKeyPath: join(testDir, "host-key-auth-accept-throw"),
+      middleware: [
+        async (ctx, _next) => {
+          if (ctx.phase === "auth") {
+            ctx.accept?.()
+            throw new Error("auth middleware error after accept")
+          }
+        },
+      ],
+    })
+
+    const client = new EventEmitter()
+    ;(server as any).handleConnection(client as any, { ip: "127.0.0.1" } as any)
+
+    let acceptCount = 0
+    let rejectCount = 0
+    let errorCount = 0
+    server.on("error", () => {
+      errorCount += 1
+    })
+
+    client.emit("authentication", {
+      username: "testuser",
+      method: "publickey",
+      key: { algo: "ssh-ed25519", data: Buffer.from("AAAA", "base64") },
+      accept: () => {
+        acceptCount += 1
+      },
+      reject: () => {
+        rejectCount += 1
+      },
+    } as any)
+
+    await Bun.sleep(0)
+
+    expect(acceptCount).toBe(1)
+    expect(rejectCount).toBe(0)
+    expect(errorCount).toBe(1)
   })
 })

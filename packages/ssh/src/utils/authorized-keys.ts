@@ -11,12 +11,12 @@ export function parseAuthorizedKeys(content: string): AuthorizedKey[] {
 }
 
 function parseLine(line: string): AuthorizedKey | null {
-  // Handle options prefix: command="...",from="..." ssh-ed25519 AAAA...
-  // Key types start with "ssh-", "ecdsa-", or "sk-"
-  const keyTypeMatch = line.match(/(ssh-\S+|ecdsa-\S+|sk-\S+)\s+(\S+)(\s+(.*))?/)
+  // Handle optional options prefix: command="...",from="..." ssh-ed25519 AAAA...
+  // Key types start with "ssh-", "ecdsa-", or "sk-".
+  const keyTypeMatch = line.match(/^(?:(.*?)\s+)?(ssh-\S+|ecdsa-\S+|sk-\S+)\s+(\S+)(?:\s+(.*))?$/)
   if (!keyTypeMatch) return null
 
-  const [, type, key, , comment] = keyTypeMatch
+  const [, options, type, key, comment] = keyTypeMatch
 
   // Validate key can be parsed by ssh2
   try {
@@ -28,7 +28,7 @@ function parseLine(line: string): AuthorizedKey | null {
     return null // Invalid key format
   }
 
-  return { type, key, comment }
+  return { type, key, comment, options: options?.trim() || undefined }
 }
 
 export function matchesKey(clientKeyType: string, clientKeyData: string, authorizedKeys: AuthorizedKey[]): boolean {

@@ -350,8 +350,8 @@ const rendererTracker = singleton("RendererTracker", () => {
       renderers.delete(renderer)
       if (renderer.stdin === process.stdin) processStdinUsers = Math.max(0, processStdinUsers - 1)
       if (renderers.size === 0) {
-        // Only pause process.stdin if a renderer was actually using it
-        if (processStdinUsers === 0) {
+        // Only pause process.stdin when the final renderer was also a process.stdin user.
+        if (renderer.stdin === process.stdin && processStdinUsers === 0) {
           process.stdin.pause()
         }
 
@@ -2140,6 +2140,8 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       this._detachFeedErrorHandler?.()
       this._detachFeedErrorHandler = null
 
+      // NOTE: close() is asynchronous when onOutput handlers are pending;
+      // renderer teardown does not currently wait for that completion.
       this._feed.close()
       this._feed = null
     }

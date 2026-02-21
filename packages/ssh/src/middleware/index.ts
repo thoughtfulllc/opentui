@@ -1,7 +1,7 @@
 import { readFileSync, existsSync } from "fs"
 import { homedir } from "os"
 import { join } from "path"
-import type { Middleware, LoggingOptions, PublicKeyOptions } from "../types.ts"
+import type { Middleware, LoggingOptions, PublicKeyOptions, AuthorizedKey } from "../types.ts"
 import { parseAuthorizedKeys, matchesKey } from "../utils/authorized-keys.ts"
 
 export function compose(...middlewares: Middleware[]): Middleware {
@@ -76,13 +76,19 @@ export function logging(options: LoggingOptions = {}): Middleware {
 }
 
 export function publicKey(options: PublicKeyOptions): Middleware {
-  const parsedAuthorizedKeys = new Map<string, { type: string; key: string; comment?: string }>()
+  const parsedAuthorizedKeys = new Map<string, AuthorizedKey>()
 
   const addParsedKeys = (rawKeys: string[]) => {
     if (rawKeys.length === 0) return
 
     const parsed = parseAuthorizedKeys(rawKeys.join("\n"))
     for (const key of parsed) {
+      if (key.options) {
+        console.warn(
+          `[SSH] Ignoring authorized_keys entry with unsupported options (${key.options}) for key type ${key.type}`,
+        )
+        continue
+      }
       parsedAuthorizedKeys.set(`${key.type}:${key.key}`, key)
     }
   }

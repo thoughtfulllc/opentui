@@ -37,7 +37,49 @@ export class SSHServer extends EventEmitter {
   private readonly rendererOptions: SSHServerConfig["rendererOptions"]
   private server: SSH2Server | null = null
   private _listening = false
+  private _closing = false
   private sessions = new Set<SSHSession>()
+  private pendingSessions = 0
+
+  private static readonly DEFAULT_PTY_WIDTH = 80
+  private static readonly DEFAULT_PTY_HEIGHT = 24
+
+  private normalizePtyInfo(pty: PtyInfo | null): PtyInfo {
+    const width = pty && Number.isInteger(pty.width) && pty.width > 0 ? pty.width : SSHServer.DEFAULT_PTY_WIDTH
+    const height = pty && Number.isInteger(pty.height) && pty.height > 0 ? pty.height : SSHServer.DEFAULT_PTY_HEIGHT
+
+    return {
+      term: pty?.term || "xterm",
+      width,
+      height,
+    }
+  }
+
+  private createAuthDecision(
+    ctx: AuthContext,
+    onAccept?: () => void,
+  ): {
+    accept: () => void
+    reject: (allowedMethods?: AuthenticationType[]) => void
+    isResolved: () => boolean
+  } {
+    let resolved = false
+
+    return {
+      accept: () => {
+        if (resolved) return
+        resolved = true
+        onAccept?.()
+        ctx.accept()
+      },
+      reject: (allowedMethods?: AuthenticationType[]) => {
+        if (resolved) return
+        resolved = true
+        ctx.reject(allowedMethods)
+      },
+      isResolved: () => resolved,
+    }
+  }
 
   /** Returns the actual bound port (resolves port 0 after listen). */
   public get port(): number {
@@ -60,6 +102,7 @@ export class SSHServer extends EventEmitter {
     if (this._listening) return
 
     return new Promise((resolve, reject) => {
+      this._closing = false
       this.server = new SSH2Server({ hostKeys: [this.hostKey] }, (client, info) => this.handleConnection(client, info))
 
       this.server.on("error", (err: Error) => {
@@ -79,6 +122,8 @@ export class SSHServer extends EventEmitter {
     if (!this.server) {
       return
     }
+
+    this._closing = true
 
     const server = this.server
     this.server = null
@@ -117,18 +162,16 @@ export class SSHServer extends EventEmitter {
 
     client.on("authentication", (ctx: AuthContext) => {
       // ssh2 can emit "ready"/"session" synchronously after accept; set user before calling accept.
-      const originalAccept = ctx.accept.bind(ctx)
-      ctx.accept = () => {
+      const authDecision = this.createAuthDecision(ctx, () => {
         authenticatedUser = {
           username: ctx.username,
           publicKey: ctx.method === "publickey" && ctx.key ? ctx.key.algo : undefined,
         }
-        originalAccept()
-      }
+      })
 
-      this.handleAuth(ctx, remoteAddress, client, connectionState).catch((err) => {
+      this.handleAuth(ctx, remoteAddress, client, connectionState, authDecision).catch((err) => {
         this.emit("error", err)
-        ctx.reject()
+        authDecision.reject(["publickey"])
       })
     })
 
@@ -154,6 +197,11 @@ export class SSHServer extends EventEmitter {
     remoteAddress: string,
     connection: Connection,
     connectionState: Record<string, unknown>,
+    authDecision: {
+      accept: () => void
+      reject: (allowedMethods?: AuthenticationType[]) => void
+      isResolved: () => boolean
+    } = this.createAuthDecision(ctx),
   ): Promise<void> {
     const middlewareCtx: MiddlewareContext = {
       phase: "auth",
@@ -165,25 +213,18 @@ export class SSHServer extends EventEmitter {
       log: (message: string) => process.stdout.write(message + "\n"),
     }
 
-    let accepted = false
-    let rejected = false
-
     middlewareCtx.accept = () => {
-      if (accepted || rejected) return
-      accepted = true
-      ctx.accept()
+      authDecision.accept()
     }
 
     middlewareCtx.reject = (allowedMethods?: string[]) => {
-      if (accepted || rejected) return
-      rejected = true
-      ctx.reject(allowedMethods as AuthenticationType[] | undefined)
+      authDecision.reject(allowedMethods as AuthenticationType[] | undefined)
     }
 
     await this.middleware(middlewareCtx, () => {
       // Default: reject if no middleware accepted
-      if (!accepted && !rejected) {
-        ctx.reject(["publickey"] as AuthenticationType[])
+      if (!authDecision.isResolved()) {
+        authDecision.reject(["publickey"])
       }
     })
   }
@@ -210,19 +251,30 @@ export class SSHServer extends EventEmitter {
     })
 
     sshSession.on("shell", (accept, reject) => {
+      if (this._closing) {
+        reject?.()
+        return
+      }
+
       if (this.requirePty && !ptyInfo) {
         reject?.()
         return
       }
 
       // Enforce maxSessions limit (0 = unlimited)
-      if (this.maxSessions > 0 && this.sessions.size >= this.maxSessions) {
+      if (this.maxSessions > 0 && this.sessions.size + this.pendingSessions >= this.maxSessions) {
         reject?.()
         return
       }
 
       const stream = accept()
       if (!stream) return
+
+      this.pendingSessions += 1
+
+      const releasePendingSession = () => {
+        this.pendingSessions = Math.max(0, this.pendingSessions - 1)
+      }
 
       // Run middleware for session phase (enables onConnect/onDisconnect logging)
       const middlewareCtx: MiddlewareContext = {
@@ -238,12 +290,21 @@ export class SSHServer extends EventEmitter {
         this.emit("error", err)
       })
 
-      // Use PTY dimensions or default to 80x24
-      const finalPty = ptyInfo ?? { term: "xterm", width: 80, height: 24 }
+      // Use PTY dimensions when valid; fallback to safe defaults for buggy clients.
+      const finalPty = this.normalizePtyInfo(ptyInfo)
 
       // Create session asynchronously
       SSHSession.create(stream, finalPty, user, remoteAddress, this.rendererOptions)
         .then((session) => {
+          releasePendingSession()
+
+          if (this._closing) {
+            void session.close().catch((err) => {
+              this.emit("error", err as Error)
+            })
+            return
+          }
+
           this.trackSession(session)
 
           // Handle window-change on the ssh session (not stream)
@@ -261,6 +322,7 @@ export class SSHServer extends EventEmitter {
           this.emit("session", session)
         })
         .catch((err) => {
+          releasePendingSession()
           this.emit("error", err as Error)
           stream.exit(1)
           stream.end()

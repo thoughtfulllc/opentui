@@ -171,6 +171,9 @@ publicKey({
 })
 ```
 
+Note: `authorized_keys` option prefixes (for example `from=`, `command=`, `no-pty`) are not supported yet.
+Entries containing options are ignored to avoid silently weakening intended key restrictions.
+
 #### `devMode()`
 
 Accepts all authentication attempts. **For development only!** Prints a security warning on startup.

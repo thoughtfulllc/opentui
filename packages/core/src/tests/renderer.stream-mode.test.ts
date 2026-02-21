@@ -90,6 +90,31 @@ test("stream mode destroy finalizes after pending async onOutput", async () => {
   expect(renderer.isDestroyed).toBe(true)
 })
 
+test("stream mode destroy does not pause process.stdin", async () => {
+  const originalPause = process.stdin.pause
+  const stdinAny = process.stdin as any
+  let pauseCalls = 0
+
+  stdinAny.pause = function patchedPause() {
+    pauseCalls += 1
+    return process.stdin
+  }
+
+  try {
+    const renderer = await createCliRenderer({
+      ...streamDefaults,
+      onOutput: () => {},
+    })
+
+    renderer.destroy()
+    await renderer.idle()
+
+    expect(pauseCalls).toBe(0)
+  } finally {
+    stdinAny.pause = originalPause
+  }
+})
+
 test("stream mode input() processes data through key handlers", async () => {
   let keypressReceived = false
 

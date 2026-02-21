@@ -53,6 +53,7 @@ ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl
     expect(keys).toHaveLength(1)
     expect(keys[0].type).toBe("ssh-ed25519")
     expect(keys[0].comment).toBe("restricted")
+    expect(keys[0].options).toBe('command="/bin/echo"')
   })
 
   test("rejects invalid key format", () => {
