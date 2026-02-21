@@ -2462,7 +2462,7 @@ test "renderer - CJK graphemes shifting left must preserve continuation cells (#
         20,
         1,
         pool,
-        true,
+        .{ .testing = true },
     );
     defer cli_renderer.destroy();
 

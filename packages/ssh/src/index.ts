@@ -3,7 +3,7 @@ export { SSHServer, createSSHServer } from "./server.ts"
 export { SSHSession } from "./session.ts"
 
 // Middleware
-export { compose, logging, publicKey, devMode } from "./middleware/index.ts"
+export { compose, logging, publicKey, allowAll, devMode } from "./middleware/index.ts"
 
 // Utilities
 export { ensureHostKey } from "./utils/host-key.ts"

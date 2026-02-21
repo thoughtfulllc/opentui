@@ -1,6 +1,6 @@
 import { test, expect, describe } from "bun:test"
 import { EventEmitter } from "events"
-import { compose, devMode, logging, publicKey } from "../src/middleware/index.ts"
+import { compose, devMode, allowAll, logging, publicKey } from "../src/middleware/index.ts"
 import type { MiddlewareContext, Middleware } from "../src/types.ts"
 import type { PublicKey } from "ssh2"
 import { mkdtempSync, rmSync, writeFileSync } from "fs"
@@ -126,9 +126,9 @@ describe("compose", () => {
   })
 })
 
-describe("devMode", () => {
+describe("allowAll", () => {
   test("accepts auth requests", async () => {
-    const mw = devMode()
+    const mw = allowAll()
     let accepted = false
 
     const ctx = createMockContext({
@@ -144,7 +144,7 @@ describe("devMode", () => {
   })
 
   test("does not accept on session phase", async () => {
-    const mw = devMode()
+    const mw = allowAll()
     let accepted = false
 
     const ctx = createMockContext({
@@ -160,7 +160,7 @@ describe("devMode", () => {
   })
 
   test("calls next after accepting", async () => {
-    const mw = devMode()
+    const mw = allowAll()
     let nextCalled = false
 
     const ctx = createMockContext({
@@ -173,6 +173,24 @@ describe("devMode", () => {
     })
 
     expect(nextCalled).toBe(true)
+  })
+})
+
+describe("devMode", () => {
+  test("accepts auth requests (delegates to allowAll)", async () => {
+    const mw = devMode()
+    let accepted = false
+
+    const ctx = createMockContext({
+      phase: "auth",
+      accept: () => {
+        accepted = true
+      },
+    })
+
+    await mw(ctx, () => {})
+
+    expect(accepted).toBe(true)
   })
 })
 

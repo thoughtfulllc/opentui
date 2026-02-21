@@ -174,9 +174,17 @@ publicKey({
 Note: `authorized_keys` option prefixes (for example `from=`, `command=`, `no-pty`) are not supported yet.
 Entries containing options are ignored to avoid silently weakening intended key restrictions.
 
+#### `allowAll()`
+
+Accepts all authentication attempts silently. Use for intentionally open servers (public demos, LAN apps, etc.).
+
+```typescript
+allowAll()
+```
+
 #### `devMode()`
 
-Accepts all authentication attempts. **For development only!** Prints a security warning on startup.
+Accepts all authentication attempts and prints a security warning on startup. Use only during local development.
 
 ```typescript
 devMode()

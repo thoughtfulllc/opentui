@@ -796,7 +796,7 @@ test "renderer - hyperlink spanning multiple rows uses same id" {
         80,
         24,
         pool,
-        true,
+        .{ .testing = true },
     );
     defer cli_renderer.destroy();
 
@@ -1053,7 +1053,10 @@ test "renderer - span_feed mode writes rendered frame to feed" {
     const pool = gp.initGlobalPool(std.testing.allocator);
     defer gp.deinitGlobalPool();
 
-    var tb = try TextBuffer.init(std.testing.allocator, pool, .unicode);
+    var local_link_pool = link.LinkPool.init(std.testing.allocator);
+    defer local_link_pool.deinit();
+
+    var tb = try TextBuffer.init(std.testing.allocator, pool, &local_link_pool, .unicode);
     defer tb.deinit();
     try tb.setText("Span feed output");
 
@@ -1147,14 +1150,17 @@ test "renderer - multiple span_feed renderers use independent feeds" {
     const pool = gp.initGlobalPool(std.testing.allocator);
     defer gp.deinitGlobalPool();
 
-    var tb1 = try TextBuffer.init(std.testing.allocator, pool, .unicode);
+    var local_link_pool = link.LinkPool.init(std.testing.allocator);
+    defer local_link_pool.deinit();
+
+    var tb1 = try TextBuffer.init(std.testing.allocator, pool, &local_link_pool, .unicode);
     defer tb1.deinit();
     try tb1.setText("Renderer 1");
 
     var view1 = try TextBufferView.init(std.testing.allocator, tb1);
     defer view1.deinit();
 
-    var tb2 = try TextBuffer.init(std.testing.allocator, pool, .unicode);
+    var tb2 = try TextBuffer.init(std.testing.allocator, pool, &local_link_pool, .unicode);
     defer tb2.deinit();
     try tb2.setText("Renderer 2");
 

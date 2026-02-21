@@ -145,17 +145,28 @@ export function publicKey(options: PublicKeyOptions): Middleware {
   }
 }
 
-export function devMode(): Middleware {
-  // Security warning - this middleware accepts ALL authentication attempts
-  console.warn(
-    "\x1b[33m[SSH WARNING]\x1b[0m devMode() middleware is enabled - ALL authentication attempts will be accepted!\n" +
-      "             DO NOT use this in production.",
-  )
-
+/**
+ * Accepts all authentication attempts without warnings.
+ * Use for intentionally open servers (public demos, LAN apps, etc.).
+ */
+export function allowAll(): Middleware {
   return async (ctx, next) => {
     if (ctx.phase === "auth" && ctx.accept) {
       ctx.accept()
     }
     await next()
   }
+}
+
+/**
+ * Accepts all authentication attempts with a security warning.
+ * Use only during local development — prints a warning on startup.
+ */
+export function devMode(): Middleware {
+  console.warn(
+    "\x1b[33m[SSH WARNING]\x1b[0m devMode() middleware is enabled - ALL authentication attempts will be accepted!\n" +
+      "             DO NOT use this in production.",
+  )
+
+  return allowAll()
 }
