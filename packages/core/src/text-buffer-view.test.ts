@@ -181,6 +181,196 @@ describe("TextBufferView", () => {
     })
   })
 
+  describe("lineInfo byte-start hardening", () => {
+    const encoder = new TextEncoder()
+    const decoder = new TextDecoder("utf-8", { fatal: true })
+
+    const setWordWrap = (text: string, width: number) => {
+      buffer.setStyledText(stringToStyledText(text))
+      view.setWrapMode("word")
+      view.setWrapWidth(width)
+      return view.lineInfo
+    }
+
+    const assertUtf8BoundarySlices = (text: string, starts: number[]) => {
+      const bytes = encoder.encode(text)
+
+      expect(starts.length).toBeGreaterThan(0)
+      expect(starts[0]).toBe(0)
+
+      for (let i = 0; i < starts.length; i++) {
+        const start = starts[i]!
+        const end = i + 1 < starts.length ? starts[i + 1]! : bytes.length
+        expect(start).toBeLessThanOrEqual(end)
+        expect(end).toBeLessThanOrEqual(bytes.length)
+        expect(() => decoder.decode(bytes.slice(start, end))).not.toThrow()
+      }
+    }
+
+    const assertMonotonicAndProgress = (lineStarts: number[], lineWidths: number[]) => {
+      for (let i = 1; i < lineStarts.length; i++) {
+        expect(lineStarts[i]).toBeGreaterThanOrEqual(lineStarts[i - 1])
+        if (lineWidths[i - 1]! > 0) {
+          expect(lineStarts[i]).toBeGreaterThan(lineStarts[i - 1])
+        }
+      }
+    }
+
+    it('word wrap width=1 advances bytes for "가a"', () => {
+      const info = setWordWrap("가a", 1)
+      expect(info.lineStarts).toEqual([0, 3])
+      expect(info.lineWidths).toEqual([2, 1])
+      assertUtf8BoundarySlices("가a", info.lineStarts)
+    })
+
+    it('word wrap width=1 advances bytes for "가나다"', () => {
+      const info = setWordWrap("가나다", 1)
+      expect(info.lineStarts).toEqual([0, 3, 6])
+      assertMonotonicAndProgress(info.lineStarts, info.lineWidths)
+      assertUtf8BoundarySlices("가나다", info.lineStarts)
+    })
+
+    it('word wrap width=1 advances bytes for "👋🏻a"', () => {
+      const info = setWordWrap("👋🏻a", 1)
+      expect(info.lineStarts).toEqual([0, 8])
+      expect(info.lineWidths).toEqual([2, 1])
+      assertUtf8BoundarySlices("👋🏻a", info.lineStarts)
+    })
+
+    it('word wrap width=1 advances bytes for "\\tA"', () => {
+      const info = setWordWrap("\tA", 1)
+      expect(info.lineStarts).toEqual([0, 1])
+      assertUtf8BoundarySlices("\tA", info.lineStarts)
+    })
+
+    it('issue-609 representative Korean "흐름도" uses byte starts', () => {
+      const info = setWordWrap("흐름도", 4)
+      expect(info.lineStarts).toEqual([0, 6])
+      assertUtf8BoundarySlices("흐름도", info.lineStarts)
+    })
+
+    it("lineStarts are byte-safe slice boundaries", () => {
+      const samples = [
+        { text: "가a", width: 1 },
+        { text: "가나다", width: 1 },
+        { text: "👋🏻a", width: 1 },
+        { text: "\tA", width: 1 },
+        { text: "흐름도", width: 4 },
+      ]
+
+      for (const sample of samples) {
+        const info = setWordWrap(sample.text, sample.width)
+        assertUtf8BoundarySlices(sample.text, info.lineStarts)
+      }
+    })
+
+    it("lineStarts monotonicity/property corpus uses a fixed seed", () => {
+      let seed = 0x17c0ffee
+      const nextU32 = () => {
+        seed = (seed * 1664525 + 1013904223) >>> 0
+        return seed
+      }
+
+      const alphabet = ["A", "b", "3", " ", "\t", "\n", "\r", "가", "나", "👋🏻", "🌍", "e\u0301"]
+      const samples: Array<{ text: string; width: number }> = []
+
+      for (let i = 0; i < 64; i++) {
+        const tokenCount = (nextU32() % 12) + 1
+        const width = (nextU32() % 6) + 1
+        let text = ""
+        for (let j = 0; j < tokenCount; j++) {
+          text += alphabet[nextU32() % alphabet.length]!
+        }
+        samples.push({ text, width })
+      }
+
+      for (const sample of samples) {
+        const info = setWordWrap(sample.text, sample.width)
+        assertUtf8BoundarySlices(sample.text, info.lineStarts)
+        assertMonotonicAndProgress(info.lineStarts, info.lineWidths)
+      }
+    })
+
+    it("overflowing whitespace drop policy is pinned", () => {
+      const info = setWordWrap("hello world", 5)
+      expect(info.lineStarts).toEqual([0, 6])
+      assertUtf8BoundarySlices("hello world", info.lineStarts)
+    })
+
+    it("tab-at-exact-stop break policy is pinned", () => {
+      buffer.setTabWidth(4)
+      const info = setWordWrap("abcd\tx", 8)
+      expect(info.lineStarts).toEqual([0, 5])
+      assertUtf8BoundarySlices("abcd\tx", info.lineStarts)
+    })
+
+    it("hard-break policies for LF, CR, and CRLF are pinned", () => {
+      buffer.setStyledText(stringToStyledText("ab\ncd"))
+      view.setWrapMode("none")
+      const lf = view.lineInfo
+      expect(lf.lineStarts).toEqual([0, 3])
+      assertUtf8BoundarySlices("ab\ncd", lf.lineStarts)
+
+      buffer.setStyledText(stringToStyledText("ab\rcd"))
+      view.setWrapMode("none")
+      const cr = view.lineInfo
+      expect(cr.lineStarts).toEqual([0, 3])
+      assertUtf8BoundarySlices("ab\rcd", cr.lineStarts)
+
+      buffer.setStyledText(stringToStyledText("ab\r\ncd"))
+      view.setWrapMode("none")
+      const crlf = view.lineInfo
+      expect(crlf.lineStarts).toEqual([0, 4])
+      assertUtf8BoundarySlices("ab\r\ncd", crlf.lineStarts)
+    })
+
+    it("lineInfo is deterministic without mutation", () => {
+      const info1 = setWordWrap("가a", 1)
+      const info2 = view.lineInfo
+      expect(info2.lineStarts).toEqual(info1.lineStarts)
+      expect(info2.lineWidths).toEqual(info1.lineWidths)
+      expect(info2.lineSources).toEqual(info1.lineSources)
+      expect(info2.lineWraps).toEqual(info1.lineWraps)
+    })
+
+    it("invariants hold across width methods", () => {
+      const runCase = (widthMethod: "wcwidth" | "unicode", text: string, width: number) => {
+        const matrixBuffer = TextBuffer.create(widthMethod)
+        const matrixView = TextBufferView.create(matrixBuffer)
+
+        try {
+          matrixBuffer.setStyledText(stringToStyledText(text))
+          matrixView.setWrapMode("word")
+          matrixView.setWrapWidth(width)
+          return matrixView.lineInfo
+        } finally {
+          matrixView.destroy()
+          matrixBuffer.destroy()
+        }
+      }
+
+      const samples = [
+        { text: "가a", width: 1 },
+        { text: "👋🏻a", width: 1 },
+        { text: "\tA", width: 1 },
+        { text: "hello world", width: 5 },
+        { text: "ab\r\ncd", width: 80 },
+      ]
+
+      for (const widthMethod of ["wcwidth", "unicode"] as const) {
+        for (const sample of samples) {
+          const info = runCase(widthMethod, sample.text, sample.width)
+          assertUtf8BoundarySlices(sample.text, info.lineStarts)
+          assertMonotonicAndProgress(info.lineStarts, info.lineWidths)
+
+          if (widthMethod === "wcwidth" && sample.text === "가a") {
+            expect(info.lineStarts).toEqual([0, 3])
+          }
+        }
+      }
+    })
+  })
+
   describe("getSelectedText", () => {
     it("should return empty string when no selection", () => {
       const styledText = stringToStyledText("Hello World")

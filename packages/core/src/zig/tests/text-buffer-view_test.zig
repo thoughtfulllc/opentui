@@ -4,10 +4,43 @@ const iter_mod = @import("../text-buffer-iterators.zig");
 const text_buffer_view = @import("../text-buffer-view.zig");
 const gp = @import("../grapheme.zig");
 const link = @import("../link.zig");
+const utf8 = @import("../utf8.zig");
 
 const TextBuffer = text_buffer.UnifiedTextBuffer;
 const TextBufferView = text_buffer_view.UnifiedTextBufferView;
 const RGBA = text_buffer.RGBA;
+
+fn assertUtf8BoundarySlices(text: []const u8, starts: []const u32) !void {
+    try std.testing.expect(starts.len > 0);
+    try std.testing.expectEqual(@as(u32, 0), starts[0]);
+
+    const text_len_u32: u32 = @intCast(text.len);
+
+    var i: usize = 0;
+    while (i < starts.len) : (i += 1) {
+        const start_u32 = starts[i];
+        const end_u32: u32 = if (i + 1 < starts.len) starts[i + 1] else text_len_u32;
+
+        try std.testing.expect(start_u32 <= end_u32);
+        try std.testing.expect(end_u32 <= text_len_u32);
+
+        const start: usize = @intCast(start_u32);
+        const end: usize = @intCast(end_u32);
+        try std.testing.expect(std.unicode.utf8ValidateSlice(text[start..end]));
+    }
+}
+
+fn assertMonotonicAndProgress(starts: []const u32, widths: []const u32) !void {
+    try std.testing.expectEqual(starts.len, widths.len);
+
+    var i: usize = 1;
+    while (i < starts.len) : (i += 1) {
+        try std.testing.expect(starts[i] >= starts[i - 1]);
+        if (widths[i - 1] > 0) {
+            try std.testing.expect(starts[i] > starts[i - 1]);
+        }
+    }
+}
 
 test "TextBufferView wrapping - no wrap returns same line count" {
     const pool = gp.initGlobalPool(std.testing.allocator);
@@ -3142,6 +3175,308 @@ test "TextBufferView line info - line starts monotonically increasing" {
     var line_idx: u32 = 1;
     while (line_idx < 100) : (line_idx += 1) {
         try std.testing.expect(line_info.starts[line_idx] >= line_info.starts[line_idx - 1]);
+    }
+}
+
+test "word wrap width=1 leading CJK advances byte starts" {
+    const pool = gp.initGlobalPool(std.testing.allocator);
+    defer gp.deinitGlobalPool();
+
+    var tb = try TextBuffer.init(std.testing.allocator, pool, .wcwidth);
+    defer tb.deinit();
+
+    var view = try TextBufferView.init(std.testing.allocator, tb);
+    defer view.deinit();
+
+    const text = "가a";
+    try tb.setText(text);
+    view.setWrapMode(.word);
+    view.setWrapWidth(1);
+
+    const line_info = view.getCachedLineInfo();
+    try std.testing.expectEqualSlices(u32, &[_]u32{ 0, 3 }, line_info.starts);
+    try std.testing.expectEqualSlices(u32, &[_]u32{ 2, 1 }, line_info.widths);
+    try assertUtf8BoundarySlices(text, line_info.starts);
+}
+
+test "word wrap width=1 repeated CJK advances byte starts" {
+    const pool = gp.initGlobalPool(std.testing.allocator);
+    defer gp.deinitGlobalPool();
+
+    var tb = try TextBuffer.init(std.testing.allocator, pool, .wcwidth);
+    defer tb.deinit();
+
+    var view = try TextBufferView.init(std.testing.allocator, tb);
+    defer view.deinit();
+
+    const text = "가나다";
+    try tb.setText(text);
+    view.setWrapMode(.word);
+    view.setWrapWidth(1);
+
+    const line_info = view.getCachedLineInfo();
+    try std.testing.expectEqualSlices(u32, &[_]u32{ 0, 3, 6 }, line_info.starts);
+    try assertMonotonicAndProgress(line_info.starts, line_info.widths);
+    try assertUtf8BoundarySlices(text, line_info.starts);
+}
+
+test "word wrap width=1 emoji modifier advances byte starts" {
+    const pool = gp.initGlobalPool(std.testing.allocator);
+    defer gp.deinitGlobalPool();
+
+    var tb = try TextBuffer.init(std.testing.allocator, pool, .wcwidth);
+    defer tb.deinit();
+
+    var view = try TextBufferView.init(std.testing.allocator, tb);
+    defer view.deinit();
+
+    const text = "👋🏻a";
+    try tb.setText(text);
+    view.setWrapMode(.word);
+    view.setWrapWidth(1);
+
+    const line_info = view.getCachedLineInfo();
+    try std.testing.expectEqualSlices(u32, &[_]u32{ 0, 8 }, line_info.starts);
+    try std.testing.expectEqualSlices(u32, &[_]u32{ 2, 1 }, line_info.widths);
+    try assertUtf8BoundarySlices(text, line_info.starts);
+}
+
+test "word wrap width=1 tab-leading advances byte starts" {
+    const pool = gp.initGlobalPool(std.testing.allocator);
+    defer gp.deinitGlobalPool();
+
+    var tb = try TextBuffer.init(std.testing.allocator, pool, .wcwidth);
+    defer tb.deinit();
+
+    var view = try TextBufferView.init(std.testing.allocator, tb);
+    defer view.deinit();
+
+    const text = "\tA";
+    try tb.setText(text);
+    view.setWrapMode(.word);
+    view.setWrapWidth(1);
+
+    const line_info = view.getCachedLineInfo();
+    try std.testing.expectEqualSlices(u32, &[_]u32{ 0, 1 }, line_info.starts);
+    try assertUtf8BoundarySlices(text, line_info.starts);
+}
+
+test "issue-609 representative Korean uses byte starts" {
+    const pool = gp.initGlobalPool(std.testing.allocator);
+    defer gp.deinitGlobalPool();
+
+    var tb = try TextBuffer.init(std.testing.allocator, pool, .wcwidth);
+    defer tb.deinit();
+
+    var view = try TextBufferView.init(std.testing.allocator, tb);
+    defer view.deinit();
+
+    const text = "흐름도";
+    try tb.setText(text);
+    view.setWrapMode(.word);
+    view.setWrapWidth(4);
+
+    const line_info = view.getCachedLineInfo();
+    try std.testing.expectEqualSlices(u32, &[_]u32{ 0, 6 }, line_info.starts);
+    try assertUtf8BoundarySlices(text, line_info.starts);
+}
+
+test "line starts are byte-safe UTF-8 slice boundaries" {
+    const pool = gp.initGlobalPool(std.testing.allocator);
+    defer gp.deinitGlobalPool();
+
+    var tb = try TextBuffer.init(std.testing.allocator, pool, .wcwidth);
+    defer tb.deinit();
+
+    var view = try TextBufferView.init(std.testing.allocator, tb);
+    defer view.deinit();
+
+    const samples = [_]struct {
+        text: []const u8,
+        width: u32,
+    }{
+        .{ .text = "가a", .width = 1 },
+        .{ .text = "가나다", .width = 1 },
+        .{ .text = "👋🏻a", .width = 1 },
+        .{ .text = "\tA", .width = 1 },
+        .{ .text = "흐름도", .width = 4 },
+    };
+
+    for (samples) |sample| {
+        try tb.setText(sample.text);
+        view.setWrapMode(.word);
+        view.setWrapWidth(sample.width);
+        const line_info = view.getCachedLineInfo();
+        try assertUtf8BoundarySlices(sample.text, line_info.starts);
+    }
+}
+
+test "line starts monotonic/progress fixed-seed corpus" {
+    const pool = gp.initGlobalPool(std.testing.allocator);
+    defer gp.deinitGlobalPool();
+
+    var tb = try TextBuffer.init(std.testing.allocator, pool, .wcwidth);
+    defer tb.deinit();
+
+    var view = try TextBufferView.init(std.testing.allocator, tb);
+    defer view.deinit();
+
+    var prng = std.Random.DefaultPrng.init(0x17c0ffee);
+    const random = prng.random();
+    const tokens = [_][]const u8{ "A", "b", "3", " ", "\t", "\n", "\r", "가", "나", "👋🏻", "🌍", "e\u{301}" };
+
+    var sample_idx: usize = 0;
+    while (sample_idx < 64) : (sample_idx += 1) {
+        var text_builder: std.ArrayListUnmanaged(u8) = .{};
+        defer text_builder.deinit(std.testing.allocator);
+
+        const token_count: usize = @intCast((random.int(u32) % 12) + 1);
+        const wrap_width: u32 = (random.int(u32) % 6) + 1;
+
+        var token_idx: usize = 0;
+        while (token_idx < token_count) : (token_idx += 1) {
+            const idx: usize = @intCast(random.int(u32) % tokens.len);
+            try text_builder.appendSlice(std.testing.allocator, tokens[idx]);
+        }
+
+        try tb.setText(text_builder.items);
+        view.setWrapMode(.word);
+        view.setWrapWidth(wrap_width);
+
+        const line_info = view.getCachedLineInfo();
+        try assertUtf8BoundarySlices(text_builder.items, line_info.starts);
+        try assertMonotonicAndProgress(line_info.starts, line_info.widths);
+    }
+}
+
+test "overflowing whitespace drop policy is pinned" {
+    const pool = gp.initGlobalPool(std.testing.allocator);
+    defer gp.deinitGlobalPool();
+
+    var tb = try TextBuffer.init(std.testing.allocator, pool, .wcwidth);
+    defer tb.deinit();
+
+    var view = try TextBufferView.init(std.testing.allocator, tb);
+    defer view.deinit();
+
+    const text = "hello world";
+    try tb.setText(text);
+    view.setWrapMode(.word);
+    view.setWrapWidth(5);
+
+    const line_info = view.getCachedLineInfo();
+    try std.testing.expectEqualSlices(u32, &[_]u32{ 0, 6 }, line_info.starts);
+    try assertUtf8BoundarySlices(text, line_info.starts);
+}
+
+test "tab-at-exact-stop break policy is pinned" {
+    const pool = gp.initGlobalPool(std.testing.allocator);
+    defer gp.deinitGlobalPool();
+
+    var tb = try TextBuffer.init(std.testing.allocator, pool, .wcwidth);
+    defer tb.deinit();
+
+    var view = try TextBufferView.init(std.testing.allocator, tb);
+    defer view.deinit();
+
+    tb.setTabWidth(4);
+    const text = "abcd\tx";
+    try tb.setText(text);
+    view.setWrapMode(.word);
+    view.setWrapWidth(8);
+
+    const line_info = view.getCachedLineInfo();
+    try std.testing.expectEqualSlices(u32, &[_]u32{ 0, 5 }, line_info.starts);
+    try assertUtf8BoundarySlices(text, line_info.starts);
+}
+
+test "hard-break policies for LF, CR, and CRLF are pinned" {
+    const pool = gp.initGlobalPool(std.testing.allocator);
+    defer gp.deinitGlobalPool();
+
+    var tb = try TextBuffer.init(std.testing.allocator, pool, .wcwidth);
+    defer tb.deinit();
+
+    var view = try TextBufferView.init(std.testing.allocator, tb);
+    defer view.deinit();
+
+    const cases = [_]struct {
+        text: []const u8,
+        expected_starts: []const u32,
+    }{
+        .{ .text = "ab\ncd", .expected_starts = &[_]u32{ 0, 3 } },
+        .{ .text = "ab\rcd", .expected_starts = &[_]u32{ 0, 3 } },
+        .{ .text = "ab\r\ncd", .expected_starts = &[_]u32{ 0, 4 } },
+    };
+
+    for (cases) |case| {
+        try tb.setText(case.text);
+        view.setWrapMode(.none);
+        const line_info = view.getCachedLineInfo();
+        try std.testing.expectEqualSlices(u32, case.expected_starts, line_info.starts);
+        try assertUtf8BoundarySlices(case.text, line_info.starts);
+    }
+}
+
+test "line info determinism without mutation" {
+    const pool = gp.initGlobalPool(std.testing.allocator);
+    defer gp.deinitGlobalPool();
+
+    var tb = try TextBuffer.init(std.testing.allocator, pool, .wcwidth);
+    defer tb.deinit();
+
+    var view = try TextBufferView.init(std.testing.allocator, tb);
+    defer view.deinit();
+
+    try tb.setText("가a");
+    view.setWrapMode(.word);
+    view.setWrapWidth(1);
+
+    const line_info_1 = view.getCachedLineInfo();
+    const line_info_2 = view.getCachedLineInfo();
+
+    try std.testing.expectEqualSlices(u32, line_info_1.starts, line_info_2.starts);
+    try std.testing.expectEqualSlices(u32, line_info_1.widths, line_info_2.widths);
+    try std.testing.expectEqualSlices(u32, line_info_1.sources, line_info_2.sources);
+    try std.testing.expectEqualSlices(u32, line_info_1.wraps, line_info_2.wraps);
+}
+
+test "invariants hold across width methods" {
+    const pool = gp.initGlobalPool(std.testing.allocator);
+    defer gp.deinitGlobalPool();
+
+    const methods = [_]utf8.WidthMethod{ .wcwidth, .unicode };
+    const samples = [_]struct {
+        text: []const u8,
+        width: u32,
+    }{
+        .{ .text = "가a", .width = 1 },
+        .{ .text = "👋🏻a", .width = 1 },
+        .{ .text = "\tA", .width = 1 },
+        .{ .text = "hello world", .width = 5 },
+        .{ .text = "ab\r\ncd", .width = 80 },
+    };
+
+    for (methods) |method| {
+        var tb = try TextBuffer.init(std.testing.allocator, pool, method);
+        defer tb.deinit();
+
+        var view = try TextBufferView.init(std.testing.allocator, tb);
+        defer view.deinit();
+
+        for (samples) |sample| {
+            try tb.setText(sample.text);
+            view.setWrapMode(.word);
+            view.setWrapWidth(sample.width);
+
+            const line_info = view.getCachedLineInfo();
+            try assertUtf8BoundarySlices(sample.text, line_info.starts);
+            try assertMonotonicAndProgress(line_info.starts, line_info.widths);
+
+            if (method == .wcwidth and std.mem.eql(u8, sample.text, "가a")) {
+                try std.testing.expectEqualSlices(u32, &[_]u32{ 0, 3 }, line_info.starts);
+            }
+        }
     }
 }
 
