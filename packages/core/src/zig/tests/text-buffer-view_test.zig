@@ -3181,8 +3181,10 @@ test "TextBufferView line info - line starts monotonically increasing" {
 test "word wrap width=1 leading CJK advances byte starts" {
     const pool = gp.initGlobalPool(std.testing.allocator);
     defer gp.deinitGlobalPool();
+    const link_pool = link.initGlobalLinkPool(std.testing.allocator);
+    defer link.deinitGlobalLinkPool();
 
-    var tb = try TextBuffer.init(std.testing.allocator, pool, .wcwidth);
+    var tb = try TextBuffer.init(std.testing.allocator, pool, link_pool, .wcwidth);
     defer tb.deinit();
 
     var view = try TextBufferView.init(std.testing.allocator, tb);
@@ -3202,8 +3204,10 @@ test "word wrap width=1 leading CJK advances byte starts" {
 test "word wrap width=1 repeated CJK advances byte starts" {
     const pool = gp.initGlobalPool(std.testing.allocator);
     defer gp.deinitGlobalPool();
+    const link_pool = link.initGlobalLinkPool(std.testing.allocator);
+    defer link.deinitGlobalLinkPool();
 
-    var tb = try TextBuffer.init(std.testing.allocator, pool, .wcwidth);
+    var tb = try TextBuffer.init(std.testing.allocator, pool, link_pool, .wcwidth);
     defer tb.deinit();
 
     var view = try TextBufferView.init(std.testing.allocator, tb);
@@ -3223,8 +3227,10 @@ test "word wrap width=1 repeated CJK advances byte starts" {
 test "word wrap width=1 emoji modifier advances byte starts" {
     const pool = gp.initGlobalPool(std.testing.allocator);
     defer gp.deinitGlobalPool();
+    const link_pool = link.initGlobalLinkPool(std.testing.allocator);
+    defer link.deinitGlobalLinkPool();
 
-    var tb = try TextBuffer.init(std.testing.allocator, pool, .wcwidth);
+    var tb = try TextBuffer.init(std.testing.allocator, pool, link_pool, .wcwidth);
     defer tb.deinit();
 
     var view = try TextBufferView.init(std.testing.allocator, tb);
@@ -3244,8 +3250,10 @@ test "word wrap width=1 emoji modifier advances byte starts" {
 test "word wrap width=1 tab-leading advances byte starts" {
     const pool = gp.initGlobalPool(std.testing.allocator);
     defer gp.deinitGlobalPool();
+    const link_pool = link.initGlobalLinkPool(std.testing.allocator);
+    defer link.deinitGlobalLinkPool();
 
-    var tb = try TextBuffer.init(std.testing.allocator, pool, .wcwidth);
+    var tb = try TextBuffer.init(std.testing.allocator, pool, link_pool, .wcwidth);
     defer tb.deinit();
 
     var view = try TextBufferView.init(std.testing.allocator, tb);
@@ -3264,8 +3272,10 @@ test "word wrap width=1 tab-leading advances byte starts" {
 test "issue-609 representative Korean uses byte starts" {
     const pool = gp.initGlobalPool(std.testing.allocator);
     defer gp.deinitGlobalPool();
+    const link_pool = link.initGlobalLinkPool(std.testing.allocator);
+    defer link.deinitGlobalLinkPool();
 
-    var tb = try TextBuffer.init(std.testing.allocator, pool, .wcwidth);
+    var tb = try TextBuffer.init(std.testing.allocator, pool, link_pool, .wcwidth);
     defer tb.deinit();
 
     var view = try TextBufferView.init(std.testing.allocator, tb);
@@ -3284,8 +3294,10 @@ test "issue-609 representative Korean uses byte starts" {
 test "line starts are byte-safe UTF-8 slice boundaries" {
     const pool = gp.initGlobalPool(std.testing.allocator);
     defer gp.deinitGlobalPool();
+    const link_pool = link.initGlobalLinkPool(std.testing.allocator);
+    defer link.deinitGlobalLinkPool();
 
-    var tb = try TextBuffer.init(std.testing.allocator, pool, .wcwidth);
+    var tb = try TextBuffer.init(std.testing.allocator, pool, link_pool, .wcwidth);
     defer tb.deinit();
 
     var view = try TextBufferView.init(std.testing.allocator, tb);
@@ -3314,8 +3326,10 @@ test "line starts are byte-safe UTF-8 slice boundaries" {
 test "line starts monotonic/progress fixed-seed corpus" {
     const pool = gp.initGlobalPool(std.testing.allocator);
     defer gp.deinitGlobalPool();
+    const link_pool = link.initGlobalLinkPool(std.testing.allocator);
+    defer link.deinitGlobalLinkPool();
 
-    var tb = try TextBuffer.init(std.testing.allocator, pool, .wcwidth);
+    var tb = try TextBuffer.init(std.testing.allocator, pool, link_pool, .wcwidth);
     defer tb.deinit();
 
     var view = try TextBufferView.init(std.testing.allocator, tb);
@@ -3352,8 +3366,10 @@ test "line starts monotonic/progress fixed-seed corpus" {
 test "overflowing whitespace drop policy is pinned" {
     const pool = gp.initGlobalPool(std.testing.allocator);
     defer gp.deinitGlobalPool();
+    const link_pool = link.initGlobalLinkPool(std.testing.allocator);
+    defer link.deinitGlobalLinkPool();
 
-    var tb = try TextBuffer.init(std.testing.allocator, pool, .wcwidth);
+    var tb = try TextBuffer.init(std.testing.allocator, pool, link_pool, .wcwidth);
     defer tb.deinit();
 
     var view = try TextBufferView.init(std.testing.allocator, tb);
@@ -3372,8 +3388,10 @@ test "overflowing whitespace drop policy is pinned" {
 test "tab-at-exact-stop break policy is pinned" {
     const pool = gp.initGlobalPool(std.testing.allocator);
     defer gp.deinitGlobalPool();
+    const link_pool = link.initGlobalLinkPool(std.testing.allocator);
+    defer link.deinitGlobalLinkPool();
 
-    var tb = try TextBuffer.init(std.testing.allocator, pool, .wcwidth);
+    var tb = try TextBuffer.init(std.testing.allocator, pool, link_pool, .wcwidth);
     defer tb.deinit();
 
     var view = try TextBufferView.init(std.testing.allocator, tb);
@@ -3393,8 +3411,10 @@ test "tab-at-exact-stop break policy is pinned" {
 test "hard-break policies for LF, CR, and CRLF are pinned" {
     const pool = gp.initGlobalPool(std.testing.allocator);
     defer gp.deinitGlobalPool();
+    const link_pool = link.initGlobalLinkPool(std.testing.allocator);
+    defer link.deinitGlobalLinkPool();
 
-    var tb = try TextBuffer.init(std.testing.allocator, pool, .wcwidth);
+    var tb = try TextBuffer.init(std.testing.allocator, pool, link_pool, .wcwidth);
     defer tb.deinit();
 
     var view = try TextBufferView.init(std.testing.allocator, tb);
@@ -3421,8 +3441,10 @@ test "hard-break policies for LF, CR, and CRLF are pinned" {
 test "line info determinism without mutation" {
     const pool = gp.initGlobalPool(std.testing.allocator);
     defer gp.deinitGlobalPool();
+    const link_pool = link.initGlobalLinkPool(std.testing.allocator);
+    defer link.deinitGlobalLinkPool();
 
-    var tb = try TextBuffer.init(std.testing.allocator, pool, .wcwidth);
+    var tb = try TextBuffer.init(std.testing.allocator, pool, link_pool, .wcwidth);
     defer tb.deinit();
 
     var view = try TextBufferView.init(std.testing.allocator, tb);
@@ -3444,6 +3466,8 @@ test "line info determinism without mutation" {
 test "invariants hold across width methods" {
     const pool = gp.initGlobalPool(std.testing.allocator);
     defer gp.deinitGlobalPool();
+    const link_pool = link.initGlobalLinkPool(std.testing.allocator);
+    defer link.deinitGlobalLinkPool();
 
     const methods = [_]utf8.WidthMethod{ .wcwidth, .unicode };
     const samples = [_]struct {
@@ -3458,7 +3482,7 @@ test "invariants hold across width methods" {
     };
 
     for (methods) |method| {
-        var tb = try TextBuffer.init(std.testing.allocator, pool, method);
+        var tb = try TextBuffer.init(std.testing.allocator, pool, link_pool, method);
         defer tb.deinit();
 
         var view = try TextBufferView.init(std.testing.allocator, tb);
