@@ -110,6 +110,265 @@ pub const WrapBreak = struct {
     char_offset: u32,
 };
 
+/// BreakKind tells callers why a span can end at a soft-wrap boundary.
+pub const BreakKind = enum(u8) {
+    /// No soft-wrap boundary follows this span.
+    none,
+    /// A whitespace delimiter follows this span.
+    whitespace,
+    /// A punctuation delimiter follows this span.
+    punctuation,
+    /// A CJK<->ASCII word-run transition follows this span.
+    script_transition,
+};
+
+/// GraphemeSpan stores one scanned text unit with both byte and column units.
+///
+/// Offsets are relative to the `text` slice passed to `scanLayout`.
+pub const GraphemeSpan = struct {
+    /// Byte offset where this span starts.
+    byte_start: u32,
+    /// Byte length for this span. The scanner always guarantees `byte_len >= 1`.
+    byte_len: u32,
+    /// Display-column offset where this span starts.
+    col_start: u32,
+    /// Display width in columns for this span.
+    col_width: u16,
+    /// Soft-wrap boundary classification attached to the end of this span.
+    break_after: BreakKind,
+};
+
+/// LayoutScanResult owns reusable storage for `scanLayout` output.
+///
+/// `scanLayout` overwrites this result on every call.
+pub const LayoutScanResult = struct {
+    /// Contiguous, non-overlapping spans in scan order.
+    spans: std.ArrayListUnmanaged(GraphemeSpan),
+    allocator: std.mem.Allocator,
+    /// Total bytes consumed from the input text.
+    total_bytes: u32 = 0,
+    /// Total display columns consumed from the input text.
+    total_cols: u32 = 0,
+
+    pub fn init(allocator: std.mem.Allocator) LayoutScanResult {
+        return .{
+            .spans = .{},
+            .allocator = allocator,
+        };
+    }
+
+    pub fn deinit(self: *LayoutScanResult) void {
+        self.spans.deinit(self.allocator);
+    }
+
+    pub fn reset(self: *LayoutScanResult) void {
+        self.spans.clearRetainingCapacity();
+        self.total_bytes = 0;
+        self.total_cols = 0;
+    }
+};
+
+/// scanLayout emits grapheme spans with both byte and column coordinates.
+///
+/// The function is the canonical scanner for wrapping and cursor math. It keeps
+/// byte and column ledgers in one stream, so callers do not need cross-domain
+/// conversions later.
+///
+/// Invariants:
+/// - Every emitted span makes byte progress (`byte_len >= 1`).
+/// - Spans stay contiguous in byte space and column space.
+/// - `result.total_bytes == text.len` on success.
+/// - `result.total_cols` equals the sum of all `span.col_width` values.
+///
+/// Side effects:
+/// - The function clears `result` before scanning.
+/// - If scanning fails, it clears `result` again, so callers never see partial output.
+pub fn scanLayout(text: []const u8, tab_width: u8, is_ascii_only: bool, width_method: WidthMethod, result: *LayoutScanResult) !void {
+    result.reset();
+    errdefer result.reset();
+
+    if (text.len == 0) {
+        return;
+    }
+
+    if (is_ascii_only) {
+        // ASCII fast path emits exactly one span per byte, so one reservation is enough.
+        try result.spans.ensureTotalCapacity(result.allocator, text.len);
+
+        var pos: usize = 0;
+        var col: u32 = 0;
+        const vector_len = 16;
+        const Vec = @Vector(vector_len, u8);
+
+        const v_space: Vec = @splat(' ');
+        const v_tab: Vec = @splat('\t');
+
+        const v_dash: Vec = @splat('-');
+        const v_slash: Vec = @splat('/');
+        const v_backslash: Vec = @splat('\\');
+        const v_dot: Vec = @splat('.');
+        const v_comma: Vec = @splat(',');
+        const v_semicolon: Vec = @splat(';');
+        const v_colon: Vec = @splat(':');
+        const v_bang: Vec = @splat('!');
+        const v_question: Vec = @splat('?');
+        const v_lparen: Vec = @splat('(');
+        const v_rparen: Vec = @splat(')');
+        const v_lbracket: Vec = @splat('[');
+        const v_rbracket: Vec = @splat(']');
+        const v_lbrace: Vec = @splat('{');
+        const v_rbrace: Vec = @splat('}');
+
+        while (pos + vector_len <= text.len) {
+            const chunk: Vec = text[pos..][0..vector_len].*;
+
+            const whitespace_mask = (chunk == v_space) | (chunk == v_tab);
+
+            var punctuation_mask: @Vector(vector_len, bool) = @splat(false);
+            punctuation_mask = punctuation_mask | (chunk == v_dash);
+            punctuation_mask = punctuation_mask | (chunk == v_slash);
+            punctuation_mask = punctuation_mask | (chunk == v_backslash);
+            punctuation_mask = punctuation_mask | (chunk == v_dot);
+            punctuation_mask = punctuation_mask | (chunk == v_comma);
+            punctuation_mask = punctuation_mask | (chunk == v_semicolon);
+            punctuation_mask = punctuation_mask | (chunk == v_colon);
+            punctuation_mask = punctuation_mask | (chunk == v_bang);
+            punctuation_mask = punctuation_mask | (chunk == v_question);
+            punctuation_mask = punctuation_mask | (chunk == v_lparen);
+            punctuation_mask = punctuation_mask | (chunk == v_rparen);
+            punctuation_mask = punctuation_mask | (chunk == v_lbracket);
+            punctuation_mask = punctuation_mask | (chunk == v_rbracket);
+            punctuation_mask = punctuation_mask | (chunk == v_lbrace);
+            punctuation_mask = punctuation_mask | (chunk == v_rbrace);
+
+            inline for (0..vector_len) |i| {
+                const b = chunk[i];
+                const width = asciiCharWidth(b, tab_width);
+
+                const break_kind: BreakKind = if (whitespace_mask[i])
+                    .whitespace
+                else if (punctuation_mask[i])
+                    .punctuation
+                else
+                    .none;
+
+                result.spans.appendAssumeCapacity(.{
+                    .byte_start = @intCast(pos + i),
+                    .byte_len = 1,
+                    .col_start = col,
+                    .col_width = @intCast(width),
+                    .break_after = break_kind,
+                });
+                col += width;
+            }
+            pos += vector_len;
+        }
+
+        // Collect remaining bytes
+        while (pos < text.len) : (pos += 1) {
+            const b = text[pos];
+            const width = asciiCharWidth(b, tab_width);
+            result.spans.appendAssumeCapacity(.{
+                .byte_start = @intCast(pos),
+                .byte_len = 1,
+                .col_start = col,
+                .col_width = @intCast(width),
+                .break_after = asciiWrapBreakKind(b),
+            });
+            col += width;
+        }
+
+        result.total_bytes = @intCast(text.len);
+        result.total_cols = col;
+        return;
+    }
+
+    var pos: usize = 0;
+    var col: u32 = 0;
+    var prev_cp: ?u21 = null;
+    var break_state: uucode.grapheme.BreakState = .default;
+
+    var cluster_started = false;
+    var cluster_start: usize = 0;
+    var cluster_col_start: u32 = 0;
+    var cluster_width_state: GraphemeWidthState = undefined;
+    var cluster_class: WordClass = .other;
+    var cluster_break_after: BreakKind = .none;
+
+    while (pos < text.len) {
+        const b0 = text[pos];
+        const curr_cp: u21 = if (b0 < 0x80) b0 else decodeUtf8Unchecked(text, pos).cp;
+        const cp_len: usize = if (b0 < 0x80) 1 else decodeUtf8Unchecked(text, pos).len;
+        // Grapheme-break logic keeps CRLF as one cluster and keeps ZWJ behavior
+        // aligned with the selected width method.
+        const is_break = isGraphemeBreak(prev_cp, curr_cp, &break_state, width_method);
+        const current_class = classifyWordClass(curr_cp);
+
+        if (is_break) {
+            if (cluster_started) {
+                const previous_class = cluster_class;
+                const cluster_width = cluster_width_state.width;
+
+                try result.spans.append(result.allocator, .{
+                    .byte_start = @intCast(cluster_start),
+                    .byte_len = @intCast(pos - cluster_start),
+                    .col_start = cluster_col_start,
+                    .col_width = @intCast(cluster_width),
+                    .break_after = cluster_break_after,
+                });
+
+                if (isCjkAsciiTransition(previous_class, current_class)) {
+                    const previous = &result.spans.items[result.spans.items.len - 1];
+                    // Attach the transition marker to the previous span so wrap
+                    // callers can break before the new script run starts.
+                    if (previous.break_after == .none) {
+                        previous.break_after = .script_transition;
+                    }
+                }
+
+                col += cluster_width;
+            }
+
+            cluster_started = true;
+            cluster_start = pos;
+            cluster_col_start = col;
+            cluster_class = current_class;
+            cluster_break_after = if (b0 < 0x80) asciiWrapBreakKind(b0) else unicodeWrapBreakKind(curr_cp);
+
+            const cp_width = charWidth(b0, curr_cp, tab_width);
+            cluster_width_state = GraphemeWidthState.init(curr_cp, cp_width, width_method);
+        } else {
+            const cp_width = charWidth(b0, curr_cp, tab_width);
+            cluster_width_state.addCodepoint(curr_cp, cp_width);
+
+            const break_kind = if (b0 < 0x80) asciiWrapBreakKind(b0) else unicodeWrapBreakKind(curr_cp);
+            // Keep the first non-none break marker in the cluster.
+            // This preserves delimiter semantics for multi-codepoint clusters.
+            if (cluster_break_after == .none and break_kind != .none) {
+                cluster_break_after = break_kind;
+            }
+        }
+
+        prev_cp = curr_cp;
+        pos += cp_len;
+    }
+
+    if (cluster_started) {
+        const cluster_width = cluster_width_state.width;
+        try result.spans.append(result.allocator, .{
+            .byte_start = @intCast(cluster_start),
+            .byte_len = @intCast(text.len - cluster_start),
+            .col_start = cluster_col_start,
+            .col_width = @intCast(cluster_width),
+            .break_after = cluster_break_after,
+        });
+        col += cluster_width;
+    }
+
+    result.total_bytes = @intCast(text.len);
+    result.total_cols = col;
+}
+
 pub const WrapBreakResult = struct {
     breaks: std.ArrayListUnmanaged(WrapBreak),
     allocator: std.mem.Allocator,
@@ -130,16 +389,19 @@ pub const WrapBreakResult = struct {
     }
 };
 
-// Helper function to check if an ASCII byte is a wrap break point (CR/LF excluded)
-inline fn isAsciiWrapBreak(b: u8) bool {
+// Returns soft-wrap break classifications for ASCII delimiters.
+// Hard line breaks (`\r`, `\n`, and `\r\n`) are represented as zero-width spans,
+// not as `break_after` markers.
+inline fn asciiWrapBreakKind(b: u8) BreakKind {
     return switch (b) {
-        ' ', '\t' => true, // Whitespace (no CR/LF in inputs)
-        '-' => true, // Dash
-        '/', '\\' => true, // Slashes
-        '.', ',', ';', ':', '!', '?' => true, // Punctuation
-        '(', ')', '[', ']', '{', '}' => true, // Brackets
-        else => false,
+        ' ', '\t' => .whitespace,
+        '-', '/', '\\', '.', ',', ';', ':', '!', '?', '(', ')', '[', ']', '{', '}' => .punctuation,
+        else => .none,
     };
+}
+
+inline fn isAsciiWrapBreak(b: u8) bool {
+    return asciiWrapBreakKind(b) != .none;
 }
 
 // Decode a UTF-8 codepoint starting at pos. Assumes valid UTF-8 input.
@@ -170,8 +432,8 @@ pub inline fn decodeUtf8Unchecked(text: []const u8, pos: usize) struct { cp: u21
     return .{ .cp = cp4, .len = 4 };
 }
 
-// Unicode wrap-break codepoints
-inline fn isUnicodeWrapBreak(cp: u21) bool {
+// Returns soft-wrap break classifications for selected Unicode delimiters.
+inline fn unicodeWrapBreakKind(cp: u21) BreakKind {
     return switch (cp) {
         0x00A0, // NBSP
         0x1680, // OGHAM SPACE MARK
@@ -180,15 +442,21 @@ inline fn isUnicodeWrapBreak(cp: u21) bool {
         0x205F, // MEDIUM MATHEMATICAL SPACE
         0x3000, // IDEOGRAPHIC SPACE
         0x200B, // ZERO WIDTH SPACE
+        => .whitespace,
+
         0x00AD, // SOFT HYPHEN
         0x2010, // HYPHEN
         0x3001, // IDEOGRAPHIC COMMA
         0x3002, // IDEOGRAPHIC FULL STOP
         0xFF01, // FULLWIDTH EXCLAMATION MARK
         0xFF1F, // FULLWIDTH QUESTION MARK
-        => true,
-        else => false,
+        => .punctuation,
+        else => .none,
     };
+}
+
+inline fn isUnicodeWrapBreak(cp: u21) bool {
+    return unicodeWrapBreakKind(cp) != .none;
 }
 
 // WordClass keeps word-boundary behavior predictable in mixed-script text.
@@ -250,252 +518,30 @@ inline fn isCjkAsciiTransition(prev_class: WordClass, curr_class: WordClass) boo
         (prev_class == .ascii_word and curr_class == .cjk_word);
 }
 
-// Nothing needed here - using uucode.grapheme.isBreak directly
-
+/// findWrapBreaks returns compatibility wrap offsets derived from `scanLayout`.
+///
+/// The function rewrites `result.breaks` on every call.
+///
+/// `width_method` is intentionally ignored to preserve legacy break offsets.
+/// Break offsets follow delimiter and script-transition boundaries, not width policy.
 pub fn findWrapBreaks(text: []const u8, result: *WrapBreakResult, width_method: WidthMethod) !void {
-    // This function clears previous results and writes fresh break points.
-    // Callers should treat `result.breaks` as replaced after the call.
-    _ = width_method; // Currently unused, but kept for API consistency
     result.reset();
-    const vector_len = 16;
+    _ = width_method;
 
-    var pos: usize = 0;
-    var char_offset: u32 = 0;
-    var prev_cp: ?u21 = null; // Track previous codepoint for grapheme detection
-    var break_state: uucode.grapheme.BreakState = .default;
-    // We keep track of the current grapheme so we can add a break at
-    // CJK<->ASCII transitions. The break is emitted at the previous grapheme,
-    // so callers that add grapheme width land exactly at the run boundary.
-    var have_current_grapheme = false;
-    var current_grapheme_byte_offset: u32 = 0;
-    var current_grapheme_char_offset: u32 = 0;
-    var current_grapheme_class: WordClass = .other;
+    var scan_result = LayoutScanResult.init(result.allocator);
+    defer scan_result.deinit();
 
-    while (pos + vector_len <= text.len) {
-        const chunk: @Vector(vector_len, u8) = text[pos..][0..vector_len].*;
-        const ascii_threshold: @Vector(vector_len, u8) = @splat(0x80);
-        const is_non_ascii = chunk >= ascii_threshold;
+    try scanLayout(text, 4, isAsciiOnly(text), .unicode, &scan_result);
 
-        // Fast path: all ASCII
-        if (!@reduce(.Or, is_non_ascii)) {
-            const first_class = classifyWordClass(text[pos]);
-            if (have_current_grapheme and isCjkAsciiTransition(current_grapheme_class, first_class)) {
-                try result.breaks.append(result.allocator, .{
-                    .byte_offset = current_grapheme_byte_offset,
-                    .char_offset = current_grapheme_char_offset,
-                });
-            }
-
-            // Use SIMD to find break characters
-            var match_mask: @Vector(vector_len, bool) = @splat(false);
-
-            // Check whitespace
-            match_mask = match_mask | (chunk == @as(@Vector(vector_len, u8), @splat(' ')));
-            match_mask = match_mask | (chunk == @as(@Vector(vector_len, u8), @splat('\t')));
-
-            // Check dashes and slashes
-            match_mask = match_mask | (chunk == @as(@Vector(vector_len, u8), @splat('-')));
-            match_mask = match_mask | (chunk == @as(@Vector(vector_len, u8), @splat('/')));
-            match_mask = match_mask | (chunk == @as(@Vector(vector_len, u8), @splat('\\')));
-
-            // Check punctuation
-            match_mask = match_mask | (chunk == @as(@Vector(vector_len, u8), @splat('.')));
-            match_mask = match_mask | (chunk == @as(@Vector(vector_len, u8), @splat(',')));
-            match_mask = match_mask | (chunk == @as(@Vector(vector_len, u8), @splat(';')));
-            match_mask = match_mask | (chunk == @as(@Vector(vector_len, u8), @splat(':')));
-            match_mask = match_mask | (chunk == @as(@Vector(vector_len, u8), @splat('!')));
-            match_mask = match_mask | (chunk == @as(@Vector(vector_len, u8), @splat('?')));
-
-            // Check brackets
-            match_mask = match_mask | (chunk == @as(@Vector(vector_len, u8), @splat('(')));
-            match_mask = match_mask | (chunk == @as(@Vector(vector_len, u8), @splat(')')));
-            match_mask = match_mask | (chunk == @as(@Vector(vector_len, u8), @splat('[')));
-            match_mask = match_mask | (chunk == @as(@Vector(vector_len, u8), @splat(']')));
-            match_mask = match_mask | (chunk == @as(@Vector(vector_len, u8), @splat('{')));
-            match_mask = match_mask | (chunk == @as(@Vector(vector_len, u8), @splat('}')));
-
-            // Convert boolean mask to integer bitmask for faster iteration
-            var bitmask: u16 = 0;
-            inline for (0..vector_len) |i| {
-                if (match_mask[i]) {
-                    bitmask |= @as(u16, 1) << @intCast(i);
-                }
-            }
-
-            // Use bit manipulation to extract positions
-            while (bitmask != 0) {
-                const bit_pos = @ctz(bitmask);
-                try result.breaks.append(result.allocator, .{
-                    .byte_offset = @intCast(pos + bit_pos),
-                    .char_offset = char_offset + @as(u32, @intCast(bit_pos)),
-                });
-                bitmask &= bitmask - 1;
-            }
-
-            pos += vector_len;
-            const block_start_char_offset = char_offset;
-            char_offset += vector_len;
-            prev_cp = text[pos - 1]; // Last ASCII char
-            break_state = .default;
-            have_current_grapheme = true;
-            current_grapheme_byte_offset = @intCast(pos - 1);
-            current_grapheme_char_offset = block_start_char_offset + (vector_len - 1);
-            current_grapheme_class = classifyWordClass(text[pos - 1]);
+    for (scan_result.spans.items, 0..) |span, idx| {
+        if (span.break_after == .none) {
             continue;
         }
 
-        // Slow path: mixed ASCII/non-ASCII - need grapheme-aware counting
-        var i: usize = 0;
-        while (i < vector_len) {
-            const b0 = text[pos + i];
-            if (b0 < 0x80) {
-                const curr_cp: u21 = b0;
-
-                // Check if this starts a new grapheme cluster
-                // Skip invalid/replacement codepoints or codepoints that might be outside the grapheme table range
-                const is_break = if (curr_cp == 0xFFFD or curr_cp > 0x10FFFF) true else if (prev_cp) |p| blk: {
-                    if (p == 0xFFFD or p > 0x10FFFF) break :blk true;
-                    break :blk uucode.grapheme.isBreak(p, curr_cp, &break_state);
-                } else true;
-
-                if (is_break) {
-                    const curr_class = classifyWordClass(curr_cp);
-                    if (have_current_grapheme and isCjkAsciiTransition(current_grapheme_class, curr_class)) {
-                        try result.breaks.append(result.allocator, .{
-                            .byte_offset = current_grapheme_byte_offset,
-                            .char_offset = current_grapheme_char_offset,
-                        });
-                    }
-                    have_current_grapheme = true;
-                    current_grapheme_byte_offset = @intCast(pos + i);
-                    current_grapheme_char_offset = char_offset;
-                    current_grapheme_class = curr_class;
-                }
-
-                if (isAsciiWrapBreak(b0)) {
-                    try result.breaks.append(result.allocator, .{
-                        .byte_offset = @intCast(pos + i),
-                        .char_offset = char_offset,
-                    });
-                }
-                i += 1;
-                if (is_break) {
-                    char_offset += 1;
-                }
-                prev_cp = curr_cp;
-            } else {
-                const dec = decodeUtf8Unchecked(text, pos + i);
-                if (pos + i + dec.len > text.len) break;
-                if (pos + i + dec.len > pos + vector_len) break;
-
-                // Check if this starts a new grapheme cluster
-                // Skip invalid/replacement codepoints or codepoints that might be outside the grapheme table range
-                const is_break = if (dec.cp == 0xFFFD or dec.cp > 0x10FFFF) true else if (prev_cp) |p| blk: {
-                    if (p == 0xFFFD or p > 0x10FFFF) break :blk true;
-                    break :blk uucode.grapheme.isBreak(p, dec.cp, &break_state);
-                } else true;
-
-                if (is_break) {
-                    const curr_class = classifyWordClass(dec.cp);
-                    if (have_current_grapheme and isCjkAsciiTransition(current_grapheme_class, curr_class)) {
-                        try result.breaks.append(result.allocator, .{
-                            .byte_offset = current_grapheme_byte_offset,
-                            .char_offset = current_grapheme_char_offset,
-                        });
-                    }
-                    have_current_grapheme = true;
-                    current_grapheme_byte_offset = @intCast(pos + i);
-                    current_grapheme_char_offset = char_offset;
-                    current_grapheme_class = curr_class;
-                }
-
-                if (isUnicodeWrapBreak(dec.cp)) {
-                    try result.breaks.append(result.allocator, .{
-                        .byte_offset = @intCast(pos + i),
-                        .char_offset = char_offset,
-                    });
-                }
-                i += dec.len;
-                if (is_break) {
-                    char_offset += 1;
-                }
-                prev_cp = dec.cp;
-            }
-        }
-        pos += i;
-    }
-
-    // Tail
-    var i: usize = pos;
-    while (i < text.len) {
-        const b0 = text[i];
-        if (b0 < 0x80) {
-            const curr_cp: u21 = b0;
-            const is_break = if (prev_cp) |p| blk: {
-                if (p == 0xFFFD or p > 0x10FFFF) break :blk true;
-                break :blk uucode.grapheme.isBreak(p, curr_cp, &break_state);
-            } else true;
-
-            if (is_break) {
-                const curr_class = classifyWordClass(curr_cp);
-                if (have_current_grapheme and isCjkAsciiTransition(current_grapheme_class, curr_class)) {
-                    try result.breaks.append(result.allocator, .{
-                        .byte_offset = current_grapheme_byte_offset,
-                        .char_offset = current_grapheme_char_offset,
-                    });
-                }
-                have_current_grapheme = true;
-                current_grapheme_byte_offset = @intCast(i);
-                current_grapheme_char_offset = char_offset;
-                current_grapheme_class = curr_class;
-            }
-
-            if (isAsciiWrapBreak(b0)) {
-                try result.breaks.append(result.allocator, .{
-                    .byte_offset = @intCast(i),
-                    .char_offset = char_offset,
-                });
-            }
-            i += 1;
-            if (is_break) {
-                char_offset += 1;
-            }
-            prev_cp = curr_cp;
-        } else {
-            const dec = decodeUtf8Unchecked(text, i);
-            if (i + dec.len > text.len) break;
-
-            const is_break = if (dec.cp == 0xFFFD or dec.cp > 0x10FFFF) true else if (prev_cp) |p| blk: {
-                if (p == 0xFFFD or p > 0x10FFFF) break :blk true;
-                break :blk uucode.grapheme.isBreak(p, dec.cp, &break_state);
-            } else true;
-
-            if (is_break) {
-                const curr_class = classifyWordClass(dec.cp);
-                if (have_current_grapheme and isCjkAsciiTransition(current_grapheme_class, curr_class)) {
-                    try result.breaks.append(result.allocator, .{
-                        .byte_offset = current_grapheme_byte_offset,
-                        .char_offset = current_grapheme_char_offset,
-                    });
-                }
-                have_current_grapheme = true;
-                current_grapheme_byte_offset = @intCast(i);
-                current_grapheme_char_offset = char_offset;
-                current_grapheme_class = curr_class;
-            }
-
-            if (isUnicodeWrapBreak(dec.cp)) {
-                try result.breaks.append(result.allocator, .{
-                    .byte_offset = @intCast(i),
-                    .char_offset = char_offset,
-                });
-            }
-            i += dec.len;
-            if (is_break) {
-                char_offset += 1;
-            }
-            prev_cp = dec.cp;
-        }
+        try result.breaks.append(result.allocator, .{
+            .byte_offset = span.byte_start,
+            .char_offset = @intCast(idx),
+        });
     }
 }
 
@@ -1652,8 +1698,14 @@ pub const GraphemeInfoResult = struct {
     }
 };
 
-/// Find all grapheme clusters in text and return info for multi-byte graphemes and tabs
-/// This is a proxy function that dispatches to the appropriate implementation based on width_method
+/// findGraphemeInfo appends compatibility grapheme metadata derived from `scanLayout`.
+///
+/// The function appends only tab spans and multi-byte spans, matching legacy
+/// caching behavior. It does not clear `result`; callers can accumulate entries
+/// or clear `result` before calling.
+///
+/// In `.unicode` and `.no_zwj` modes, the function skips zero-width spans.
+/// In `.wcwidth` mode, it keeps zero-width spans to preserve legacy parity.
 pub fn findGraphemeInfo(
     text: []const u8,
     tab_width: u8,
@@ -1662,287 +1714,32 @@ pub fn findGraphemeInfo(
     allocator: std.mem.Allocator,
     result: *std.ArrayListUnmanaged(GraphemeInfo),
 ) !void {
-    switch (width_method) {
-        .unicode, .no_zwj => try findGraphemeInfoUnicode(text, tab_width, isASCIIOnly, width_method, allocator, result),
-        .wcwidth => try findGraphemeInfoWCWidth(text, tab_width, isASCIIOnly, allocator, result),
-    }
-}
-
-/// Find all grapheme clusters using Unicode grapheme cluster segmentation
-/// This version treats grapheme clusters as single units for width calculation
-fn findGraphemeInfoUnicode(
-    text: []const u8,
-    tab_width: u8,
-    isASCIIOnly: bool,
-    width_method: WidthMethod,
-    allocator: std.mem.Allocator,
-    result: *std.ArrayListUnmanaged(GraphemeInfo),
-) !void {
-    // In wcwidth mode, always process to capture combining marks on ASCII
-    if (isASCIIOnly and width_method != .wcwidth) {
+    if (isASCIIOnly or text.len == 0) {
         return;
     }
 
-    if (text.len == 0) {
-        return;
-    }
+    var scan_result = LayoutScanResult.init(allocator);
+    defer scan_result.deinit();
 
-    const vector_len = 16;
-    var pos: usize = 0;
-    var col: u32 = 0;
-    var prev_cp: ?u21 = null;
-    var break_state: uucode.grapheme.BreakState = .default;
+    try scanLayout(text, tab_width, isASCIIOnly, width_method, &scan_result);
 
-    // Track current grapheme cluster
-    var cluster_start: usize = 0;
-    var cluster_start_col: u32 = 0;
-    var cluster_width_state: GraphemeWidthState = undefined;
-    var cluster_is_multibyte: bool = false;
-    var cluster_is_tab: bool = false;
-
-    while (pos + vector_len <= text.len) {
-        const chunk: @Vector(vector_len, u8) = text[pos..][0..vector_len].*;
-        const ascii_threshold: @Vector(vector_len, u8) = @splat(0x80);
-        const is_non_ascii = chunk >= ascii_threshold;
-
-        // Fast path: all ASCII
-        if (!@reduce(.Or, is_non_ascii)) {
-            var i: usize = 0;
-            while (i < vector_len) : (i += 1) {
-                const b = text[pos + i];
-                const curr_cp: u21 = b;
-                const is_break = isGraphemeBreak(prev_cp, curr_cp, &break_state, width_method);
-
-                if (is_break) {
-                    if (prev_cp != null and (cluster_is_multibyte or cluster_is_tab)) {
-                        if (cluster_width_state.width > 0 or width_method == .wcwidth) {
-                            const cluster_byte_len = (pos + i) - cluster_start;
-                            try result.append(allocator, GraphemeInfo{
-                                .byte_offset = @intCast(cluster_start),
-                                .byte_len = @intCast(cluster_byte_len),
-                                .width = @intCast(cluster_width_state.width),
-                                .col_offset = cluster_start_col,
-                            });
-                        }
-                        col += cluster_width_state.width;
-                    } else if (prev_cp != null) {
-                        col += cluster_width_state.width;
-                    }
-
-                    cluster_start = pos + i;
-                    cluster_start_col = col;
-                    cluster_is_tab = (b == '\t');
-                    cluster_is_multibyte = false;
-
-                    const cp_width = asciiCharWidth(b, tab_width);
-                    cluster_width_state = GraphemeWidthState.init(curr_cp, cp_width, width_method);
-                } else {
-                    // Continuing cluster (shouldn't happen for ASCII, but handle it)
-                    const cp_width = asciiCharWidth(b, tab_width);
-                    cluster_width_state.addCodepoint(curr_cp, cp_width);
-                }
-
-                prev_cp = curr_cp;
-            }
-            pos += vector_len;
+    for (scan_result.spans.items) |span| {
+        const byte_start: usize = @intCast(span.byte_start);
+        const is_tab = span.byte_len == 1 and text[byte_start] == '\t';
+        const is_multibyte = span.byte_len > 1;
+        if (!is_tab and !is_multibyte) {
             continue;
         }
 
-        // Slow path: mixed ASCII/non-ASCII
-        var i: usize = 0;
-        while (i < vector_len and pos + i < text.len) {
-            const b0 = text[pos + i];
-            const curr_cp: u21 = if (b0 < 0x80) b0 else decodeUtf8Unchecked(text, pos + i).cp;
-            const cp_len: usize = if (b0 < 0x80) 1 else decodeUtf8Unchecked(text, pos + i).len;
-
-            if (pos + i + cp_len > text.len) break;
-
-            const is_break = isGraphemeBreak(prev_cp, curr_cp, &break_state, width_method);
-
-            if (is_break) {
-                if (prev_cp != null and (cluster_is_multibyte or cluster_is_tab)) {
-                    if (cluster_width_state.width > 0 or width_method == .wcwidth) {
-                        const cluster_byte_len = (pos + i) - cluster_start;
-                        try result.append(allocator, GraphemeInfo{
-                            .byte_offset = @intCast(cluster_start),
-                            .byte_len = @intCast(cluster_byte_len),
-                            .width = @intCast(cluster_width_state.width),
-                            .col_offset = cluster_start_col,
-                        });
-                    }
-                    col += cluster_width_state.width;
-                } else if (prev_cp != null) {
-                    col += cluster_width_state.width;
-                }
-
-                cluster_start = pos + i;
-                cluster_start_col = col;
-                cluster_is_tab = (b0 == '\t');
-                cluster_is_multibyte = (cp_len != 1);
-
-                const cp_width = charWidth(b0, curr_cp, tab_width);
-                cluster_width_state = GraphemeWidthState.init(curr_cp, cp_width, width_method);
-            } else {
-                cluster_is_multibyte = cluster_is_multibyte or (cp_len != 1);
-                const cp_width = charWidth(b0, curr_cp, tab_width);
-                cluster_width_state.addCodepoint(curr_cp, cp_width);
-            }
-
-            prev_cp = curr_cp;
-            i += cp_len;
-        }
-        pos += i;
-    }
-
-    // Tail processing
-    while (pos < text.len) {
-        const b0 = text[pos];
-        const curr_cp: u21 = if (b0 < 0x80) b0 else decodeUtf8Unchecked(text, pos).cp;
-        const cp_len: usize = if (b0 < 0x80) 1 else decodeUtf8Unchecked(text, pos).len;
-
-        if (pos + cp_len > text.len) break;
-
-        const is_break = isGraphemeBreak(prev_cp, curr_cp, &break_state, width_method);
-
-        if (is_break) {
-            if (prev_cp != null and (cluster_is_multibyte or cluster_is_tab)) {
-                if (cluster_width_state.width > 0 or width_method == .wcwidth) {
-                    const cluster_byte_len = pos - cluster_start;
-                    try result.append(allocator, GraphemeInfo{
-                        .byte_offset = @intCast(cluster_start),
-                        .byte_len = @intCast(cluster_byte_len),
-                        .width = @intCast(cluster_width_state.width),
-                        .col_offset = cluster_start_col,
-                    });
-                }
-                col += cluster_width_state.width;
-            } else if (prev_cp != null) {
-                col += cluster_width_state.width;
-            }
-
-            cluster_start = pos;
-            cluster_start_col = col;
-            cluster_is_tab = (b0 == '\t');
-            cluster_is_multibyte = (cp_len != 1);
-
-            const cp_width = charWidth(b0, curr_cp, tab_width);
-            cluster_width_state = GraphemeWidthState.init(curr_cp, cp_width, width_method);
-        } else {
-            cluster_is_multibyte = cluster_is_multibyte or (cp_len != 1);
-            const cp_width = charWidth(b0, curr_cp, tab_width);
-            cluster_width_state.addCodepoint(curr_cp, cp_width);
+        if (width_method != .wcwidth and span.col_width == 0) {
+            continue;
         }
 
-        prev_cp = curr_cp;
-        pos += cp_len;
-    }
-
-    if (prev_cp != null and (cluster_is_multibyte or cluster_is_tab)) {
-        if (cluster_width_state.width > 0 or width_method == .wcwidth) {
-            const cluster_byte_len = text.len - cluster_start;
-            try result.append(allocator, GraphemeInfo{
-                .byte_offset = @intCast(cluster_start),
-                .byte_len = @intCast(cluster_byte_len),
-                .width = @intCast(cluster_width_state.width),
-                .col_offset = cluster_start_col,
-            });
-        }
-    }
-}
-
-/// Find all grapheme clusters using wcwidth-style codepoint-by-codepoint processing
-/// This version treats each codepoint as a separate character (tmux/wcwidth behavior)
-fn findGraphemeInfoWCWidth(
-    text: []const u8,
-    tab_width: u8,
-    isASCIIOnly: bool,
-    allocator: std.mem.Allocator,
-    result: *std.ArrayListUnmanaged(GraphemeInfo),
-) !void {
-    // wcwidth mode should still produce the same grapheme cluster boundaries as Unicode
-    // (so ZWJ sequences and combining marks stay together), but the width of each cluster
-    // is calculated using wcwidth (sum of codepoint widths). This keeps rendering coherent
-    // while preserving tmux-style widths.
-    if (isASCIIOnly) {
-        return;
-    }
-
-    if (text.len == 0) {
-        return;
-    }
-
-    var pos: usize = 0;
-    var col: u32 = 0;
-    var prev_cp: ?u21 = null;
-    var break_state: uucode.grapheme.BreakState = .default;
-
-    // Track current cluster
-    var cluster_start: usize = 0;
-    var cluster_start_col: u32 = 0;
-    var cluster_width_state: GraphemeWidthState = undefined;
-    var cluster_is_multibyte: bool = false;
-    var cluster_is_tab: bool = false;
-    var cluster_started = false;
-
-    while (pos < text.len) {
-        const b0 = text[pos];
-        const curr_cp: u21 = if (b0 < 0x80) b0 else blk: {
-            const dec = decodeUtf8Unchecked(text, pos);
-            if (pos + dec.len > text.len) break :blk 0xFFFD;
-            break :blk dec.cp;
-        };
-        const cp_len: usize = if (b0 < 0x80) 1 else decodeUtf8Unchecked(text, pos).len;
-
-        if (pos + cp_len > text.len) break;
-
-        // Use wcwidth break detection (each codepoint is separate, tmux-style)
-        const is_break = isGraphemeBreak(prev_cp, curr_cp, &break_state, .wcwidth);
-
-        if (is_break) {
-            if (cluster_started and (cluster_is_multibyte or cluster_is_tab)) {
-                try result.append(allocator, GraphemeInfo{
-                    .byte_offset = @intCast(cluster_start),
-                    .byte_len = @intCast(pos - cluster_start),
-                    .width = @intCast(cluster_width_state.width),
-                    .col_offset = cluster_start_col,
-                });
-                col += cluster_width_state.width;
-            } else if (cluster_started) {
-                // Still need to advance col by cluster width even if not emitted
-                col += cluster_width_state.width;
-            }
-
-            // Start a new cluster
-            cluster_start = pos;
-            cluster_start_col = col;
-            cluster_is_tab = (b0 == '\t');
-            cluster_is_multibyte = (cp_len != 1);
-            const cp_width = charWidth(b0, curr_cp, tab_width);
-            cluster_width_state = GraphemeWidthState.init(curr_cp, cp_width, .wcwidth);
-            cluster_started = true;
-        } else {
-            // Continuing cluster
-            cluster_is_multibyte = cluster_is_multibyte or (cp_len != 1);
-            const cp_width = charWidth(b0, curr_cp, tab_width);
-            cluster_width_state.addCodepoint(curr_cp, cp_width);
-        }
-
-        prev_cp = curr_cp;
-        pos += cp_len;
-    }
-
-    // Commit final cluster
-    if (cluster_started) {
-        if (cluster_is_multibyte or cluster_is_tab) {
-            try result.append(allocator, GraphemeInfo{
-                .byte_offset = @intCast(cluster_start),
-                .byte_len = @intCast(text.len - cluster_start),
-                .width = @intCast(cluster_width_state.width),
-                .col_offset = cluster_start_col,
-            });
-            col += cluster_width_state.width;
-        } else {
-            col += cluster_width_state.width;
-        }
+        try result.append(allocator, .{
+            .byte_offset = span.byte_start,
+            .byte_len = @intCast(span.byte_len),
+            .width = @intCast(span.col_width),
+            .col_offset = span.col_start,
+        });
     }
 }

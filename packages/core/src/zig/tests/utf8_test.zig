@@ -999,6 +999,291 @@ test "wrap breaks: buffer exceeding 64KB" {
 }
 
 // ============================================================================
+// SCAN LAYOUT
+//
+// scanLayout is the canonical scanner for byte+column facts. These tests pin
+// the invariants that adapter APIs depend on.
+// ============================================================================
+
+test "scanLayout: byte and column invariants" {
+    const text = "Hi\t가👋🏻!";
+
+    var result = utf8.LayoutScanResult.init(testing.allocator);
+    defer result.deinit();
+
+    try utf8.scanLayout(text, 4, false, .unicode, &result);
+
+    try testing.expect(result.spans.items.len > 0);
+    try testing.expectEqual(@as(u32, text.len), result.total_bytes);
+
+    var expected_byte_start: u32 = 0;
+    var expected_col_start: u32 = 0;
+    for (result.spans.items) |span| {
+        try testing.expect(span.byte_len >= 1);
+        try testing.expectEqual(expected_byte_start, span.byte_start);
+        try testing.expectEqual(expected_col_start, span.col_start);
+
+        expected_byte_start += span.byte_len;
+        expected_col_start += span.col_width;
+    }
+
+    try testing.expectEqual(result.total_bytes, expected_byte_start);
+    try testing.expectEqual(result.total_cols, expected_col_start);
+    try testing.expectEqual(utf8.calculateTextWidth(text, 4, false, .unicode), result.total_cols);
+}
+
+test "scanLayout: deterministic output for same input" {
+    const text = "ASCII words 世界 and 👩‍🚀!";
+
+    var first = utf8.LayoutScanResult.init(testing.allocator);
+    defer first.deinit();
+    var second = utf8.LayoutScanResult.init(testing.allocator);
+    defer second.deinit();
+
+    try utf8.scanLayout(text, 4, false, .unicode, &first);
+    try utf8.scanLayout(text, 4, false, .unicode, &second);
+
+    try testing.expectEqual(first.total_bytes, second.total_bytes);
+    try testing.expectEqual(first.total_cols, second.total_cols);
+    try testing.expectEqual(first.spans.items.len, second.spans.items.len);
+
+    for (first.spans.items, second.spans.items) |a, b| {
+        try testing.expectEqual(a.byte_start, b.byte_start);
+        try testing.expectEqual(a.byte_len, b.byte_len);
+        try testing.expectEqual(a.col_start, b.col_start);
+        try testing.expectEqual(a.col_width, b.col_width);
+        try testing.expectEqual(a.break_after, b.break_after);
+    }
+}
+
+test "scanLayout: hard break semantics for LF CR and CRLF" {
+    // CRLF must stay one zero-width span, so byte progression stays UTF-8 safe.
+    const cases = [_]struct {
+        text: []const u8,
+        byte_lens: []const u32,
+        col_widths: []const u16,
+    }{
+        .{ .text = "\n", .byte_lens = &[_]u32{1}, .col_widths = &[_]u16{0} },
+        .{ .text = "\r", .byte_lens = &[_]u32{1}, .col_widths = &[_]u16{0} },
+        .{ .text = "\r\n", .byte_lens = &[_]u32{2}, .col_widths = &[_]u16{0} },
+        .{ .text = "ab\ncd", .byte_lens = &[_]u32{ 1, 1, 1, 1, 1 }, .col_widths = &[_]u16{ 1, 1, 0, 1, 1 } },
+        .{ .text = "ab\rcd", .byte_lens = &[_]u32{ 1, 1, 1, 1, 1 }, .col_widths = &[_]u16{ 1, 1, 0, 1, 1 } },
+        .{ .text = "ab\r\ncd", .byte_lens = &[_]u32{ 1, 1, 2, 1, 1 }, .col_widths = &[_]u16{ 1, 1, 0, 1, 1 } },
+    };
+
+    for (cases) |tc| {
+        var result = utf8.LayoutScanResult.init(testing.allocator);
+        defer result.deinit();
+
+        try utf8.scanLayout(tc.text, 4, false, .unicode, &result);
+
+        try testing.expectEqual(tc.byte_lens.len, result.spans.items.len);
+        try testing.expectEqual(@as(u32, @intCast(tc.text.len)), result.total_bytes);
+
+        var expected_byte_start: u32 = 0;
+        var expected_col_start: u32 = 0;
+        for (result.spans.items, 0..) |span, i| {
+            try testing.expectEqual(expected_byte_start, span.byte_start);
+            try testing.expectEqual(tc.byte_lens[i], span.byte_len);
+            try testing.expectEqual(expected_col_start, span.col_start);
+            try testing.expectEqual(tc.col_widths[i], span.col_width);
+
+            expected_byte_start += span.byte_len;
+            expected_col_start += span.col_width;
+        }
+
+        try testing.expectEqual(result.total_bytes, expected_byte_start);
+        try testing.expectEqual(result.total_cols, expected_col_start);
+    }
+}
+
+test "scanLayout: tab at exact stop advances full tab width" {
+    const text = "abcd\tx";
+
+    var result = utf8.LayoutScanResult.init(testing.allocator);
+    defer result.deinit();
+
+    try utf8.scanLayout(text, 4, false, .unicode, &result);
+    try testing.expectEqual(@as(usize, 6), result.spans.items.len);
+
+    const tab_span = result.spans.items[4];
+    try testing.expectEqual(@as(u32, 4), tab_span.byte_start);
+    try testing.expectEqual(@as(u32, 4), tab_span.col_start);
+    try testing.expectEqual(@as(u16, 4), tab_span.col_width);
+    try testing.expectEqual(utf8.BreakKind.whitespace, tab_span.break_after);
+
+    try testing.expectEqual(@as(u32, 8), result.spans.items[5].col_start);
+    try testing.expectEqual(@as(u32, 9), result.total_cols);
+}
+
+test "scanLayout: out parameter is reset after failure" {
+    var scratch: [128]u8 = undefined;
+    var fba = std.heap.FixedBufferAllocator.init(&scratch);
+
+    var result = utf8.LayoutScanResult.init(fba.allocator());
+    defer result.deinit();
+
+    try utf8.scanLayout("abc", 4, true, .unicode, &result);
+    try testing.expectEqual(@as(usize, 3), result.spans.items.len);
+
+    try testing.expectError(error.OutOfMemory, utf8.scanLayout("a" ** 512, 4, true, .unicode, &result));
+    try testing.expectEqual(@as(usize, 0), result.spans.items.len);
+    try testing.expectEqual(@as(u32, 0), result.total_bytes);
+    try testing.expectEqual(@as(u32, 0), result.total_cols);
+}
+
+test "scanLayout adapter parity: findWrapBreaks" {
+    const text = "ab 세계-test 👋🏿 cd";
+
+    var scan_result = utf8.LayoutScanResult.init(testing.allocator);
+    defer scan_result.deinit();
+    try utf8.scanLayout(text, 4, false, .unicode, &scan_result);
+
+    var wrap_result = utf8.WrapBreakResult.init(testing.allocator);
+    defer wrap_result.deinit();
+    try utf8.findWrapBreaks(text, &wrap_result, .unicode);
+
+    var expected_count: usize = 0;
+    for (scan_result.spans.items) |span| {
+        if (span.break_after != .none) {
+            expected_count += 1;
+        }
+    }
+
+    try testing.expectEqual(expected_count, wrap_result.breaks.items.len);
+
+    var actual_index: usize = 0;
+    for (scan_result.spans.items, 0..) |span, idx| {
+        if (span.break_after == .none) {
+            continue;
+        }
+
+        try testing.expectEqual(span.byte_start, wrap_result.breaks.items[actual_index].byte_offset);
+        // WrapBreak.char_offset is grapheme index, not display column.
+        try testing.expectEqual(@as(u32, @intCast(idx)), wrap_result.breaks.items[actual_index].char_offset);
+        actual_index += 1;
+    }
+}
+
+test "scanLayout adapter parity: findGraphemeInfo" {
+    const text = "a\t世界👋🏿z";
+
+    var scan_result = utf8.LayoutScanResult.init(testing.allocator);
+    defer scan_result.deinit();
+    try utf8.scanLayout(text, 4, false, .unicode, &scan_result);
+
+    var grapheme_result: std.ArrayListUnmanaged(utf8.GraphemeInfo) = .{};
+    defer grapheme_result.deinit(testing.allocator);
+    try utf8.findGraphemeInfo(text, 4, false, .unicode, testing.allocator, &grapheme_result);
+
+    var expected_count: usize = 0;
+    for (scan_result.spans.items) |span| {
+        const byte_start: usize = @intCast(span.byte_start);
+        const is_tab = span.byte_len == 1 and text[byte_start] == '\t';
+        const is_multibyte = span.byte_len > 1;
+        // Legacy GraphemeInfo stores tabs and multibyte graphemes only.
+        if ((is_tab or is_multibyte) and span.col_width > 0) {
+            expected_count += 1;
+        }
+    }
+
+    try testing.expectEqual(expected_count, grapheme_result.items.len);
+
+    var actual_index: usize = 0;
+    for (scan_result.spans.items) |span| {
+        const byte_start: usize = @intCast(span.byte_start);
+        const is_tab = span.byte_len == 1 and text[byte_start] == '\t';
+        const is_multibyte = span.byte_len > 1;
+        if (!is_tab and !is_multibyte) {
+            continue;
+        }
+        if (span.col_width == 0) {
+            continue;
+        }
+
+        const g = grapheme_result.items[actual_index];
+        try testing.expectEqual(span.byte_start, g.byte_offset);
+        try testing.expectEqual(@as(u8, @intCast(span.byte_len)), g.byte_len);
+        try testing.expectEqual(@as(u8, @intCast(span.col_width)), g.width);
+        try testing.expectEqual(span.col_start, g.col_offset);
+        actual_index += 1;
+    }
+}
+
+test "scanLayout adapter matrix: findWrapBreaks width methods preserve legacy output" {
+    const text = "👩‍🚀 x";
+
+    var unicode_result = utf8.WrapBreakResult.init(testing.allocator);
+    defer unicode_result.deinit();
+    try utf8.findWrapBreaks(text, &unicode_result, .unicode);
+
+    const methods = [_]utf8.WidthMethod{ .no_zwj, .wcwidth };
+    for (methods) |method| {
+        var method_result = utf8.WrapBreakResult.init(testing.allocator);
+        defer method_result.deinit();
+        try utf8.findWrapBreaks(text, &method_result, method);
+
+        try testing.expectEqual(unicode_result.breaks.items.len, method_result.breaks.items.len);
+        for (unicode_result.breaks.items, method_result.breaks.items) |expected, actual| {
+            try testing.expectEqual(expected.byte_offset, actual.byte_offset);
+            try testing.expectEqual(expected.char_offset, actual.char_offset);
+        }
+    }
+}
+
+test "scanLayout adapter matrix: findGraphemeInfo parity across width methods" {
+    const text = "a\t👩‍🚀👋🏿🇺🇸e\u{0301}z";
+    const methods = [_]utf8.WidthMethod{ .unicode, .no_zwj, .wcwidth };
+
+    for (methods) |method| {
+        var scan_result = utf8.LayoutScanResult.init(testing.allocator);
+        defer scan_result.deinit();
+        try utf8.scanLayout(text, 4, false, method, &scan_result);
+
+        var grapheme_result: std.ArrayListUnmanaged(utf8.GraphemeInfo) = .{};
+        defer grapheme_result.deinit(testing.allocator);
+        try utf8.findGraphemeInfo(text, 4, false, method, testing.allocator, &grapheme_result);
+
+        var expected_count: usize = 0;
+        for (scan_result.spans.items) |span| {
+            const byte_start: usize = @intCast(span.byte_start);
+            const is_tab = span.byte_len == 1 and text[byte_start] == '\t';
+            const is_multibyte = span.byte_len > 1;
+            if (!is_tab and !is_multibyte) {
+                continue;
+            }
+            // Unicode and no_zwj skip zero-width clusters. wcwidth keeps them.
+            if (method != .wcwidth and span.col_width == 0) {
+                continue;
+            }
+            expected_count += 1;
+        }
+
+        try testing.expectEqual(expected_count, grapheme_result.items.len);
+
+        var actual_index: usize = 0;
+        for (scan_result.spans.items) |span| {
+            const byte_start: usize = @intCast(span.byte_start);
+            const is_tab = span.byte_len == 1 and text[byte_start] == '\t';
+            const is_multibyte = span.byte_len > 1;
+            if (!is_tab and !is_multibyte) {
+                continue;
+            }
+            if (method != .wcwidth and span.col_width == 0) {
+                continue;
+            }
+
+            const actual = grapheme_result.items[actual_index];
+            try testing.expectEqual(span.byte_start, actual.byte_offset);
+            try testing.expectEqual(@as(u8, @intCast(span.byte_len)), actual.byte_len);
+            try testing.expectEqual(@as(u8, @intCast(span.col_width)), actual.width);
+            try testing.expectEqual(span.col_start, actual.col_offset);
+            actual_index += 1;
+        }
+    }
+}
+
+// ============================================================================
 // EDGE CASES AND INTEGRATION TESTS
 // ============================================================================
 
