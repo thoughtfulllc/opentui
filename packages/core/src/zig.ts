@@ -2858,10 +2858,15 @@ class FFIRenderLib implements RenderLib {
     const outBuffer = new ArrayBuffer(LineInfoStruct.size)
     this.textBufferViewGetLineInfoDirect(view, ptr(outBuffer))
     const struct = LineInfoStruct.unpack(outBuffer)
+
+    const lineStartBytes = struct.startBytes as number[]
+    const lineWidthCols = struct.widthCols as number[]
+    const maxLineWidthCols = struct.maxWidthCols
+
     return {
-      maxLineWidth: struct.maxWidth,
-      lineStarts: struct.starts as number[],
-      lineWidths: struct.widths as number[],
+      lineStartBytes,
+      lineWidthCols,
+      maxLineWidthCols,
       lineSources: struct.sources as number[],
       lineWraps: struct.wraps as number[],
     }
@@ -2871,10 +2876,15 @@ class FFIRenderLib implements RenderLib {
     const outBuffer = new ArrayBuffer(LineInfoStruct.size)
     this.textBufferViewGetLogicalLineInfoDirect(view, ptr(outBuffer))
     const struct = LineInfoStruct.unpack(outBuffer)
+
+    const lineStartBytes = struct.startBytes as number[]
+    const lineWidthCols = struct.widthCols as number[]
+    const maxLineWidthCols = struct.maxWidthCols
+
     return {
-      maxLineWidth: struct.maxWidth,
-      lineStarts: struct.starts as number[],
-      lineWidths: struct.widths as number[],
+      lineStartBytes,
+      lineWidthCols,
+      maxLineWidthCols,
       lineSources: struct.sources as number[],
       lineWraps: struct.wraps as number[],
     }
@@ -3110,10 +3120,15 @@ class FFIRenderLib implements RenderLib {
     const outBuffer = new ArrayBuffer(LineInfoStruct.size)
     this.opentui.symbols.editorViewGetLineInfoDirect(view, ptr(outBuffer))
     const struct = LineInfoStruct.unpack(outBuffer)
+
+    const lineStartBytes = struct.startBytes as number[]
+    const lineWidthCols = struct.widthCols as number[]
+    const maxLineWidthCols = struct.maxWidthCols
+
     return {
-      maxLineWidth: struct.maxWidth,
-      lineStarts: struct.starts as number[],
-      lineWidths: struct.widths as number[],
+      lineStartBytes,
+      lineWidthCols,
+      maxLineWidthCols,
       lineSources: struct.sources as number[],
       lineWraps: struct.wraps as number[],
     }
@@ -3123,10 +3138,15 @@ class FFIRenderLib implements RenderLib {
     const outBuffer = new ArrayBuffer(LineInfoStruct.size)
     this.opentui.symbols.editorViewGetLogicalLineInfoDirect(view, ptr(outBuffer))
     const struct = LineInfoStruct.unpack(outBuffer)
+
+    const lineStartBytes = struct.startBytes as number[]
+    const lineWidthCols = struct.widthCols as number[]
+    const maxLineWidthCols = struct.maxWidthCols
+
     return {
-      maxLineWidth: struct.maxWidth,
-      lineStarts: struct.starts as number[],
-      lineWidths: struct.widths as number[],
+      lineStartBytes,
+      lineWidthCols,
+      maxLineWidthCols,
       lineSources: struct.sources as number[],
       lineWraps: struct.wraps as number[],
     }

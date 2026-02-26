@@ -113,9 +113,9 @@ export interface Highlight {
 }
 
 export interface LineInfo {
-  lineStarts: number[]
-  lineWidths: number[]
-  maxLineWidth: number
+  lineStartBytes: number[]
+  lineWidthCols: number[]
+  maxLineWidthCols: number
   lineSources: number[]
   lineWraps: number[]
 }

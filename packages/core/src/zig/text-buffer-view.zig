@@ -28,11 +28,11 @@ pub const Viewport = struct {
 };
 
 pub const LineInfo = struct {
-    starts: []const u32,
-    widths: []const u32,
-    sources: []const u32,
-    wraps: []const u32,
-    max_width: u32,
+    line_start_bytes: []const u32,
+    line_width_cols: []const u32,
+    line_sources: []const u32,
+    line_wraps: []const u32,
+    max_line_width_cols: u32,
 };
 
 pub const WrapInfo = struct {
@@ -73,8 +73,8 @@ pub const VirtualChunk = struct {
 
 pub const VirtualLine = struct {
     chunks: std.ArrayListUnmanaged(VirtualChunk),
-    width: u32,
-    char_offset: u32,
+    width_cols: u32,
+    col_offset: u32,
     source_line: usize,
     source_col_offset: u32,
     is_truncated: bool,
@@ -84,8 +84,8 @@ pub const VirtualLine = struct {
     pub fn init() VirtualLine {
         return .{
             .chunks = .{},
-            .width = 0,
-            .char_offset = 0,
+            .width_cols = 0,
+            .col_offset = 0,
             .source_line = 0,
             .source_col_offset = 0,
             .is_truncated = false,
@@ -270,49 +270,6 @@ pub const UnifiedTextBufferView = struct {
         }
     }
 
-    fn calculateChunkFitWord(self: *const Self, chunk: *const TextChunk, char_offset_in_chunk: u32, max_width: u32) tb.ChunkFitResult {
-        if (max_width == 0) return .{ .char_count = 0, .width = 0 };
-
-        const total_width = @as(u32, chunk.width) - char_offset_in_chunk;
-        if (total_width == 0) return .{ .char_count = 0, .width = 0 };
-        if (total_width <= max_width) return .{ .char_count = total_width, .width = total_width };
-
-        const wrap_offsets = self.text_buffer.getWrapOffsetsFor(chunk) catch {
-            const fit_width = @min(max_width, total_width);
-            return .{ .char_count = fit_width, .width = fit_width };
-        };
-
-        var last_boundary: ?u32 = null;
-        var first_boundary: ?u32 = null;
-
-        for (wrap_offsets) |wrap_break| {
-            const offset = @as(u32, wrap_break.char_offset);
-            if (offset < char_offset_in_chunk) continue;
-
-            const local_offset = offset - char_offset_in_chunk;
-            if (local_offset >= total_width) break;
-
-            const width_to_boundary = local_offset + 1;
-            if (first_boundary == null) first_boundary = width_to_boundary;
-
-            if (width_to_boundary <= max_width) {
-                last_boundary = width_to_boundary;
-            } else break;
-        }
-
-        if (last_boundary) |width| return .{ .char_count = width, .width = width };
-
-        const line_width = self.wrap_width orelse max_width;
-        const needs_force_break = (first_boundary orelse total_width) > line_width;
-
-        if (needs_force_break) {
-            const fit_width = @min(max_width, total_width);
-            return .{ .char_count = fit_width, .width = fit_width };
-        }
-
-        return .{ .char_count = 0, .width = 0 };
-    }
-
     pub fn updateVirtualLines(self: *Self) void {
         const buffer_dirty = self.text_buffer.isViewDirty(self.view_id);
         if (!self.virtual_lines_dirty and !buffer_dirty) return;
@@ -383,31 +340,31 @@ pub const UnifiedTextBufferView = struct {
             const start_idx = @min(vp.y, @as(u32, @intCast(self.cached_line_starts.items.len)));
             const end_idx = @min(start_idx + vp.height, @as(u32, @intCast(self.cached_line_starts.items.len)));
 
-            const viewport_starts = self.cached_line_starts.items[start_idx..end_idx];
-            const viewport_widths = self.cached_line_widths.items[start_idx..end_idx];
-            const viewport_sources = self.cached_line_sources.items[start_idx..end_idx];
-            const viewport_wraps = self.cached_line_wrap_indices.items[start_idx..end_idx];
+            const viewport_line_start_bytes = self.cached_line_starts.items[start_idx..end_idx];
+            const viewport_line_width_cols = self.cached_line_widths.items[start_idx..end_idx];
+            const viewport_line_sources = self.cached_line_sources.items[start_idx..end_idx];
+            const viewport_line_wraps = self.cached_line_wrap_indices.items[start_idx..end_idx];
 
             var max_width: u32 = 0;
-            for (viewport_widths) |w| {
+            for (viewport_line_width_cols) |w| {
                 max_width = @max(max_width, w);
             }
 
             return LineInfo{
-                .starts = viewport_starts,
-                .widths = viewport_widths,
-                .sources = viewport_sources,
-                .wraps = viewport_wraps,
-                .max_width = max_width,
+                .line_start_bytes = viewport_line_start_bytes,
+                .line_width_cols = viewport_line_width_cols,
+                .line_sources = viewport_line_sources,
+                .line_wraps = viewport_line_wraps,
+                .max_line_width_cols = max_width,
             };
         }
 
         return LineInfo{
-            .starts = self.cached_line_starts.items,
-            .widths = self.cached_line_widths.items,
-            .sources = self.cached_line_sources.items,
-            .wraps = self.cached_line_wrap_indices.items,
-            .max_width = self.text_buffer.maxLineWidth(),
+            .line_start_bytes = self.cached_line_starts.items,
+            .line_width_cols = self.cached_line_widths.items,
+            .line_sources = self.cached_line_sources.items,
+            .line_wraps = self.cached_line_wrap_indices.items,
+            .max_line_width_cols = self.text_buffer.maxLineWidth(),
         };
     }
 
@@ -415,11 +372,11 @@ pub const UnifiedTextBufferView = struct {
         self.updateVirtualLines();
 
         return LineInfo{
-            .starts = self.cached_line_starts.items,
-            .widths = self.cached_line_widths.items,
-            .sources = self.cached_line_sources.items,
-            .wraps = self.cached_line_wrap_indices.items,
-            .max_width = self.text_buffer.maxLineWidth(),
+            .line_start_bytes = self.cached_line_starts.items,
+            .line_width_cols = self.cached_line_widths.items,
+            .line_sources = self.cached_line_sources.items,
+            .line_wraps = self.cached_line_wrap_indices.items,
+            .max_line_width_cols = self.text_buffer.maxLineWidth(),
         };
     }
 
@@ -459,7 +416,7 @@ pub const UnifiedTextBufferView = struct {
 
             const vline = &vlines[vline_idx];
             const vline_start_col = vline.source_col_offset;
-            const vline_end_col = vline_start_col + vline.width;
+            const vline_end_col = vline_start_col + vline.width_cols;
 
             const is_last_vline = (i == vline_count - 1);
 
@@ -623,17 +580,17 @@ pub const UnifiedTextBufferView = struct {
 
         const text_end_offset = self.getTextEndOffset();
 
-        const focus_char_offset = if (focus_above or focusX < 0)
+        const focus_col_offset = if (focus_above or focusX < 0)
             0
         else if (focus_below)
             text_end_offset
         else
             self.coordsToCharOffset(focusX, focusY) orelse return false;
 
-        const new_start = @min(anchor_offset, focus_char_offset);
-        var new_end = @max(anchor_offset, focus_char_offset);
+        const new_start = @min(anchor_offset, focus_col_offset);
+        var new_end = @max(anchor_offset, focus_col_offset);
 
-        if (focus_char_offset < anchor_offset) {
+        if (focus_col_offset < anchor_offset) {
             new_end = @min(new_end + 1, text_end_offset);
         }
 
@@ -662,10 +619,10 @@ pub const UnifiedTextBufferView = struct {
         const last_vline = &self.virtual_lines.items[last_line_idx];
 
         if (last_vline.is_truncated) {
-            return last_vline.char_offset + last_vline.truncation_suffix_start + (last_vline.width - last_vline.ellipsis_pos - 3);
+            return last_vline.col_offset + last_vline.truncation_suffix_start + (last_vline.width_cols - last_vline.ellipsis_pos - 3);
         }
 
-        return last_vline.char_offset + last_vline.width;
+        return last_vline.col_offset + last_vline.width_cols;
     }
 
     fn coordsToCharOffset(self: *Self, x: i32, y: i32) ?u32 {
@@ -691,8 +648,8 @@ pub const UnifiedTextBufferView = struct {
 
         const vline_idx: usize = @intCast(clamped_y);
         const vline = &self.virtual_lines.items[vline_idx];
-        const lineStart = vline.char_offset;
-        const lineWidth = vline.width;
+        const lineStart = vline.col_offset;
+        const lineWidth = vline.width_cols;
 
         var localX = @max(0, @min(abs_x, @as(i32, @intCast(lineWidth))));
 
@@ -914,21 +871,21 @@ pub const UnifiedTextBufferView = struct {
         const ellipsis_width: u32 = 3;
 
         for (self.virtual_lines.items) |*vline| {
-            if (vline.width <= vp.width) continue;
+            if (vline.width_cols <= vp.width) continue;
 
             if (vp.width <= ellipsis_width) {
                 vline.chunks.clearRetainingCapacity();
-                vline.width = 0;
+                vline.width_cols = 0;
                 vline.is_truncated = true;
                 vline.ellipsis_pos = 0;
-                vline.truncation_suffix_start = vline.width;
+                vline.truncation_suffix_start = vline.width_cols;
                 continue;
             }
 
             const available_width = vp.width - ellipsis_width;
             const prefix_width = available_width / 2;
             const suffix_width = available_width - prefix_width;
-            const suffix_start_target = vline.width - suffix_width;
+            const suffix_start_target = vline.width_cols - suffix_width;
 
             var new_chunks: std.ArrayListUnmanaged(VirtualChunk) = .{};
 
@@ -965,7 +922,7 @@ pub const UnifiedTextBufferView = struct {
                     chunk,
                     chunk_line_col,
                     suffix_start_target,
-                    vline.width,
+                    vline.width_cols,
                 );
                 if (added.width_added > 0 and suffix_first_col == null) {
                     suffix_first_col = added.first_col_in_line;
@@ -976,7 +933,7 @@ pub const UnifiedTextBufferView = struct {
 
             vline.chunks.clearRetainingCapacity();
             vline.chunks.appendSlice(self.virtual_lines_arena.allocator(), new_chunks.items) catch return;
-            vline.width = prefix_accumulated + ellipsis_width + suffix_accumulated;
+            vline.width_cols = prefix_accumulated + ellipsis_width + suffix_accumulated;
             vline.is_truncated = true;
             vline.ellipsis_pos = prefix_accumulated;
             vline.truncation_suffix_start = suffix_first_col orelse suffix_start_target;
@@ -1163,14 +1120,14 @@ pub const UnifiedTextBufferView = struct {
                     ctx.output.cached_line_vline_counts.append(ctx.allocator, 1) catch {};
 
                     var vline = if (ctx.current_vline) |v| v else VirtualLine.init();
-                    vline.width = line_info.width;
-                    vline.char_offset = line_info.char_offset;
+                    vline.width_cols = line_info.width_cols;
+                    vline.col_offset = line_info.col_offset;
                     vline.source_line = line_info.line_idx;
                     vline.source_col_offset = 0;
 
                     ctx.output.virtual_lines.append(ctx.allocator, vline) catch {};
                     ctx.output.cached_line_starts.append(ctx.allocator, ctx.line_start_byte_offset) catch {};
-                    ctx.output.cached_line_widths.append(ctx.allocator, vline.width) catch {};
+                    ctx.output.cached_line_widths.append(ctx.allocator, vline.width_cols) catch {};
                     ctx.output.cached_line_sources.append(ctx.allocator, @intCast(line_info.line_idx)) catch {};
                     ctx.output.cached_line_wrap_indices.append(ctx.allocator, 0) catch {};
 
@@ -1290,7 +1247,7 @@ pub const UnifiedTextBufferView = struct {
                     wctx.global_col_offset += span.col_width;
                     wctx.line_col_offset += span.col_width;
                     wctx.line_start_byte_offset += span.byte_len;
-                    wctx.current_vline.char_offset = wctx.global_col_offset;
+                    wctx.current_vline.col_offset = wctx.global_col_offset;
                     wctx.clearLastWrap();
                 }
 
@@ -1325,12 +1282,12 @@ pub const UnifiedTextBufferView = struct {
                         wctx.current_vline.chunks.items.len = write_idx + 1;
                     }
 
-                    wctx.current_vline.width = wctx.line_position;
+                    wctx.current_vline.width_cols = wctx.line_position;
                     wctx.current_vline.source_line = wctx.line_idx;
                     wctx.current_vline.source_col_offset = wctx.line_col_offset;
                     wctx.output.virtual_lines.append(wctx.allocator, wctx.current_vline) catch {};
                     wctx.output.cached_line_starts.append(wctx.allocator, wctx.line_start_byte_offset) catch {};
-                    wctx.output.cached_line_widths.append(wctx.allocator, wctx.current_vline.width) catch {};
+                    wctx.output.cached_line_widths.append(wctx.allocator, wctx.current_vline.width_cols) catch {};
                     wctx.output.cached_line_sources.append(wctx.allocator, wctx.line_idx) catch {};
                     wctx.output.cached_line_wrap_indices.append(wctx.allocator, wctx.current_line_vline_count) catch {};
 
@@ -1339,7 +1296,7 @@ pub const UnifiedTextBufferView = struct {
                     wctx.line_col_offset += wctx.line_position;
                     wctx.line_start_byte_offset = wctx.global_byte_offset;
                     wctx.current_vline = VirtualLine.init();
-                    wctx.current_vline.char_offset = wctx.global_col_offset;
+                    wctx.current_vline.col_offset = wctx.global_col_offset;
                     wctx.line_position = 0;
 
                     wctx.current_chunk_wrap_breaks.clearRetainingCapacity();
@@ -1477,7 +1434,7 @@ pub const UnifiedTextBufferView = struct {
                 fn line_end_callback(ctx_ptr: *anyopaque, line_info: iter_mod.LineInfo) void {
                     const wctx = @as(*@This(), @ptrCast(@alignCast(ctx_ptr)));
 
-                    if (wctx.current_vline.chunks.items.len > 0 or line_info.width == 0) {
+                    if (wctx.current_vline.chunks.items.len > 0 or line_info.width_cols == 0) {
                         wctx.commitVirtualLine();
                     }
 
@@ -1492,7 +1449,7 @@ pub const UnifiedTextBufferView = struct {
                     wctx.line_position = 0;
                     wctx.line_start_byte_offset = wctx.global_byte_offset;
                     wctx.current_vline = VirtualLine.init();
-                    wctx.current_vline.char_offset = wctx.global_col_offset;
+                    wctx.current_vline.col_offset = wctx.global_col_offset;
                     wctx.current_line_first_vline_idx = @intCast(wctx.output.virtual_lines.items.len);
                     wctx.current_line_vline_count = 0;
 

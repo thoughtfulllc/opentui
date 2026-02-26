@@ -24,8 +24,8 @@ describe("TextBufferView", () => {
       buffer.setStyledText(emptyText)
 
       const lineInfo = view.lineInfo
-      expect(lineInfo.lineStarts).toEqual([0])
-      expect(lineInfo.lineWidths).toEqual([0])
+      expect(lineInfo.lineStartBytes).toEqual([0])
+      expect(lineInfo.lineWidthCols).toEqual([0])
     })
 
     it("should return single line info for simple text without newlines", () => {
@@ -33,9 +33,20 @@ describe("TextBufferView", () => {
       buffer.setStyledText(styledText)
 
       const lineInfo = view.lineInfo
-      expect(lineInfo.lineStarts).toEqual([0])
-      expect(lineInfo.lineWidths.length).toBe(1)
-      expect(lineInfo.lineWidths[0]).toBeGreaterThan(0)
+      expect(lineInfo.lineStartBytes).toEqual([0])
+      expect(lineInfo.lineWidthCols.length).toBe(1)
+      expect(lineInfo.lineWidthCols[0]).toBeGreaterThan(0)
+    })
+
+    it("should expose canonical line info names", () => {
+      const styledText = stringToStyledText("Hello")
+      buffer.setStyledText(styledText)
+
+      const lineInfo = view.lineInfo
+
+      expect(lineInfo.lineStartBytes).toEqual([0])
+      expect(lineInfo.lineWidthCols).toEqual([5])
+      expect(lineInfo.maxLineWidthCols).toBe(5)
     })
 
     it("should handle single newline correctly", () => {
@@ -44,10 +55,10 @@ describe("TextBufferView", () => {
 
       const lineInfo = view.lineInfo
       // With newline-aware offsets: "Hello" (0-4) + newline (5) + "World" starts at 6
-      expect(lineInfo.lineStarts).toEqual([0, 6])
-      expect(lineInfo.lineWidths.length).toBe(2)
-      expect(lineInfo.lineWidths[0]).toBeGreaterThan(0)
-      expect(lineInfo.lineWidths[1]).toBeGreaterThan(0)
+      expect(lineInfo.lineStartBytes).toEqual([0, 6])
+      expect(lineInfo.lineWidthCols.length).toBe(2)
+      expect(lineInfo.lineWidthCols[0]).toBeGreaterThan(0)
+      expect(lineInfo.lineWidthCols[1]).toBeGreaterThan(0)
     })
 
     it("should return virtual line info when text wrapping is enabled", () => {
@@ -56,24 +67,24 @@ describe("TextBufferView", () => {
       buffer.setStyledText(styledText)
 
       const unwrappedInfo = view.lineInfo
-      expect(unwrappedInfo.lineStarts).toEqual([0])
-      expect(unwrappedInfo.lineWidths.length).toBe(1)
-      expect(unwrappedInfo.lineWidths[0]).toBe(76)
+      expect(unwrappedInfo.lineStartBytes).toEqual([0])
+      expect(unwrappedInfo.lineWidthCols.length).toBe(1)
+      expect(unwrappedInfo.lineWidthCols[0]).toBe(76)
 
       view.setWrapMode("char") // Enable wrapping
       view.setWrapWidth(20)
 
       const wrappedInfo = view.lineInfo
 
-      expect(wrappedInfo.lineStarts.length).toBeGreaterThan(1)
-      expect(wrappedInfo.lineWidths.length).toBeGreaterThan(1)
+      expect(wrappedInfo.lineStartBytes.length).toBeGreaterThan(1)
+      expect(wrappedInfo.lineWidthCols.length).toBeGreaterThan(1)
 
-      for (const width of wrappedInfo.lineWidths) {
+      for (const width of wrappedInfo.lineWidthCols) {
         expect(width).toBeLessThanOrEqual(20)
       }
 
-      for (let i = 1; i < wrappedInfo.lineStarts.length; i++) {
-        expect(wrappedInfo.lineStarts[i]).toBeGreaterThan(wrappedInfo.lineStarts[i - 1])
+      for (let i = 1; i < wrappedInfo.lineStartBytes.length; i++) {
+        expect(wrappedInfo.lineStartBytes[i]).toBeGreaterThan(wrappedInfo.lineStartBytes[i - 1])
       }
     })
 
@@ -87,9 +98,9 @@ describe("TextBufferView", () => {
 
       const lineInfo = view.lineInfo
 
-      expect(lineInfo.lineStarts.length).toBeGreaterThan(1)
+      expect(lineInfo.lineStartBytes.length).toBeGreaterThan(1)
 
-      for (const width of lineInfo.lineWidths) {
+      for (const width of lineInfo.lineWidthCols) {
         expect(width).toBeLessThanOrEqual(12)
       }
     })
@@ -104,8 +115,8 @@ describe("TextBufferView", () => {
 
       const lineInfo = view.lineInfo
 
-      expect(lineInfo.lineStarts).toEqual([0, 10, 20])
-      expect(lineInfo.lineWidths).toEqual([10, 10, 6])
+      expect(lineInfo.lineStartBytes).toEqual([0, 10, 20])
+      expect(lineInfo.lineWidthCols).toEqual([10, 10, 6])
     })
 
     it("should update lineInfo when wrap width changes", () => {
@@ -117,12 +128,12 @@ describe("TextBufferView", () => {
       view.setWrapWidth(15)
 
       const lineInfo1 = view.lineInfo
-      const lineCount1 = lineInfo1.lineStarts.length
+      const lineCount1 = lineInfo1.lineStartBytes.length
 
       view.setWrapWidth(30)
 
       const lineInfo2 = view.lineInfo
-      const lineCount2 = lineInfo2.lineStarts.length
+      const lineCount2 = lineInfo2.lineStartBytes.length
 
       expect(lineCount2).toBeLessThan(lineCount1)
     })
@@ -134,19 +145,19 @@ describe("TextBufferView", () => {
 
       const originalInfo = view.lineInfo
       // With newline-aware offsets: Line 0 (0-5) + newline (6) + Line 1 (7-12) + newline (13) + Line 2 (14-19)
-      expect(originalInfo.lineStarts).toEqual([0, 7, 14])
+      expect(originalInfo.lineStartBytes).toEqual([0, 7, 14])
 
       view.setWrapMode("char") // Enable wrapping
       view.setWrapWidth(5)
 
       const wrappedInfo = view.lineInfo
-      expect(wrappedInfo.lineStarts.length).toBeGreaterThan(3)
+      expect(wrappedInfo.lineStartBytes.length).toBeGreaterThan(3)
 
       view.setWrapMode("none") // Disable wrapping
       view.setWrapWidth(null)
 
       const unwrappedInfo = view.lineInfo
-      expect(unwrappedInfo.lineStarts).toEqual([0, 7, 14])
+      expect(unwrappedInfo.lineStartBytes).toEqual([0, 7, 14])
     })
 
     it("should return extended wrap info", () => {
@@ -207,49 +218,49 @@ describe("TextBufferView", () => {
       }
     }
 
-    const assertMonotonicAndProgress = (lineStarts: number[], lineWidths: number[]) => {
-      for (let i = 1; i < lineStarts.length; i++) {
-        expect(lineStarts[i]).toBeGreaterThanOrEqual(lineStarts[i - 1])
-        if (lineWidths[i - 1]! > 0) {
-          expect(lineStarts[i]).toBeGreaterThan(lineStarts[i - 1])
+    const assertMonotonicAndProgress = (lineStartBytes: number[], lineWidthCols: number[]) => {
+      for (let i = 1; i < lineStartBytes.length; i++) {
+        expect(lineStartBytes[i]).toBeGreaterThanOrEqual(lineStartBytes[i - 1])
+        if (lineWidthCols[i - 1]! > 0) {
+          expect(lineStartBytes[i]).toBeGreaterThan(lineStartBytes[i - 1])
         }
       }
     }
 
     it('word wrap width=1 advances bytes for "가a"', () => {
       const info = setWordWrap("가a", 1)
-      expect(info.lineStarts).toEqual([0, 3])
-      expect(info.lineWidths).toEqual([2, 1])
-      assertUtf8BoundarySlices("가a", info.lineStarts)
+      expect(info.lineStartBytes).toEqual([0, 3])
+      expect(info.lineWidthCols).toEqual([2, 1])
+      assertUtf8BoundarySlices("가a", info.lineStartBytes)
     })
 
     it('word wrap width=1 advances bytes for "가나다"', () => {
       const info = setWordWrap("가나다", 1)
-      expect(info.lineStarts).toEqual([0, 3, 6])
-      assertMonotonicAndProgress(info.lineStarts, info.lineWidths)
-      assertUtf8BoundarySlices("가나다", info.lineStarts)
+      expect(info.lineStartBytes).toEqual([0, 3, 6])
+      assertMonotonicAndProgress(info.lineStartBytes, info.lineWidthCols)
+      assertUtf8BoundarySlices("가나다", info.lineStartBytes)
     })
 
     it('word wrap width=1 advances bytes for "👋🏻a"', () => {
       const info = setWordWrap("👋🏻a", 1)
-      expect(info.lineStarts).toEqual([0, 8])
-      expect(info.lineWidths).toEqual([4, 1])
-      assertUtf8BoundarySlices("👋🏻a", info.lineStarts)
+      expect(info.lineStartBytes).toEqual([0, 8])
+      expect(info.lineWidthCols).toEqual([4, 1])
+      assertUtf8BoundarySlices("👋🏻a", info.lineStartBytes)
     })
 
     it('word wrap width=1 advances bytes for "\\tA"', () => {
       const info = setWordWrap("\tA", 1)
-      expect(info.lineStarts).toEqual([0, 1])
-      assertUtf8BoundarySlices("\tA", info.lineStarts)
+      expect(info.lineStartBytes).toEqual([0, 1])
+      assertUtf8BoundarySlices("\tA", info.lineStartBytes)
     })
 
     it('issue-609 representative Korean "흐름도" uses byte starts', () => {
       const info = setWordWrap("흐름도", 4)
-      expect(info.lineStarts).toEqual([0, 6])
-      assertUtf8BoundarySlices("흐름도", info.lineStarts)
+      expect(info.lineStartBytes).toEqual([0, 6])
+      assertUtf8BoundarySlices("흐름도", info.lineStartBytes)
     })
 
-    it("lineStarts are byte-safe slice boundaries", () => {
+    it("lineStartBytes are byte-safe slice boundaries", () => {
       const samples = [
         { text: "가a", width: 1 },
         { text: "가나다", width: 1 },
@@ -260,11 +271,11 @@ describe("TextBufferView", () => {
 
       for (const sample of samples) {
         const info = setWordWrap(sample.text, sample.width)
-        assertUtf8BoundarySlices(sample.text, info.lineStarts)
+        assertUtf8BoundarySlices(sample.text, info.lineStartBytes)
       }
     })
 
-    it("lineStarts monotonicity/property corpus uses a fixed seed", () => {
+    it("lineStartBytes monotonicity/property corpus uses a fixed seed", () => {
       let seed = 0x17c0ffee
       const nextU32 = () => {
         seed = (seed * 1664525 + 1013904223) >>> 0
@@ -286,49 +297,49 @@ describe("TextBufferView", () => {
 
       for (const sample of samples) {
         const info = setWordWrap(sample.text, sample.width)
-        assertUtf8BoundarySlices(sample.text, info.lineStarts)
-        assertMonotonicAndProgress(info.lineStarts, info.lineWidths)
+        assertUtf8BoundarySlices(sample.text, info.lineStartBytes)
+        assertMonotonicAndProgress(info.lineStartBytes, info.lineWidthCols)
       }
     })
 
     it("overflowing whitespace drop policy is pinned", () => {
       const info = setWordWrap("hello world", 5)
-      expect(info.lineStarts).toEqual([0, 6])
-      assertUtf8BoundarySlices("hello world", info.lineStarts)
+      expect(info.lineStartBytes).toEqual([0, 6])
+      assertUtf8BoundarySlices("hello world", info.lineStartBytes)
     })
 
     it("tab-at-exact-stop break policy is pinned", () => {
       buffer.setTabWidth(4)
       const info = setWordWrap("abcd\tx", 8)
-      expect(info.lineStarts).toEqual([0, 5])
-      assertUtf8BoundarySlices("abcd\tx", info.lineStarts)
+      expect(info.lineStartBytes).toEqual([0, 5])
+      assertUtf8BoundarySlices("abcd\tx", info.lineStartBytes)
     })
 
     it("hard-break policies for LF, CR, and CRLF are pinned", () => {
       buffer.setStyledText(stringToStyledText("ab\ncd"))
       view.setWrapMode("none")
       const lf = view.lineInfo
-      expect(lf.lineStarts).toEqual([0, 3])
-      assertUtf8BoundarySlices("ab\ncd", lf.lineStarts)
+      expect(lf.lineStartBytes).toEqual([0, 3])
+      assertUtf8BoundarySlices("ab\ncd", lf.lineStartBytes)
 
       buffer.setStyledText(stringToStyledText("ab\rcd"))
       view.setWrapMode("none")
       const cr = view.lineInfo
-      expect(cr.lineStarts).toEqual([0, 3])
-      assertUtf8BoundarySlices("ab\rcd", cr.lineStarts)
+      expect(cr.lineStartBytes).toEqual([0, 3])
+      assertUtf8BoundarySlices("ab\rcd", cr.lineStartBytes)
 
       buffer.setStyledText(stringToStyledText("ab\r\ncd"))
       view.setWrapMode("none")
       const crlf = view.lineInfo
-      expect(crlf.lineStarts).toEqual([0, 4])
-      assertUtf8BoundarySlices("ab\r\ncd", crlf.lineStarts)
+      expect(crlf.lineStartBytes).toEqual([0, 4])
+      assertUtf8BoundarySlices("ab\r\ncd", crlf.lineStartBytes)
     })
 
     it("lineInfo is deterministic without mutation", () => {
       const info1 = setWordWrap("가a", 1)
       const info2 = view.lineInfo
-      expect(info2.lineStarts).toEqual(info1.lineStarts)
-      expect(info2.lineWidths).toEqual(info1.lineWidths)
+      expect(info2.lineStartBytes).toEqual(info1.lineStartBytes)
+      expect(info2.lineWidthCols).toEqual(info1.lineWidthCols)
       expect(info2.lineSources).toEqual(info1.lineSources)
       expect(info2.lineWraps).toEqual(info1.lineWraps)
     })
@@ -360,11 +371,11 @@ describe("TextBufferView", () => {
       for (const widthMethod of ["wcwidth", "unicode"] as const) {
         for (const sample of samples) {
           const info = runCase(widthMethod, sample.text, sample.width)
-          assertUtf8BoundarySlices(sample.text, info.lineStarts)
-          assertMonotonicAndProgress(info.lineStarts, info.lineWidths)
+          assertUtf8BoundarySlices(sample.text, info.lineStartBytes)
+          assertMonotonicAndProgress(info.lineStartBytes, info.lineWidthCols)
 
           if (widthMethod === "wcwidth" && sample.text === "가a") {
-            expect(info.lineStarts).toEqual([0, 3])
+            expect(info.lineStartBytes).toEqual([0, 3])
           }
         }
       }
@@ -576,9 +587,9 @@ describe("TextBufferView", () => {
       buffer.setStyledText(styledText)
 
       const lineInfoBefore = view.lineInfo
-      expect(lineInfoBefore.lineStarts).toEqual([0, 15])
-      expect(lineInfoBefore.lineWidths[0]).toBe(14)
-      expect(lineInfoBefore.lineWidths[1]).toBe(6)
+      expect(lineInfoBefore.lineStartBytes).toEqual([0, 15])
+      expect(lineInfoBefore.lineWidthCols[0]).toBe(14)
+      expect(lineInfoBefore.lineWidthCols[1]).toBe(6)
 
       // Modify the buffer (this would normally go through EditBuffer with undo tracking)
       // For this test, we'll just verify the view updates correctly
@@ -586,15 +597,15 @@ describe("TextBufferView", () => {
       buffer.setStyledText(modifiedText)
 
       const lineInfoAfterModify = view.lineInfo
-      expect(lineInfoAfterModify.lineStarts).toEqual([0, 8])
-      expect(lineInfoAfterModify.lineWidths[0]).toBe(7)
+      expect(lineInfoAfterModify.lineStartBytes).toEqual([0, 8])
+      expect(lineInfoAfterModify.lineWidthCols[0]).toBe(7)
 
       // Restore original (simulating undo)
       buffer.setStyledText(styledText)
 
       const lineInfoAfterRestore = view.lineInfo
-      expect(lineInfoAfterRestore.lineStarts).toEqual([0, 15])
-      expect(lineInfoAfterRestore.lineWidths[0]).toBe(14)
+      expect(lineInfoAfterRestore.lineStartBytes).toEqual([0, 15])
+      expect(lineInfoAfterRestore.lineWidthCols[0]).toBe(14)
     })
 
     it("should handle line info correctly through multiple undo/redo cycles", () => {
@@ -604,30 +615,30 @@ describe("TextBufferView", () => {
 
       buffer.setStyledText(text1)
       const info1 = view.lineInfo
-      expect(info1.lineWidths[0]).toBe(5)
+      expect(info1.lineWidthCols[0]).toBe(5)
 
       buffer.setStyledText(text2)
       const info2 = view.lineInfo
-      expect(info2.lineWidths[0]).toBe(21)
+      expect(info2.lineWidthCols[0]).toBe(21)
 
       buffer.setStyledText(text3)
       const info3 = view.lineInfo
-      expect(info3.lineWidths[0]).toBe(1)
+      expect(info3.lineWidthCols[0]).toBe(1)
 
       // Go back to text2 (simulating undo)
       buffer.setStyledText(text2)
       const info2Again = view.lineInfo
-      expect(info2Again.lineWidths[0]).toBe(21)
+      expect(info2Again.lineWidthCols[0]).toBe(21)
 
       // Go back to text1 (simulating another undo)
       buffer.setStyledText(text1)
       const info1Again = view.lineInfo
-      expect(info1Again.lineWidths[0]).toBe(5)
+      expect(info1Again.lineWidthCols[0]).toBe(5)
 
       // Forward to text2 (simulating redo)
       buffer.setStyledText(text2)
       const info2Redo = view.lineInfo
-      expect(info2Redo.lineWidths[0]).toBe(21)
+      expect(info2Redo.lineWidthCols[0]).toBe(21)
     })
 
     it("should correctly track line starts after undo with multiline text", () => {
@@ -636,16 +647,16 @@ describe("TextBufferView", () => {
 
       buffer.setStyledText(original)
       const originalInfo = view.lineInfo
-      expect(originalInfo.lineStarts).toEqual([0, 15, 30])
+      expect(originalInfo.lineStartBytes).toEqual([0, 15, 30])
 
       buffer.setStyledText(modified)
       const modifiedInfo = view.lineInfo
-      expect(modifiedInfo.lineStarts).toEqual([0, 8, 23])
+      expect(modifiedInfo.lineStartBytes).toEqual([0, 8, 23])
 
       // Restore (undo)
       buffer.setStyledText(original)
       const restoredInfo = view.lineInfo
-      expect(restoredInfo.lineStarts).toEqual([0, 15, 30])
+      expect(restoredInfo.lineStartBytes).toEqual([0, 15, 30])
     })
   })
 
@@ -655,8 +666,8 @@ describe("TextBufferView", () => {
       buffer.setStyledText(emptyText)
 
       const lineInfo = view.lineInfo
-      expect(lineInfo.lineStarts).toEqual([0])
-      expect(lineInfo.lineWidths).toEqual([0])
+      expect(lineInfo.lineStartBytes).toEqual([0])
+      expect(lineInfo.lineWidthCols).toEqual([0])
     })
 
     it("should maintain stable char offsets with wide characters", () => {
@@ -669,11 +680,11 @@ describe("TextBufferView", () => {
 
       const lineInfo = view.lineInfo
       // Should wrap at display width boundaries
-      expect(lineInfo.lineStarts[0]).toBe(0)
-      expect(lineInfo.lineStarts.length).toBeGreaterThan(1)
+      expect(lineInfo.lineStartBytes[0]).toBe(0)
+      expect(lineInfo.lineStartBytes.length).toBeGreaterThan(1)
 
       // Each line should respect wrap width in display columns
-      for (const width of lineInfo.lineWidths) {
+      for (const width of lineInfo.lineWidthCols) {
         expect(width).toBeLessThanOrEqual(4)
       }
     })
@@ -702,7 +713,7 @@ describe("TextBufferView", () => {
 
       const lineInfo = view.lineInfo
       // Tabs expand to display width, offsets should account for this
-      expect(lineInfo.lineStarts.length).toBeGreaterThanOrEqual(1)
+      expect(lineInfo.lineStartBytes.length).toBeGreaterThanOrEqual(1)
     })
 
     it("should handle emoji in wrapped view", () => {
@@ -714,10 +725,10 @@ describe("TextBufferView", () => {
       view.setWrapWidth(6)
 
       const lineInfo = view.lineInfo
-      expect(lineInfo.lineStarts.length).toBeGreaterThan(1)
+      expect(lineInfo.lineStartBytes.length).toBeGreaterThan(1)
 
       // Each wrapped line should respect display width limits
-      for (const width of lineInfo.lineWidths) {
+      for (const width of lineInfo.lineWidthCols) {
         expect(width).toBeLessThanOrEqual(6)
       }
     })
@@ -753,7 +764,7 @@ describe("TextBufferView", () => {
 
       // Verify cache wasn't modified (should be 1 line with wrap width 100)
       const lineInfo = view.lineInfo
-      expect(lineInfo.lineStarts.length).toBe(1)
+      expect(lineInfo.lineStartBytes.length).toBe(1)
     })
 
     it("should measure char wrap correctly", () => {

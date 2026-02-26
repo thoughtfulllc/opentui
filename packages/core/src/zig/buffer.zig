@@ -893,43 +893,30 @@ pub const OptimizedBuffer = struct {
 
         const is_ascii_only = utf8.isAsciiOnly(text);
 
-        var grapheme_list: std.ArrayListUnmanaged(utf8.GraphemeInfo) = .{};
-        defer grapheme_list.deinit(self.allocator);
+        var layout_scan_result = utf8.LayoutScanResult.init(self.allocator);
+        defer layout_scan_result.deinit();
 
         const tab_width: u8 = 2;
-        try utf8.findGraphemeInfo(text, tab_width, is_ascii_only, self.width_method, self.allocator, &grapheme_list);
-        const specials = grapheme_list.items;
+        try utf8.scanLayout(text, tab_width, is_ascii_only, self.width_method, &layout_scan_result);
+        const spans = layout_scan_result.spans.items;
 
         var advance_cells: u32 = 0;
-        var byte_offset: u32 = 0;
-        var col: u32 = 0;
-        var special_idx: usize = 0;
 
-        while (byte_offset < text.len) {
+        for (spans) |span| {
             const charX = x + advance_cells;
             if (charX >= self.width) break;
 
-            const at_special = special_idx < specials.len and specials[special_idx].col_offset == col;
-
-            var grapheme_bytes: []const u8 = undefined;
-            var g_width: u8 = undefined;
-
-            if (at_special) {
-                const g = specials[special_idx];
-                grapheme_bytes = text[g.byte_offset .. g.byte_offset + g.byte_len];
-                g_width = g.width;
-                byte_offset = g.byte_offset + g.byte_len;
-                special_idx += 1;
-            } else {
-                if (byte_offset >= text.len) break;
-                grapheme_bytes = text[byte_offset .. byte_offset + 1];
-                g_width = 1;
-                byte_offset += 1;
+            const span_byte_start: usize = @intCast(span.byte_start);
+            const span_byte_end: usize = @intCast(span.byte_start + span.byte_len);
+            if (span_byte_end > text.len or span_byte_start >= span_byte_end) {
+                continue;
             }
 
+            const grapheme_bytes = text[span_byte_start..span_byte_end];
+            const span_width: u32 = span.col_width;
+
             if (!self.isPointInScissor(@intCast(charX), @intCast(y))) {
-                advance_cells += g_width;
-                col += g_width;
+                advance_cells += span_width;
                 continue;
             }
 
@@ -942,15 +929,14 @@ pub const OptimizedBuffer = struct {
                 bgColor = .{ 0.0, 0.0, 0.0, 1.0 };
             }
 
-            const cell_width = utf8.getWidthAt(text, if (at_special) specials[special_idx - 1].byte_offset else byte_offset - 1, tab_width, self.width_method);
+            const cell_width = span_width;
             if (cell_width == 0) {
-                col += g_width;
                 continue;
             }
 
             if (grapheme_bytes.len == 1 and grapheme_bytes[0] == '\t') {
                 var tab_col: u32 = 0;
-                while (tab_col < g_width) : (tab_col += 1) {
+                while (tab_col < span_width) : (tab_col += 1) {
                     const tab_x = charX + tab_col;
                     if (tab_x >= self.width) break;
 
@@ -972,8 +958,7 @@ pub const OptimizedBuffer = struct {
                         });
                     }
                 }
-                advance_cells += g_width;
-                col += g_width;
+                advance_cells += span_width;
                 continue;
             }
 
@@ -997,7 +982,6 @@ pub const OptimizedBuffer = struct {
             }
 
             advance_cells += cell_width;
-            col += g_width;
         }
     }
 
@@ -1163,8 +1147,8 @@ pub const OptimizedBuffer = struct {
         };
 
         const line_info = view.getCachedLineInfo();
-        var globalCharPos: u32 = if (firstVisibleLine < line_info.starts.len)
-            line_info.starts[firstVisibleLine]
+        var globalCharPos: u32 = if (firstVisibleLine < line_info.line_start_bytes.len)
+            line_info.line_start_bytes[firstVisibleLine]
         else
             0;
 
@@ -1173,7 +1157,7 @@ pub const OptimizedBuffer = struct {
 
             currentX = x;
             var column_in_line: u32 = 0;
-            globalCharPos = vline.char_offset;
+            globalCharPos = vline.col_offset;
 
             // When viewport is set, virtual_lines is a slice starting from viewport.y
             // But getVirtualLineSpans expects absolute indices, so we need to use the absolute index
@@ -1217,7 +1201,7 @@ pub const OptimizedBuffer = struct {
             for (vline.chunks.items) |vchunk| {
                 const chunk = vchunk.chunk;
                 const chunk_bytes = chunk.getBytes(text_buffer.memRegistry());
-                const line_char_offset = vline.char_offset;
+                const line_char_offset = vline.col_offset;
 
                 if (currentX >= @as(i32, @intCast(self.width))) {
                     globalCharPos += vchunk.width_cols;

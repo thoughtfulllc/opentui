@@ -106,7 +106,6 @@ pub const WrapBreak = struct {
     byte_offset: u32,
 
     // char_offset is grapheme-count based, not a display column.
-    // Callers convert it to columns with charOffsetToColumn().
     char_offset: u32,
 };
 
@@ -522,13 +521,13 @@ inline fn isCjkAsciiTransition(prev_class: WordClass, curr_class: WordClass) boo
         (prev_class == .ascii_word and curr_class == .cjk_word);
 }
 
-/// findWrapBreaks returns compatibility wrap offsets derived from `scanLayout`.
+/// collectWrapBreaksFromLayout returns compatibility wrap offsets derived from `scanLayout`.
 ///
 /// The function rewrites `result.breaks` on every call.
 ///
 /// `width_method` is intentionally ignored to preserve legacy break offsets.
 /// Break offsets follow delimiter and script-transition boundaries, not width policy.
-pub fn findWrapBreaks(text: []const u8, result: *WrapBreakResult, width_method: WidthMethod) !void {
+pub fn collectWrapBreaksFromLayout(text: []const u8, result: *WrapBreakResult, width_method: WidthMethod) !void {
     result.reset();
     _ = width_method;
 
@@ -1702,7 +1701,7 @@ pub const GraphemeInfoResult = struct {
     }
 };
 
-/// findGraphemeInfo appends compatibility grapheme metadata derived from `scanLayout`.
+/// collectLegacyGraphemeInfoFromLayout appends compatibility grapheme metadata derived from `scanLayout`.
 ///
 /// The function appends only tab spans and multi-byte spans, matching legacy
 /// caching behavior. It does not clear `result`; callers can accumulate entries
@@ -1710,7 +1709,7 @@ pub const GraphemeInfoResult = struct {
 ///
 /// In `.unicode` and `.no_zwj` modes, the function skips zero-width spans.
 /// In `.wcwidth` mode, it keeps zero-width spans to preserve legacy parity.
-pub fn findGraphemeInfo(
+pub fn collectLegacyGraphemeInfoFromLayout(
     text: []const u8,
     tab_width: u8,
     isASCIIOnly: bool,

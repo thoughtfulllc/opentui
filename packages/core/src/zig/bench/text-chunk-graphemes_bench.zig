@@ -11,7 +11,7 @@ const BenchResult = bench_utils.BenchResult;
 const BenchStats = bench_utils.BenchStats;
 const MemStat = bench_utils.MemStat;
 
-pub const benchName = "TextChunk getGraphemes";
+pub const benchName = "TextChunk getLayoutSpans";
 
 const TextType = enum { ascii, mixed, heavy_unicode };
 
@@ -20,12 +20,6 @@ fn resetChunkCaches(chunk: *TextChunk) void {
     chunk.layout_cache_allocator = null;
     chunk.layout_cache_valid = false;
     chunk.layout_cache_mode = .full_cache;
-
-    chunk.legacy_graphemes = null;
-    chunk.legacy_grapheme_cache_valid = false;
-
-    chunk.legacy_wrap_offsets = null;
-    chunk.legacy_wrap_cache_valid = false;
 }
 
 fn iterationsForSize(size: usize) usize {
@@ -96,7 +90,7 @@ fn generateTestText(allocator: std.mem.Allocator, size: usize, text_type: TextTy
     return try buffer.toOwnedSlice(allocator);
 }
 
-fn benchGetGraphemes(
+fn benchGetLayoutSpans(
     allocator: std.mem.Allocator,
     size: usize,
     text_type: TextType,
@@ -131,7 +125,7 @@ fn benchGetGraphemes(
     };
 
     var stats = BenchStats{};
-    var grapheme_count: usize = 0;
+    var span_count: usize = 0;
     var final_mem: usize = 0;
 
     for (0..iterations) |i| {
@@ -143,7 +137,7 @@ fn benchGetGraphemes(
         resetChunkCaches(&chunk);
 
         var timer = try std.time.Timer.start();
-        const graphemes = try chunk.getGraphemes(
+        const spans = try chunk.getLayoutSpans(
             &registry,
             arena_alloc,
             4, // tab width
@@ -152,12 +146,11 @@ fn benchGetGraphemes(
         stats.record(timer.read());
 
         if (i == 0) {
-            grapheme_count = graphemes.len;
+            span_count = spans.len;
         }
 
         if (i == iterations - 1 and show_mem) {
-            // Estimate memory used for grapheme storage
-            final_mem = graphemes.len * @sizeOf(seg_mod.GraphemeInfo);
+            final_mem = spans.len * @sizeOf(utf8.GraphemeSpan);
         }
     }
 
@@ -170,14 +163,14 @@ fn benchGetGraphemes(
     const name = if (show_mem)
         try std.fmt.allocPrint(
             allocator,
-            "getGraphemes {s} ({d} bytes, {d} graphemes, mem={d} bytes)",
-            .{ type_str, size, grapheme_count, final_mem },
+            "getLayoutSpans {s} ({d} bytes, {d} spans, mem={d} bytes)",
+            .{ type_str, size, span_count, final_mem },
         )
     else
         try std.fmt.allocPrint(
             allocator,
-            "getGraphemes {s} ({d} bytes, {d} graphemes)",
-            .{ type_str, size, grapheme_count },
+            "getLayoutSpans {s} ({d} bytes, {d} spans)",
+            .{ type_str, size, span_count },
         );
 
     const mem_stats: ?[]const MemStat = if (show_mem) blk: {
@@ -223,7 +216,7 @@ fn computeBenchName(allocator: std.mem.Allocator, size: usize, text_type: TextTy
 
     resetChunkCaches(&chunk);
 
-    const graphemes = try chunk.getGraphemes(
+    const spans = try chunk.getLayoutSpans(
         &registry,
         temp_alloc,
         4, // tab width
@@ -238,8 +231,8 @@ fn computeBenchName(allocator: std.mem.Allocator, size: usize, text_type: TextTy
 
     return try std.fmt.allocPrint(
         allocator,
-        "getGraphemes {s} ({d} bytes, {d} graphemes)",
-        .{ type_str, size, graphemes.len },
+        "getLayoutSpans {s} ({d} bytes, {d} spans)",
+        .{ type_str, size, spans.len },
     );
 }
 
@@ -268,7 +261,7 @@ pub fn run(
     if (bench_filter == null) {
         for (text_types) |text_type| {
             for (sizes) |size| {
-                const result = try benchGetGraphemes(
+                const result = try benchGetLayoutSpans(
                     allocator,
                     size,
                     text_type,
@@ -280,7 +273,7 @@ pub fn run(
         }
 
         for (stage2_policy_cases) |policy_case| {
-            const result = try benchGetGraphemes(
+            const result = try benchGetLayoutSpans(
                 allocator,
                 policy_case.size,
                 policy_case.text_type,
@@ -298,7 +291,7 @@ pub fn run(
                     continue;
                 }
 
-                var result = try benchGetGraphemes(
+                var result = try benchGetLayoutSpans(
                     allocator,
                     size,
                     text_type,
@@ -318,7 +311,7 @@ pub fn run(
                 continue;
             }
 
-            var result = try benchGetGraphemes(
+            var result = try benchGetLayoutSpans(
                 allocator,
                 policy_case.size,
                 policy_case.text_type,

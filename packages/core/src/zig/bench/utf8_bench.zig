@@ -313,7 +313,7 @@ fn benchFindWrapBreaks(
             var stats = BenchStats{};
             for (0..iterations) |_| {
                 var timer = try std.time.Timer.start();
-                try utf8.findWrapBreaks(text, &wrap_result, .unicode);
+                try utf8.collectWrapBreaksFromLayout(text, &wrap_result, .unicode);
                 stats.record(timer.read());
             }
 
@@ -344,7 +344,7 @@ fn benchFindWrapBreaks(
             var stats = BenchStats{};
             for (0..iterations) |_| {
                 var timer = try std.time.Timer.start();
-                try utf8.findWrapBreaks(text, &wrap_result, .unicode);
+                try utf8.collectWrapBreaksFromLayout(text, &wrap_result, .unicode);
                 stats.record(timer.read());
             }
 
@@ -527,8 +527,8 @@ fn benchScanLayoutGate(
                 grapheme_result.clearRetainingCapacity();
 
                 var timer = try std.time.Timer.start();
-                try utf8.findWrapBreaks(text, &wrap_result, .unicode);
-                try utf8.findGraphemeInfo(text, 4, false, .unicode, alloc, &grapheme_result);
+                try utf8.collectWrapBreaksFromLayout(text, &wrap_result, .unicode);
+                try utf8.collectLegacyGraphemeInfoFromLayout(text, 4, false, .unicode, alloc, &grapheme_result);
                 stats.record(timer.read());
             }
 
@@ -593,8 +593,8 @@ fn benchScanLayoutGate(
                 grapheme_result.clearRetainingCapacity();
 
                 var timer = try std.time.Timer.start();
-                try utf8.findWrapBreaks(text, &wrap_result, .unicode);
-                try utf8.findGraphemeInfo(text, 4, false, .unicode, alloc, &grapheme_result);
+                try utf8.collectWrapBreaksFromLayout(text, &wrap_result, .unicode);
+                try utf8.collectLegacyGraphemeInfoFromLayout(text, 4, false, .unicode, alloc, &grapheme_result);
                 stats.record(timer.read());
             }
 

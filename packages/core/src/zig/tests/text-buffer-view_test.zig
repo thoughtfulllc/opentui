@@ -332,11 +332,11 @@ test "TextBufferView getCachedLineInfo - with wrapping" {
     const line_count = view.getVirtualLineCount();
     const line_info = view.getCachedLineInfo();
 
-    try std.testing.expectEqual(@as(usize, line_count), line_info.starts.len);
-    try std.testing.expectEqual(@as(usize, line_count), line_info.widths.len);
+    try std.testing.expectEqual(@as(usize, line_count), line_info.line_start_bytes.len);
+    try std.testing.expectEqual(@as(usize, line_count), line_info.line_width_cols.len);
 
-    for (line_info.widths, 0..) |width, i| {
-        if (i < line_info.widths.len - 1) {
+    for (line_info.line_width_cols, 0..) |width, i| {
+        if (i < line_info.line_width_cols.len - 1) {
             try std.testing.expect(width <= 7);
         }
     }
@@ -709,8 +709,8 @@ test "TextBufferView word wrapping - tab boundary width" {
     const vlines = view.getVirtualLines();
 
     try std.testing.expectEqual(@as(usize, 2), vlines.len);
-    try std.testing.expectEqual(@as(u32, 4), vlines[0].width);
-    try std.testing.expectEqual(@as(u32, 2), vlines[1].width);
+    try std.testing.expectEqual(@as(u32, 4), vlines[0].width_cols);
+    try std.testing.expectEqual(@as(u32, 2), vlines[1].width_cols);
 }
 
 test "TextBufferView word wrapping - emoji boundary width" {
@@ -733,8 +733,8 @@ test "TextBufferView word wrapping - emoji boundary width" {
     const vlines = view.getVirtualLines();
 
     try std.testing.expectEqual(@as(usize, 2), vlines.len);
-    try std.testing.expectEqual(@as(u32, 5), vlines[0].width);
-    try std.testing.expectEqual(@as(u32, 2), vlines[1].width);
+    try std.testing.expectEqual(@as(u32, 5), vlines[0].width_cols);
+    try std.testing.expectEqual(@as(u32, 2), vlines[1].width_cols);
 }
 
 test "TextBufferView word wrapping - CJK boundary width" {
@@ -757,8 +757,8 @@ test "TextBufferView word wrapping - CJK boundary width" {
     const vlines = view.getVirtualLines();
 
     try std.testing.expectEqual(@as(usize, 2), vlines.len);
-    try std.testing.expectEqual(@as(u32, 5), vlines[0].width);
-    try std.testing.expectEqual(@as(u32, 2), vlines[1].width);
+    try std.testing.expectEqual(@as(u32, 5), vlines[0].width_cols);
+    try std.testing.expectEqual(@as(u32, 2), vlines[1].width_cols);
 }
 
 test "TextBufferView word wrapping - compare char vs word mode" {
@@ -910,9 +910,9 @@ test "TextBufferView word wrapping - fragmented rope with word boundary" {
 
     try std.testing.expectEqual(@as(usize, 2), vlines.len);
 
-    try std.testing.expectEqual(@as(u32, 14), vlines[0].width);
+    try std.testing.expectEqual(@as(u32, 14), vlines[0].width_cols);
 
-    try std.testing.expectEqual(@as(u32, 6), vlines[1].width);
+    try std.testing.expectEqual(@as(u32, 6), vlines[1].width_cols);
 }
 
 test "TextBufferView wrapping - very narrow width (1 char)" {
@@ -1326,9 +1326,9 @@ test "TextBufferView line info - empty buffer" {
     try std.testing.expectEqual(@as(u32, 1), line_count);
 
     const line_info = view.getCachedLineInfo();
-    try std.testing.expectEqual(@as(usize, 1), line_info.starts.len);
-    try std.testing.expectEqual(@as(u32, 0), line_info.starts[0]);
-    try std.testing.expectEqual(@as(u32, 0), line_info.widths[0]);
+    try std.testing.expectEqual(@as(usize, 1), line_info.line_start_bytes.len);
+    try std.testing.expectEqual(@as(u32, 0), line_info.line_start_bytes[0]);
+    try std.testing.expectEqual(@as(u32, 0), line_info.line_width_cols[0]);
 }
 
 test "TextBufferView line info - simple text without newlines" {
@@ -1349,8 +1349,8 @@ test "TextBufferView line info - simple text without newlines" {
     try std.testing.expectEqual(@as(u32, 1), line_count);
 
     const line_info = view.getCachedLineInfo();
-    try std.testing.expectEqual(@as(u32, 0), line_info.starts[0]);
-    try std.testing.expect(line_info.widths[0] > 0);
+    try std.testing.expectEqual(@as(u32, 0), line_info.line_start_bytes[0]);
+    try std.testing.expect(line_info.line_width_cols[0] > 0);
 }
 
 test "TextBufferView line info - text ending with newline" {
@@ -1371,9 +1371,9 @@ test "TextBufferView line info - text ending with newline" {
     try std.testing.expectEqual(@as(u32, 2), line_count);
 
     const line_info = view.getCachedLineInfo();
-    try std.testing.expectEqual(@as(u32, 0), line_info.starts[0]);
-    try std.testing.expect(line_info.widths[0] > 0);
-    try std.testing.expect(line_info.widths[1] >= 0);
+    try std.testing.expectEqual(@as(u32, 0), line_info.line_start_bytes[0]);
+    try std.testing.expect(line_info.line_width_cols[0] > 0);
+    try std.testing.expect(line_info.line_width_cols[1] >= 0);
 }
 
 test "TextBufferView line info - consecutive newlines" {
@@ -1394,7 +1394,7 @@ test "TextBufferView line info - consecutive newlines" {
     try std.testing.expectEqual(@as(u32, 3), line_count);
 
     const line_info = view.getCachedLineInfo();
-    try std.testing.expectEqual(@as(u32, 0), line_info.starts[0]);
+    try std.testing.expectEqual(@as(u32, 0), line_info.line_start_bytes[0]);
 }
 
 test "TextBufferView line info - only newlines" {
@@ -1415,7 +1415,7 @@ test "TextBufferView line info - only newlines" {
     try std.testing.expectEqual(@as(u32, 4), line_count);
 
     const line_info = view.getCachedLineInfo();
-    for (line_info.widths) |width| {
+    for (line_info.line_width_cols) |width| {
         try std.testing.expect(width >= 0);
     }
 }
@@ -1438,7 +1438,7 @@ test "TextBufferView line info - wide characters (Unicode)" {
     try std.testing.expectEqual(@as(u32, 1), line_count);
 
     const line_info = view.getCachedLineInfo();
-    try std.testing.expect(line_info.widths[0] > 0);
+    try std.testing.expect(line_info.line_width_cols[0] > 0);
 }
 
 test "TextBufferView line info - very long lines" {
@@ -1460,7 +1460,7 @@ test "TextBufferView line info - very long lines" {
     try std.testing.expectEqual(@as(u32, 1), line_count);
 
     const line_info = view.getCachedLineInfo();
-    try std.testing.expect(line_info.widths[0] > 0);
+    try std.testing.expect(line_info.line_width_cols[0] > 0);
 }
 
 test "TextBufferView line info - buffer with only whitespace" {
@@ -1481,7 +1481,7 @@ test "TextBufferView line info - buffer with only whitespace" {
     try std.testing.expectEqual(@as(u32, 3), line_count);
 
     const line_info = view.getCachedLineInfo();
-    for (line_info.widths) |width| {
+    for (line_info.line_width_cols) |width| {
         try std.testing.expect(width >= 0);
     }
 }
@@ -1504,7 +1504,7 @@ test "TextBufferView line info - single character lines" {
     try std.testing.expectEqual(@as(u32, 3), line_count);
 
     const line_info = view.getCachedLineInfo();
-    for (line_info.widths) |width| {
+    for (line_info.line_width_cols) |width| {
         try std.testing.expect(width > 0);
     }
 }
@@ -1527,7 +1527,7 @@ test "TextBufferView line info - complex Unicode combining characters" {
     try std.testing.expectEqual(@as(u32, 3), line_count);
 
     const line_info = view.getCachedLineInfo();
-    for (line_info.widths) |width| {
+    for (line_info.line_width_cols) |width| {
         try std.testing.expect(width > 0);
     }
 }
@@ -1551,7 +1551,7 @@ test "TextBufferView line info - extremely long single line" {
     try std.testing.expectEqual(@as(u32, 1), line_count);
 
     const line_info = view.getCachedLineInfo();
-    try std.testing.expect(line_info.widths[0] > 0);
+    try std.testing.expect(line_info.line_width_cols[0] > 0);
 }
 
 test "TextBufferView line info - extremely long line with wrapping" {
@@ -1679,9 +1679,9 @@ test "TextBufferView line info - text starting with newline" {
     try std.testing.expectEqual(@as(u32, 2), line_count);
 
     const line_info = view.getCachedLineInfo();
-    try std.testing.expectEqual(@as(u32, 0), line_info.starts[0]);
+    try std.testing.expectEqual(@as(u32, 0), line_info.line_start_bytes[0]);
 
-    try std.testing.expectEqual(@as(u32, 1), line_info.starts[1]);
+    try std.testing.expectEqual(@as(u32, 1), line_info.line_start_bytes[1]);
 }
 
 test "TextBufferView line info - lines with different widths" {
@@ -1709,8 +1709,8 @@ test "TextBufferView line info - lines with different widths" {
     try std.testing.expectEqual(@as(u32, 3), line_count);
 
     const line_info = view.getCachedLineInfo();
-    try std.testing.expect(line_info.widths[0] < line_info.widths[1]);
-    try std.testing.expect(line_info.widths[1] > line_info.widths[2]);
+    try std.testing.expect(line_info.line_width_cols[0] < line_info.line_width_cols[1]);
+    try std.testing.expect(line_info.line_width_cols[1] > line_info.line_width_cols[2]);
 }
 
 test "TextBufferView line info - alternating empty and content lines" {
@@ -1731,7 +1731,7 @@ test "TextBufferView line info - alternating empty and content lines" {
     try std.testing.expectEqual(@as(u32, 6), line_count);
 
     const line_info = view.getCachedLineInfo();
-    for (line_info.widths) |width| {
+    for (line_info.line_width_cols) |width| {
         try std.testing.expect(width >= 0);
     }
 }
@@ -1763,11 +1763,11 @@ test "TextBufferView line info - thousands of lines" {
     try std.testing.expectEqual(@as(u32, 1000), line_count);
 
     const line_info = view.getCachedLineInfo();
-    try std.testing.expectEqual(@as(u32, 0), line_info.starts[0]);
+    try std.testing.expectEqual(@as(u32, 0), line_info.line_start_bytes[0]);
 
     var line_idx: u32 = 1;
     while (line_idx < 1000) : (line_idx += 1) {
-        try std.testing.expect(line_info.starts[line_idx] > line_info.starts[line_idx - 1]);
+        try std.testing.expect(line_info.line_start_bytes[line_idx] > line_info.line_start_bytes[line_idx - 1]);
     }
 }
 
@@ -2282,13 +2282,13 @@ test "TextBufferView measureForDimensions - no wrap matches multi-segment line w
 
     const line_info = view.getCachedLineInfo();
     var expected_max: u32 = 0;
-    for (line_info.widths) |w| {
+    for (line_info.line_width_cols) |w| {
         expected_max = @max(expected_max, w);
     }
 
     const result = try view.measureForDimensions(80, 24);
     try std.testing.expectEqual(expected_max, result.max_width);
-    try std.testing.expectEqual(@as(u32, @intCast(line_info.widths.len)), result.line_count);
+    try std.testing.expectEqual(@as(u32, @intCast(line_info.line_width_cols.len)), result.line_count);
 }
 
 test "TextBufferView measureForDimensions - cache invalidates on switchToBuffer" {
@@ -2437,7 +2437,7 @@ test "TextBufferView truncation - basic truncate single line" {
     // With truncation, line should be truncated to viewport width
     try std.testing.expectEqual(@as(usize, 1), vlines.len);
     // Width should be reduced (prefix + suffix, ellipsis handled separately)
-    try std.testing.expect(vlines[0].width <= 10);
+    try std.testing.expect(vlines[0].width_cols <= 10);
 }
 
 test "TextBufferView truncation - multiline with truncate" {
@@ -2463,11 +2463,11 @@ test "TextBufferView truncation - multiline with truncate" {
     try std.testing.expectEqual(@as(usize, 3), vlines.len);
 
     // First line should be truncated
-    try std.testing.expect(vlines[0].width <= 12);
+    try std.testing.expect(vlines[0].width_cols <= 12);
     // Second line is short, should not be truncated
-    try std.testing.expectEqual(@as(u32, 9), vlines[1].width);
+    try std.testing.expectEqual(@as(u32, 9), vlines[1].width_cols);
     // Third line should be truncated
-    try std.testing.expect(vlines[2].width <= 12);
+    try std.testing.expect(vlines[2].width_cols <= 12);
 }
 
 test "TextBufferView truncation - with wrapping disabled" {
@@ -2492,7 +2492,7 @@ test "TextBufferView truncation - with wrapping disabled" {
 
     try std.testing.expectEqual(@as(usize, 1), vlines.len);
     // Should be truncated to fit viewport
-    try std.testing.expect(vlines[0].width <= 15);
+    try std.testing.expect(vlines[0].width_cols <= 15);
 }
 
 test "TextBufferView truncation - toggle truncate on and off" {
@@ -2515,12 +2515,12 @@ test "TextBufferView truncation - toggle truncate on and off" {
     // Without truncation
     view.setTruncate(false);
     var vlines = view.getVirtualLines();
-    const width_no_truncate = vlines[0].width;
+    const width_no_truncate = vlines[0].width_cols;
 
     // With truncation
     view.setTruncate(true);
     vlines = view.getVirtualLines();
-    const width_with_truncate = vlines[0].width;
+    const width_with_truncate = vlines[0].width_cols;
 
     try std.testing.expectEqual(@as(u32, 26), width_no_truncate);
     try std.testing.expect(width_with_truncate <= 10);
@@ -2547,7 +2547,7 @@ test "TextBufferView truncation - very small viewport" {
     const vlines = view.getVirtualLines();
 
     // With width=3, only room for "..." - should clear the line
-    try std.testing.expectEqual(@as(u32, 0), vlines[0].width);
+    try std.testing.expectEqual(@as(u32, 0), vlines[0].width_cols);
 }
 
 test "TextBufferView truncation - verify ellipsis chunk injection" {
@@ -2571,7 +2571,7 @@ test "TextBufferView truncation - verify ellipsis chunk injection" {
     const vlines = view.getVirtualLines();
 
     try std.testing.expectEqual(@as(usize, 1), vlines.len);
-    try std.testing.expectEqual(@as(u32, 10), vlines[0].width);
+    try std.testing.expectEqual(@as(u32, 10), vlines[0].width_cols);
 
     // Should have 3 chunks: prefix, ellipsis, suffix
     try std.testing.expectEqual(@as(usize, 3), vlines[0].chunks.items.len);
@@ -2642,7 +2642,7 @@ test "TextBufferView truncation - verify prefix and suffix content" {
     try std.testing.expectEqualStrings("...", ellipsis_bytes);
 
     // Verify total width matches viewport
-    try std.testing.expectEqual(@as(u32, 10), vlines[0].width);
+    try std.testing.expectEqual(@as(u32, 10), vlines[0].width_cols);
 }
 
 test "TextBufferView truncation - keeps grapheme-aligned byte windows" {
@@ -3090,8 +3090,8 @@ test "TextBufferView virtual lines - match real lines when no wrap" {
     try std.testing.expectEqual(@as(u32, 3), tb.getLineCount());
 
     const line_info = view.getCachedLineInfo();
-    try std.testing.expectEqual(@as(usize, 3), line_info.starts.len);
-    try std.testing.expectEqual(@as(usize, 3), line_info.widths.len);
+    try std.testing.expectEqual(@as(usize, 3), line_info.line_start_bytes.len);
+    try std.testing.expectEqual(@as(usize, 3), line_info.line_width_cols.len);
 }
 
 test "TextBufferView virtual lines - updated when wrap width set" {
@@ -3138,8 +3138,8 @@ test "TextBufferView virtual lines - reset to match real lines when wrap removed
     try std.testing.expectEqual(@as(u32, 2), view.getVirtualLineCount());
 
     const line_info = view.getCachedLineInfo();
-    try std.testing.expectEqual(@as(usize, 2), line_info.starts.len);
-    try std.testing.expectEqual(@as(usize, 2), line_info.widths.len);
+    try std.testing.expectEqual(@as(usize, 2), line_info.line_start_bytes.len);
+    try std.testing.expectEqual(@as(usize, 2), line_info.line_width_cols.len);
 }
 
 test "TextBufferView virtual lines - multi-line text without wrap" {
@@ -3159,14 +3159,14 @@ test "TextBufferView virtual lines - multi-line text without wrap" {
     try std.testing.expectEqual(@as(u32, 4), view.getVirtualLineCount());
 
     const line_info = view.getCachedLineInfo();
-    try std.testing.expectEqual(@as(usize, 4), line_info.starts.len);
-    try std.testing.expectEqual(@as(usize, 4), line_info.widths.len);
+    try std.testing.expectEqual(@as(usize, 4), line_info.line_start_bytes.len);
+    try std.testing.expectEqual(@as(usize, 4), line_info.line_width_cols.len);
 
     // Verify the line starts are monotonically non-decreasing (empty lines have same start)
-    try std.testing.expect(line_info.starts[0] == 0);
-    try std.testing.expect(line_info.starts[1] >= line_info.starts[0]);
-    try std.testing.expect(line_info.starts[2] >= line_info.starts[1]);
-    try std.testing.expect(line_info.starts[3] >= line_info.starts[2]);
+    try std.testing.expect(line_info.line_start_bytes[0] == 0);
+    try std.testing.expect(line_info.line_start_bytes[1] >= line_info.line_start_bytes[0]);
+    try std.testing.expect(line_info.line_start_bytes[2] >= line_info.line_start_bytes[1]);
+    try std.testing.expect(line_info.line_start_bytes[3] >= line_info.line_start_bytes[2]);
 }
 
 test "TextBufferView line info - line starts and widths consistency" {
@@ -3188,11 +3188,11 @@ test "TextBufferView line info - line starts and widths consistency" {
     const line_count = view.getVirtualLineCount();
     const line_info = view.getCachedLineInfo();
 
-    try std.testing.expectEqual(@as(usize, line_count), line_info.starts.len);
-    try std.testing.expectEqual(@as(usize, line_count), line_info.widths.len);
+    try std.testing.expectEqual(@as(usize, line_count), line_info.line_start_bytes.len);
+    try std.testing.expectEqual(@as(usize, line_count), line_info.line_width_cols.len);
 
-    for (line_info.widths, 0..) |width, i| {
-        if (i < line_info.widths.len - 1) {
+    for (line_info.line_width_cols, 0..) |width, i| {
+        if (i < line_info.line_width_cols.len - 1) {
             try std.testing.expect(width <= 7);
         }
     }
@@ -3225,11 +3225,11 @@ test "TextBufferView line info - line starts monotonically increasing" {
     try std.testing.expectEqual(@as(u32, 100), line_count);
 
     const line_info = view.getCachedLineInfo();
-    try std.testing.expectEqual(@as(u32, 0), line_info.starts[0]);
+    try std.testing.expectEqual(@as(u32, 0), line_info.line_start_bytes[0]);
 
     var line_idx: u32 = 1;
     while (line_idx < 100) : (line_idx += 1) {
-        try std.testing.expect(line_info.starts[line_idx] >= line_info.starts[line_idx - 1]);
+        try std.testing.expect(line_info.line_start_bytes[line_idx] >= line_info.line_start_bytes[line_idx - 1]);
     }
 }
 
@@ -3251,9 +3251,9 @@ test "word wrap width=1 leading CJK advances byte starts" {
     view.setWrapWidth(1);
 
     const line_info = view.getCachedLineInfo();
-    try std.testing.expectEqualSlices(u32, &[_]u32{ 0, 3 }, line_info.starts);
-    try std.testing.expectEqualSlices(u32, &[_]u32{ 2, 1 }, line_info.widths);
-    try assertUtf8BoundarySlices(text, line_info.starts);
+    try std.testing.expectEqualSlices(u32, &[_]u32{ 0, 3 }, line_info.line_start_bytes);
+    try std.testing.expectEqualSlices(u32, &[_]u32{ 2, 1 }, line_info.line_width_cols);
+    try assertUtf8BoundarySlices(text, line_info.line_start_bytes);
 }
 
 test "word wrap width=1 repeated CJK advances byte starts" {
@@ -3274,9 +3274,9 @@ test "word wrap width=1 repeated CJK advances byte starts" {
     view.setWrapWidth(1);
 
     const line_info = view.getCachedLineInfo();
-    try std.testing.expectEqualSlices(u32, &[_]u32{ 0, 3, 6 }, line_info.starts);
-    try assertMonotonicAndProgress(line_info.starts, line_info.widths);
-    try assertUtf8BoundarySlices(text, line_info.starts);
+    try std.testing.expectEqualSlices(u32, &[_]u32{ 0, 3, 6 }, line_info.line_start_bytes);
+    try assertMonotonicAndProgress(line_info.line_start_bytes, line_info.line_width_cols);
+    try assertUtf8BoundarySlices(text, line_info.line_start_bytes);
 }
 
 test "word wrap width=1 emoji modifier advances byte starts" {
@@ -3297,9 +3297,9 @@ test "word wrap width=1 emoji modifier advances byte starts" {
     view.setWrapWidth(1);
 
     const line_info = view.getCachedLineInfo();
-    try std.testing.expectEqualSlices(u32, &[_]u32{ 0, 8 }, line_info.starts);
-    try std.testing.expectEqualSlices(u32, &[_]u32{ 4, 1 }, line_info.widths);
-    try assertUtf8BoundarySlices(text, line_info.starts);
+    try std.testing.expectEqualSlices(u32, &[_]u32{ 0, 8 }, line_info.line_start_bytes);
+    try std.testing.expectEqualSlices(u32, &[_]u32{ 4, 1 }, line_info.line_width_cols);
+    try assertUtf8BoundarySlices(text, line_info.line_start_bytes);
 }
 
 test "word wrap width=1 tab-leading advances byte starts" {
@@ -3320,8 +3320,8 @@ test "word wrap width=1 tab-leading advances byte starts" {
     view.setWrapWidth(1);
 
     const line_info = view.getCachedLineInfo();
-    try std.testing.expectEqualSlices(u32, &[_]u32{ 0, 1 }, line_info.starts);
-    try assertUtf8BoundarySlices(text, line_info.starts);
+    try std.testing.expectEqualSlices(u32, &[_]u32{ 0, 1 }, line_info.line_start_bytes);
+    try assertUtf8BoundarySlices(text, line_info.line_start_bytes);
 }
 
 test "issue-609 representative Korean uses byte starts" {
@@ -3342,8 +3342,8 @@ test "issue-609 representative Korean uses byte starts" {
     view.setWrapWidth(4);
 
     const line_info = view.getCachedLineInfo();
-    try std.testing.expectEqualSlices(u32, &[_]u32{ 0, 6 }, line_info.starts);
-    try assertUtf8BoundarySlices(text, line_info.starts);
+    try std.testing.expectEqualSlices(u32, &[_]u32{ 0, 6 }, line_info.line_start_bytes);
+    try assertUtf8BoundarySlices(text, line_info.line_start_bytes);
 }
 
 test "line starts are byte-safe UTF-8 slice boundaries" {
@@ -3374,7 +3374,7 @@ test "line starts are byte-safe UTF-8 slice boundaries" {
         view.setWrapMode(.word);
         view.setWrapWidth(sample.width);
         const line_info = view.getCachedLineInfo();
-        try assertUtf8BoundarySlices(sample.text, line_info.starts);
+        try assertUtf8BoundarySlices(sample.text, line_info.line_start_bytes);
     }
 }
 
@@ -3413,8 +3413,8 @@ test "line starts monotonic/progress fixed-seed corpus" {
         view.setWrapWidth(wrap_width);
 
         const line_info = view.getCachedLineInfo();
-        try assertUtf8BoundarySlices(text_builder.items, line_info.starts);
-        try assertMonotonicAndProgress(line_info.starts, line_info.widths);
+        try assertUtf8BoundarySlices(text_builder.items, line_info.line_start_bytes);
+        try assertMonotonicAndProgress(line_info.line_start_bytes, line_info.line_width_cols);
     }
 }
 
@@ -3436,8 +3436,8 @@ test "overflowing whitespace drop policy is pinned" {
     view.setWrapWidth(5);
 
     const line_info = view.getCachedLineInfo();
-    try std.testing.expectEqualSlices(u32, &[_]u32{ 0, 6 }, line_info.starts);
-    try assertUtf8BoundarySlices(text, line_info.starts);
+    try std.testing.expectEqualSlices(u32, &[_]u32{ 0, 6 }, line_info.line_start_bytes);
+    try assertUtf8BoundarySlices(text, line_info.line_start_bytes);
 }
 
 test "tab-at-exact-stop break policy is pinned" {
@@ -3459,8 +3459,8 @@ test "tab-at-exact-stop break policy is pinned" {
     view.setWrapWidth(8);
 
     const line_info = view.getCachedLineInfo();
-    try std.testing.expectEqualSlices(u32, &[_]u32{ 0, 5 }, line_info.starts);
-    try assertUtf8BoundarySlices(text, line_info.starts);
+    try std.testing.expectEqualSlices(u32, &[_]u32{ 0, 5 }, line_info.line_start_bytes);
+    try assertUtf8BoundarySlices(text, line_info.line_start_bytes);
 }
 
 test "hard-break policies for LF, CR, and CRLF are pinned" {
@@ -3488,8 +3488,8 @@ test "hard-break policies for LF, CR, and CRLF are pinned" {
         try tb.setText(case.text);
         view.setWrapMode(.none);
         const line_info = view.getCachedLineInfo();
-        try std.testing.expectEqualSlices(u32, case.expected_starts, line_info.starts);
-        try assertUtf8BoundarySlices(case.text, line_info.starts);
+        try std.testing.expectEqualSlices(u32, case.expected_starts, line_info.line_start_bytes);
+        try assertUtf8BoundarySlices(case.text, line_info.line_start_bytes);
     }
 }
 
@@ -3512,10 +3512,10 @@ test "line info determinism without mutation" {
     const line_info_1 = view.getCachedLineInfo();
     const line_info_2 = view.getCachedLineInfo();
 
-    try std.testing.expectEqualSlices(u32, line_info_1.starts, line_info_2.starts);
-    try std.testing.expectEqualSlices(u32, line_info_1.widths, line_info_2.widths);
-    try std.testing.expectEqualSlices(u32, line_info_1.sources, line_info_2.sources);
-    try std.testing.expectEqualSlices(u32, line_info_1.wraps, line_info_2.wraps);
+    try std.testing.expectEqualSlices(u32, line_info_1.line_start_bytes, line_info_2.line_start_bytes);
+    try std.testing.expectEqualSlices(u32, line_info_1.line_width_cols, line_info_2.line_width_cols);
+    try std.testing.expectEqualSlices(u32, line_info_1.line_sources, line_info_2.line_sources);
+    try std.testing.expectEqualSlices(u32, line_info_1.line_wraps, line_info_2.line_wraps);
 }
 
 test "invariants hold across width methods" {
@@ -3549,11 +3549,11 @@ test "invariants hold across width methods" {
             view.setWrapWidth(sample.width);
 
             const line_info = view.getCachedLineInfo();
-            try assertUtf8BoundarySlices(sample.text, line_info.starts);
-            try assertMonotonicAndProgress(line_info.starts, line_info.widths);
+            try assertUtf8BoundarySlices(sample.text, line_info.line_start_bytes);
+            try assertMonotonicAndProgress(line_info.line_start_bytes, line_info.line_width_cols);
 
             if (method == .wcwidth and std.mem.eql(u8, sample.text, "가a")) {
-                try std.testing.expectEqualSlices(u32, &[_]u32{ 0, 3 }, line_info.starts);
+                try std.testing.expectEqualSlices(u32, &[_]u32{ 0, 3 }, line_info.line_start_bytes);
             }
         }
     }
@@ -3582,9 +3582,9 @@ test "line info parity under forced full-cache vs windowed layout modes" {
     full_view.setWrapWidth(wrap_width);
 
     const full_info = full_view.getCachedLineInfo();
-    const full_starts = try std.testing.allocator.dupe(u32, full_info.starts);
+    const full_starts = try std.testing.allocator.dupe(u32, full_info.line_start_bytes);
     defer std.testing.allocator.free(full_starts);
-    const full_widths = try std.testing.allocator.dupe(u32, full_info.widths);
+    const full_widths = try std.testing.allocator.dupe(u32, full_info.line_width_cols);
     defer std.testing.allocator.free(full_widths);
 
     seg_mod.setLayoutCacheModeOverrideForTesting(.windowed);
@@ -3600,8 +3600,8 @@ test "line info parity under forced full-cache vs windowed layout modes" {
 
     const window_info = window_view.getCachedLineInfo();
 
-    try std.testing.expectEqualSlices(u32, full_starts, window_info.starts);
-    try std.testing.expectEqualSlices(u32, full_widths, window_info.widths);
+    try std.testing.expectEqualSlices(u32, full_starts, window_info.line_start_bytes);
+    try std.testing.expectEqualSlices(u32, full_widths, window_info.line_width_cols);
 }
 
 test "2 MiB ASCII line info uses windowed layout mode" {
@@ -3633,8 +3633,8 @@ test "2 MiB ASCII line info uses windowed layout mode" {
     while (iteration < 6) : (iteration += 1) {
         view.setWrapWidth(if (iteration % 2 == 0) 80 else 81);
         const info = view.getCachedLineInfo();
-        try std.testing.expect(info.starts.len > 0);
-        try std.testing.expectEqual(info.starts.len, info.widths.len);
+        try std.testing.expect(info.line_start_bytes.len > 0);
+        try std.testing.expectEqual(info.line_start_bytes.len, info.line_width_cols.len);
     }
 
     const first_chunk_opt = getFirstTextChunk(tb);
@@ -3669,7 +3669,7 @@ test "4-8 KiB mixed Unicode chunk selects full-cache mode" {
     view.setWrapWidth(32);
 
     const line_info = view.getCachedLineInfo();
-    try assertMonotonicAndProgress(line_info.starts, line_info.widths);
+    try assertMonotonicAndProgress(line_info.line_start_bytes, line_info.line_width_cols);
 
     const first_chunk_opt = getFirstTextChunk(tb);
     try std.testing.expect(first_chunk_opt != null);
@@ -3908,20 +3908,20 @@ test "TextBufferView automatic updates - with wrapping across buffer changes" {
     try std.testing.expectEqual(@as(u32, 2), view.getVirtualLineCount());
 
     const info1 = view.getCachedLineInfo();
-    try std.testing.expectEqual(@as(usize, 2), info1.starts.len);
+    try std.testing.expectEqual(@as(usize, 2), info1.line_start_bytes.len);
 
     try tb.setText("Short");
     try std.testing.expectEqual(@as(u32, 1), view.getVirtualLineCount());
 
     const info2 = view.getCachedLineInfo();
-    try std.testing.expectEqual(@as(usize, 1), info2.starts.len);
+    try std.testing.expectEqual(@as(usize, 1), info2.line_start_bytes.len);
 
     try tb.setText("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789");
     const vline_count = view.getVirtualLineCount();
     try std.testing.expect(vline_count >= 3);
 
     const info3 = view.getCachedLineInfo();
-    try std.testing.expect(info3.starts.len >= 3);
+    try std.testing.expect(info3.line_start_bytes.len >= 3);
 }
 
 test "TextBufferView automatic updates - reset clears content and marks views dirty" {
@@ -4118,8 +4118,8 @@ test "TextBufferView word wrapping - chunk at exact wrap boundary" {
     const vlines = view.getVirtualLines();
 
     try std.testing.expectEqual(@as(usize, 2), vlines.len);
-    try std.testing.expectEqual(@as(u32, 12), vlines[0].width);
-    try std.testing.expectEqual(@as(u32, 9), vlines[1].width);
+    try std.testing.expectEqual(@as(u32, 12), vlines[0].width_cols);
+    try std.testing.expectEqual(@as(u32, 9), vlines[1].width_cols);
 }
 
 test "TextBufferView word wrapping - does not split 'uses' across lines" {
@@ -4154,10 +4154,10 @@ test "TextBufferView word wrapping - does not split 'uses' across lines" {
             var line_buf: [1024]u8 = undefined;
             var next_line_buf: [1024]u8 = undefined;
 
-            const line_len = tb.getTextRange(vlines[i].char_offset, vlines[i].char_offset + vlines[i].width, &line_buf);
+            const line_len = tb.getTextRange(vlines[i].col_offset, vlines[i].col_offset + vlines[i].width_cols, &line_buf);
             const next_line_len = tb.getTextRange(
-                vlines[i + 1].char_offset,
-                vlines[i + 1].char_offset + vlines[i + 1].width,
+                vlines[i + 1].col_offset,
+                vlines[i + 1].col_offset + vlines[i + 1].width_cols,
                 &next_line_buf,
             );
 

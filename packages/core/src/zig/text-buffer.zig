@@ -155,10 +155,6 @@ pub const UnifiedTextBuffer = struct {
         return chunk.getLayoutSpans(&self.mem_registry, allocator, self.tab_width, self.width_method);
     }
 
-    pub fn getWrapOffsetsFor(self: *const Self, chunk: *const TextChunk) TextBufferError![]const utf8.WrapBreak {
-        return chunk.getWrapOffsets(&self.mem_registry, self.allocator, self.width_method);
-    }
-
     /// Accessor: walk all lines and segments via callbacks.
     pub fn walkLinesAndSegments(
         self: *const Self,
@@ -893,24 +889,24 @@ pub const UnifiedTextBuffer = struct {
 
             fn callback(ctx_ptr: *anyopaque, line_info: LineInfo) void {
                 const ctx = @as(*@This(), @ptrCast(@alignCast(ctx_ptr)));
-                const line_start_char = line_info.char_offset;
-                const line_end_char = line_info.char_offset + line_info.width;
+                const line_start_col_offset = line_info.col_offset;
+                const line_end_col_offset = line_info.col_offset + line_info.width_cols;
 
                 // Skip lines before the highlight
-                if (line_end_char <= ctx.char_start) return;
+                if (line_end_col_offset <= ctx.char_start) return;
                 // Stop after the highlight ends
-                if (line_start_char >= ctx.char_end) return;
+                if (line_start_col_offset >= ctx.char_end) return;
 
                 // This line overlaps with the highlight
-                const col_start = if (ctx.char_start > line_start_char)
-                    ctx.char_start - line_start_char
+                const col_start = if (ctx.char_start > line_start_col_offset)
+                    ctx.char_start - line_start_col_offset
                 else
                     0;
 
-                const col_end = if (ctx.char_end < line_end_char)
-                    ctx.char_end - line_start_char
+                const col_end = if (ctx.char_end < line_end_col_offset)
+                    ctx.char_end - line_start_col_offset
                 else
-                    line_info.width;
+                    line_info.width_cols;
 
                 ctx.buffer.addHighlight(
                     line_info.line_idx,
@@ -1062,7 +1058,7 @@ pub const UnifiedTextBuffer = struct {
             self.startHighlightsTransaction();
             defer self.endHighlightsTransaction();
 
-            var char_pos: u32 = 0;
+            var col_pos: u32 = 0;
             for (chunks, 0..) |chunk, i| {
                 const chunk_text = chunk.text_ptr[0..chunk.text_len];
                 const chunk_len = self.measureText(chunk_text);
@@ -1092,10 +1088,10 @@ pub const UnifiedTextBuffer = struct {
                     const style_name = std.fmt.bufPrint(&style_name_buf, "chunk{d}", .{i}) catch continue;
                     const style_id = (@constCast(style)).registerStyle(style_name, fg, bg, attributes) catch continue;
 
-                    self.addHighlightByCharRange(char_pos, char_pos + chunk_len, style_id, 1, 0) catch {};
+                    self.addHighlightByCharRange(col_pos, col_pos + chunk_len, style_id, 1, 0) catch {};
                 }
 
-                char_pos += chunk_len;
+                col_pos += chunk_len;
             }
         }
     }

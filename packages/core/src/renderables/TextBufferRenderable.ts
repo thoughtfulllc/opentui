@@ -171,11 +171,11 @@ export abstract class TextBufferRenderable extends Renderable implements LineInf
   }
 
   public get scrollWidth(): number {
-    return this.lineInfo.maxLineWidth
+    return this.lineInfo.maxLineWidthCols
   }
 
   public get scrollHeight(): number {
-    return this.lineInfo.lineStarts.length
+    return this.lineInfo.lineStartBytes.length
   }
 
   public get maxScrollY(): number {

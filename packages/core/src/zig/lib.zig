@@ -971,15 +971,15 @@ export fn textBufferViewGetLineInfoDirect(view: *text_buffer_view.UnifiedTextBuf
     const line_info = view.getCachedLineInfo();
 
     outPtr.* = .{
-        .starts_ptr = line_info.starts.ptr,
-        .starts_len = @intCast(line_info.starts.len),
-        .widths_ptr = line_info.widths.ptr,
-        .widths_len = @intCast(line_info.widths.len),
-        .sources_ptr = line_info.sources.ptr,
-        .sources_len = @intCast(line_info.sources.len),
-        .wraps_ptr = line_info.wraps.ptr,
-        .wraps_len = @intCast(line_info.wraps.len),
-        .max_width = line_info.max_width,
+        .start_bytes_ptr = line_info.line_start_bytes.ptr,
+        .start_bytes_len = @intCast(line_info.line_start_bytes.len),
+        .width_cols_ptr = line_info.line_width_cols.ptr,
+        .width_cols_len = @intCast(line_info.line_width_cols.len),
+        .sources_ptr = line_info.line_sources.ptr,
+        .sources_len = @intCast(line_info.line_sources.len),
+        .wraps_ptr = line_info.line_wraps.ptr,
+        .wraps_len = @intCast(line_info.line_wraps.len),
+        .max_width_cols = line_info.max_line_width_cols,
     };
 }
 
@@ -987,15 +987,15 @@ export fn textBufferViewGetLogicalLineInfoDirect(view: *text_buffer_view.Unified
     const line_info = view.getLogicalLineInfo();
 
     outPtr.* = .{
-        .starts_ptr = line_info.starts.ptr,
-        .starts_len = @intCast(line_info.starts.len),
-        .widths_ptr = line_info.widths.ptr,
-        .widths_len = @intCast(line_info.widths.len),
-        .sources_ptr = line_info.sources.ptr,
-        .sources_len = @intCast(line_info.sources.len),
-        .wraps_ptr = line_info.wraps.ptr,
-        .wraps_len = @intCast(line_info.wraps.len),
-        .max_width = line_info.max_width,
+        .start_bytes_ptr = line_info.line_start_bytes.ptr,
+        .start_bytes_len = @intCast(line_info.line_start_bytes.len),
+        .width_cols_ptr = line_info.line_width_cols.ptr,
+        .width_cols_len = @intCast(line_info.line_width_cols.len),
+        .sources_ptr = line_info.line_sources.ptr,
+        .sources_len = @intCast(line_info.line_sources.len),
+        .wraps_ptr = line_info.line_wraps.ptr,
+        .wraps_len = @intCast(line_info.line_wraps.len),
+        .max_width_cols = line_info.max_line_width_cols,
     };
 }
 
@@ -1301,15 +1301,15 @@ export fn editorViewGetTotalVirtualLineCount(view: *editor_view.EditorView) u32 
 export fn editorViewGetLineInfoDirect(view: *editor_view.EditorView, outPtr: *ExternalLineInfo) void {
     const line_info = view.getCachedLineInfo();
     outPtr.* = .{
-        .starts_ptr = line_info.starts.ptr,
-        .starts_len = @intCast(line_info.starts.len),
-        .widths_ptr = line_info.widths.ptr,
-        .widths_len = @intCast(line_info.widths.len),
-        .sources_ptr = line_info.sources.ptr,
-        .sources_len = @intCast(line_info.sources.len),
-        .wraps_ptr = line_info.wraps.ptr,
-        .wraps_len = @intCast(line_info.wraps.len),
-        .max_width = line_info.max_width,
+        .start_bytes_ptr = line_info.line_start_bytes.ptr,
+        .start_bytes_len = @intCast(line_info.line_start_bytes.len),
+        .width_cols_ptr = line_info.line_width_cols.ptr,
+        .width_cols_len = @intCast(line_info.line_width_cols.len),
+        .sources_ptr = line_info.line_sources.ptr,
+        .sources_len = @intCast(line_info.line_sources.len),
+        .wraps_ptr = line_info.line_wraps.ptr,
+        .wraps_len = @intCast(line_info.line_wraps.len),
+        .max_width_cols = line_info.max_line_width_cols,
     };
 }
 
@@ -1320,15 +1320,15 @@ export fn editorViewGetTextBufferView(view: *editor_view.EditorView) *text_buffe
 export fn editorViewGetLogicalLineInfoDirect(view: *editor_view.EditorView, outPtr: *ExternalLineInfo) void {
     const line_info = view.getLogicalLineInfo();
     outPtr.* = .{
-        .starts_ptr = line_info.starts.ptr,
-        .starts_len = @intCast(line_info.starts.len),
-        .widths_ptr = line_info.widths.ptr,
-        .widths_len = @intCast(line_info.widths.len),
-        .sources_ptr = line_info.sources.ptr,
-        .sources_len = @intCast(line_info.sources.len),
-        .wraps_ptr = line_info.wraps.ptr,
-        .wraps_len = @intCast(line_info.wraps.len),
-        .max_width = line_info.max_width,
+        .start_bytes_ptr = line_info.line_start_bytes.ptr,
+        .start_bytes_len = @intCast(line_info.line_start_bytes.len),
+        .width_cols_ptr = line_info.line_width_cols.ptr,
+        .width_cols_len = @intCast(line_info.line_width_cols.len),
+        .sources_ptr = line_info.line_sources.ptr,
+        .sources_len = @intCast(line_info.line_sources.len),
+        .wraps_ptr = line_info.line_wraps.ptr,
+        .wraps_len = @intCast(line_info.line_wraps.len),
+        .max_width_cols = line_info.max_line_width_cols,
     };
 }
 
@@ -1549,15 +1549,15 @@ pub const ExternalVisualCursor = extern struct {
 };
 
 pub const ExternalLineInfo = extern struct {
-    starts_ptr: [*]const u32,
-    starts_len: u32,
-    widths_ptr: [*]const u32,
-    widths_len: u32,
+    start_bytes_ptr: [*]const u32,
+    start_bytes_len: u32,
+    width_cols_ptr: [*]const u32,
+    width_cols_len: u32,
     sources_ptr: [*]const u32,
     sources_len: u32,
     wraps_ptr: [*]const u32,
     wraps_len: u32,
-    max_width: u32,
+    max_width_cols: u32,
 };
 
 export fn textBufferAddHighlightByCharRange(
@@ -1690,13 +1690,11 @@ export fn encodeUnicode(
     // Check if ASCII only for optimization
     const is_ascii_only = utf8.isAsciiOnly(text);
 
-    // Find grapheme info
-    var grapheme_list: std.ArrayListUnmanaged(utf8.GraphemeInfo) = .{};
-    defer grapheme_list.deinit(globalAllocator);
+    var layout_scan_result = utf8.LayoutScanResult.init(globalAllocator);
+    defer layout_scan_result.deinit();
 
     const tab_width: u8 = 2;
-    utf8.findGraphemeInfo(text, tab_width, is_ascii_only, wMethod, globalAllocator, &grapheme_list) catch return false;
-    const specials = grapheme_list.items;
+    utf8.scanLayout(text, tab_width, is_ascii_only, wMethod, &layout_scan_result) catch return false;
 
     // Allocate output array
     const estimated_count = if (is_ascii_only) text.len else text.len * 2;
@@ -1727,32 +1725,16 @@ export fn encodeUnicode(
         }
     }
 
-    var byte_offset: u32 = 0;
-    var col: u32 = 0;
-    var special_idx: usize = 0;
-
-    while (byte_offset < text.len) {
-        const at_special = special_idx < specials.len and specials[special_idx].col_offset == col;
-
-        var grapheme_bytes: []const u8 = undefined;
-        var g_width: u8 = undefined;
-
-        if (at_special) {
-            const g = specials[special_idx];
-            grapheme_bytes = text[g.byte_offset .. g.byte_offset + g.byte_len];
-            g_width = g.width;
-            byte_offset = g.byte_offset + g.byte_len;
-            special_idx += 1;
-        } else {
-            if (byte_offset >= text.len) break;
-            grapheme_bytes = text[byte_offset .. byte_offset + 1];
-            g_width = 1;
-            byte_offset += 1;
+    for (layout_scan_result.spans.items) |span| {
+        const span_byte_start: usize = @intCast(span.byte_start);
+        const span_byte_end: usize = @intCast(span.byte_start + span.byte_len);
+        if (span_byte_end > text.len or span_byte_start >= span_byte_end) {
+            continue;
         }
 
-        const cell_width = utf8.getWidthAt(text, if (at_special) specials[special_idx - 1].byte_offset else byte_offset - 1, tab_width, wMethod);
+        const grapheme_bytes = text[span_byte_start..span_byte_end];
+        const cell_width: u32 = span.col_width;
         if (cell_width == 0) {
-            col += g_width;
             continue;
         }
 
@@ -1786,7 +1768,6 @@ export fn encodeUnicode(
         };
         pending_gid = null; // Successfully stored, no longer pending
         result_idx += 1;
-        col += g_width;
     }
 
     // Trim to actual size
