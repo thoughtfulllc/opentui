@@ -3235,3 +3235,38 @@ test "drawTextBuffer - Thai ว่ grapheme in quotes occupies one cell" {
 
     try std.testing.expect(std.mem.indexOf(u8, result, "\"ว่\"") != null);
 }
+
+test "drawTextBuffer - truncation keeps grapheme-aligned byte windows" {
+    const pool = gp.initGlobalPool(std.testing.allocator);
+    defer gp.deinitGlobalPool();
+    const link_pool = link.initGlobalLinkPool(std.testing.allocator);
+    defer link.deinitGlobalLinkPool();
+
+    var tb = try TextBuffer.init(std.testing.allocator, pool, link_pool, .wcwidth);
+    defer tb.deinit();
+
+    var view = try TextBufferView.init(std.testing.allocator, tb);
+    defer view.deinit();
+
+    try tb.setText("ABCDE가FG");
+    view.setWrapMode(.none);
+    view.setTruncate(true);
+    view.setViewport(text_buffer_view.Viewport{ .x = 0, .y = 0, .width = 8, .height = 1 });
+
+    var opt_buffer = try OptimizedBuffer.init(
+        std.testing.allocator,
+        8,
+        1,
+        .{ .pool = pool, .width_method = .wcwidth },
+    );
+    defer opt_buffer.deinit();
+
+    try opt_buffer.clear(.{ 0.0, 0.0, 0.0, 1.0 }, 32);
+    try opt_buffer.drawTextBuffer(view, 0, 0);
+
+    var out_buffer: [64]u8 = undefined;
+    const written = try opt_buffer.writeResolvedChars(&out_buffer, false);
+    const result = out_buffer[0..written];
+
+    try std.testing.expect(std.mem.indexOf(u8, result, "AB...FG") != null);
+}

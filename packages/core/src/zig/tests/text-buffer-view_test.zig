@@ -2578,7 +2578,7 @@ test "TextBufferView truncation - verify ellipsis chunk injection" {
 
     // Verify the middle chunk is the ellipsis
     const ellipsis_chunk = vlines[0].chunks.items[1];
-    try std.testing.expectEqual(@as(u32, 3), ellipsis_chunk.width);
+    try std.testing.expectEqual(@as(u32, 3), ellipsis_chunk.width_cols);
 
     // Get the ellipsis text to verify it's "..."
     const ellipsis_text = ellipsis_chunk.chunk.getBytes(tb.memRegistry());
@@ -2643,6 +2643,42 @@ test "TextBufferView truncation - verify prefix and suffix content" {
 
     // Verify total width matches viewport
     try std.testing.expectEqual(@as(u32, 10), vlines[0].width);
+}
+
+test "TextBufferView truncation - keeps grapheme-aligned byte windows" {
+    const pool = gp.initGlobalPool(std.testing.allocator);
+    defer gp.deinitGlobalPool();
+    const link_pool = link.initGlobalLinkPool(std.testing.allocator);
+    defer link.deinitGlobalLinkPool();
+
+    var tb = try TextBuffer.init(std.testing.allocator, pool, link_pool, .wcwidth);
+    defer tb.deinit();
+
+    var view = try TextBufferView.init(std.testing.allocator, tb);
+    defer view.deinit();
+
+    try tb.setText("ABCDE가FG");
+
+    view.setTruncate(true);
+    view.setWrapMode(.none);
+    view.setViewport(text_buffer_view.Viewport{ .x = 0, .y = 0, .width = 8, .height = 1 });
+
+    const vlines = view.getVirtualLines();
+    try std.testing.expectEqual(@as(usize, 1), vlines.len);
+    try std.testing.expect(vlines[0].is_truncated);
+    try std.testing.expectEqual(@as(usize, 3), vlines[0].chunks.items.len);
+
+    const suffix_chunk = vlines[0].chunks.items[2];
+    const chunk_bytes = suffix_chunk.chunk.getBytes(tb.memRegistry());
+    const suffix_start: usize = @intCast(suffix_chunk.byte_start_in_chunk);
+    const suffix_end: usize = @intCast(suffix_chunk.byte_start_in_chunk + suffix_chunk.byte_len);
+    const suffix_bytes = chunk_bytes[suffix_start..suffix_end];
+
+    try std.testing.expect(std.unicode.utf8ValidateSlice(suffix_bytes));
+    try std.testing.expectEqualStrings("FG", suffix_bytes);
+    try std.testing.expectEqual(@as(u32, 7), suffix_chunk.col_start_in_chunk);
+    try std.testing.expectEqual(@as(u32, 2), suffix_chunk.width_cols);
+    try std.testing.expectEqual(@as(u32, 7), vlines[0].truncation_suffix_start);
 }
 
 test "TextBufferView measureForDimensions - multiple lines with different widths" {

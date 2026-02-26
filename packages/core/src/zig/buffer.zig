@@ -1152,7 +1152,15 @@ pub const OptimizedBuffer = struct {
         var currentX = x;
         var currentY = y + @as(i32, @intCast(firstVisibleLine));
         const text_buffer = view.getTextBuffer();
+        const stable_allocator = text_buffer.getAllocator();
         const total_line_count = text_buffer.lineCount();
+
+        var cached_layout_chunk: ?*const tb.TextChunk = null;
+        var cached_layout_spans: []const utf8.GraphemeSpan = &[_]utf8.GraphemeSpan{};
+        var cached_layout_spans_owned = false;
+        defer if (cached_layout_spans_owned) {
+            stable_allocator.free(@constCast(cached_layout_spans));
+        };
 
         const line_info = view.getCachedLineInfo();
         var globalCharPos: u32 = if (firstVisibleLine < line_info.starts.len)
@@ -1209,89 +1217,100 @@ pub const OptimizedBuffer = struct {
             for (vline.chunks.items) |vchunk| {
                 const chunk = vchunk.chunk;
                 const chunk_bytes = chunk.getBytes(text_buffer.memRegistry());
-                const specials = chunk.getGraphemes(text_buffer.memRegistry(), text_buffer.getAllocator(), text_buffer.tabWidth(), text_buffer.widthMethod()) catch continue;
                 const line_char_offset = vline.char_offset;
 
                 if (currentX >= @as(i32, @intCast(self.width))) {
-                    globalCharPos += vchunk.width;
-                    currentX += @intCast(vchunk.width);
+                    globalCharPos += vchunk.width_cols;
+                    currentX += @intCast(vchunk.width_cols);
                     continue;
                 }
-                const col_end = vchunk.grapheme_start + vchunk.width;
-                var col = vchunk.grapheme_start;
-                var special_idx: usize = 0;
-                var byte_offset: u32 = 0;
 
-                if (vchunk.grapheme_start > 0) {
-                    // Use UTF-8 aware position finding to skip to the grapheme_start
-                    const is_ascii_only = (vchunk.chunk.flags & tb.TextChunk.Flags.ASCII_ONLY) != 0;
-                    const pos_result = utf8.findPosByWidth(chunk_bytes, vchunk.grapheme_start, text_buffer.tabWidth(), is_ascii_only, false, text_buffer.widthMethod());
-                    byte_offset = pos_result.byte_offset;
+                if (cached_layout_chunk == null or cached_layout_chunk.? != chunk) {
+                    if (cached_layout_spans_owned) {
+                        stable_allocator.free(@constCast(cached_layout_spans));
+                        cached_layout_spans_owned = false;
+                    }
 
-                    // Advance special_idx to match the skipped columns
-                    var init_col: u32 = 0;
-                    while (init_col < vchunk.grapheme_start and special_idx < specials.len) {
-                        const g = specials[special_idx];
-                        if (g.col_offset < vchunk.grapheme_start) {
-                            special_idx += 1;
-                            init_col = g.col_offset + g.width;
-                        } else {
-                            break;
-                        }
+                    const layout_spans_for_chunk = text_buffer.getLayoutSpansFor(chunk, stable_allocator) catch continue;
+                    cached_layout_spans = layout_spans_for_chunk;
+                    cached_layout_spans_owned = chunk.getLayoutCacheMode() == .windowed;
+                    cached_layout_chunk = chunk;
+                }
+
+                const layout_spans = cached_layout_spans;
+
+                const chunk_byte_start = vchunk.byte_start_in_chunk;
+                const chunk_byte_end = vchunk.byte_start_in_chunk + vchunk.byte_len;
+                const chunk_col_start = vchunk.col_start_in_chunk;
+                const chunk_col_end = vchunk.col_start_in_chunk + vchunk.width_cols;
+
+                var lower_bound_lo: usize = 0;
+                var lower_bound_hi: usize = layout_spans.len;
+                while (lower_bound_lo < lower_bound_hi) {
+                    const mid = lower_bound_lo + (lower_bound_hi - lower_bound_lo) / 2;
+                    const mid_span = layout_spans[mid];
+                    if (mid_span.byte_start + mid_span.byte_len <= chunk_byte_start) {
+                        lower_bound_lo = mid + 1;
+                    } else {
+                        lower_bound_hi = mid;
                     }
                 }
 
-                while (col < col_end) {
-                    const at_special = special_idx < specials.len and specials[special_idx].col_offset == col;
+                var layout_span_idx: usize = lower_bound_lo;
+                while (layout_span_idx < layout_spans.len) : (layout_span_idx += 1) {
+                    const layout_span = layout_spans[layout_span_idx];
+                    const span_byte_start = layout_span.byte_start;
+                    const span_byte_end = layout_span.byte_start + layout_span.byte_len;
+                    if (span_byte_end <= chunk_byte_start) continue;
+                    if (span_byte_start >= chunk_byte_end) break;
 
-                    var grapheme_bytes: []const u8 = undefined;
-                    var g_width: u8 = undefined;
+                    const span_col_start = layout_span.col_start;
+                    const span_col_end = layout_span.col_start + layout_span.col_width;
+                    if (span_col_end <= chunk_col_start) continue;
+                    if (span_col_start >= chunk_col_end) break;
 
-                    if (at_special) {
-                        const g = specials[special_idx];
-                        grapheme_bytes = chunk_bytes[g.byte_offset .. g.byte_offset + g.byte_len];
-                        g_width = g.width;
-                        byte_offset = g.byte_offset + g.byte_len;
-                        special_idx += 1;
-                    } else {
-                        if (byte_offset >= chunk_bytes.len) break;
-                        const cp_len = std.unicode.utf8ByteSequenceLength(chunk_bytes[byte_offset]) catch 1;
-                        const next_byte_offset = @min(byte_offset + cp_len, chunk_bytes.len);
-                        grapheme_bytes = chunk_bytes[byte_offset..next_byte_offset];
-                        g_width = 1;
-                        byte_offset = next_byte_offset;
+                    if (span_col_start < chunk_col_start or span_col_end > chunk_col_end) {
+                        continue;
                     }
+
+                    const grapheme_start_idx: usize = @intCast(span_byte_start);
+                    const grapheme_end_idx: usize = @intCast(span_byte_end);
+                    if (grapheme_end_idx > chunk_bytes.len or grapheme_start_idx >= grapheme_end_idx) {
+                        continue;
+                    }
+
+                    const grapheme_bytes = chunk_bytes[grapheme_start_idx..grapheme_end_idx];
+                    const g_width: u32 = layout_span.col_width;
 
                     if (column_in_line < horizontal_offset) {
                         globalCharPos += g_width;
                         column_in_line += g_width;
-                        col += g_width;
                         continue;
                     }
 
                     if (column_in_line >= horizontal_offset + viewport_width) {
-                        globalCharPos += (col_end - col);
-                        break;
+                        globalCharPos += g_width;
+                        column_in_line += g_width;
+                        continue;
                     }
 
                     if (currentX < -@as(i32, @intCast(g_width))) {
                         globalCharPos += g_width;
                         currentX += @as(i32, @intCast(g_width));
                         column_in_line += g_width;
-                        col += g_width;
                         continue;
                     }
 
                     if (currentX >= @as(i32, @intCast(self.width))) {
-                        globalCharPos += (col_end - col);
-                        break;
+                        globalCharPos += g_width;
+                        column_in_line += g_width;
+                        continue;
                     }
 
                     if (!self.isPointInScissor(currentX, currentY)) {
                         globalCharPos += g_width;
                         currentX += @as(i32, @intCast(g_width));
                         column_in_line += g_width;
-                        col += g_width;
                         continue;
                     }
 
@@ -1451,10 +1470,10 @@ pub const OptimizedBuffer = struct {
                                 logger.warn("GraphemePool.alloc FAILED for grapheme (len={d}, bytes={any}): {}", .{ grapheme_bytes.len, grapheme_bytes, err });
                                 globalCharPos += g_width;
                                 currentX += @as(i32, @intCast(g_width));
-                                col += g_width;
+                                column_in_line += g_width;
                                 continue;
                             };
-                            encoded_char = gp.packGraphemeStart(gid & gp.GRAPHEME_ID_MASK, g_width);
+                            encoded_char = gp.packGraphemeStart(gid & gp.GRAPHEME_ID_MASK, @intCast(g_width));
                         }
 
                         try self.setCellWithAlphaBlending(
@@ -1470,7 +1489,6 @@ pub const OptimizedBuffer = struct {
                     globalCharPos += g_width;
                     currentX += @as(i32, @intCast(g_width));
                     column_in_line += g_width;
-                    col += g_width;
                 }
             }
 
