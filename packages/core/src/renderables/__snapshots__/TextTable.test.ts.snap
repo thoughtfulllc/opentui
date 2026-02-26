@@ -85,14 +85,14 @@ exports[`TextTableRenderable wraps CJK and emoji without grapheme duplication: u
 │Ite│Details                 │                              
 │m  │                        │                              
 ├───┼────────────────────────┤                              
-│mix│東京界 🌍 emoji         │                              
-│ed │wrapping continues      │                              
-│   │across lines for width  │                              
-│   │checks                  │                              
+│mix│東京界 🌍 emoji wrapping│                              
+│ed │continues across lines  │                              
+│   │for width checks        │                              
 ├───┼────────────────────────┤                              
 │emo│Faces 😀😃😄 should     │                              
 │ji │remain stable           │                              
 └───┴────────────────────────┘                              
+                                                            
                                                             
                                                             
                                                             
