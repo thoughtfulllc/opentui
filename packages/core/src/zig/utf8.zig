@@ -513,6 +513,10 @@ pub inline fn isWordCodepoint(cp: u21) bool {
     return classifyWordClass(cp) != .other;
 }
 
+pub fn isScriptTransitionBoundary(prev_cp: u21, curr_cp: u21) bool {
+    return isCjkAsciiTransition(classifyWordClass(prev_cp), classifyWordClass(curr_cp));
+}
+
 inline fn isCjkAsciiTransition(prev_class: WordClass, curr_class: WordClass) bool {
     return (prev_class == .cjk_word and curr_class == .ascii_word) or
         (prev_class == .ascii_word and curr_class == .cjk_word);

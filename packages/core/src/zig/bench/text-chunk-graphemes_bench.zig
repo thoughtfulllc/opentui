@@ -15,6 +15,25 @@ pub const benchName = "TextChunk getGraphemes";
 
 const TextType = enum { ascii, mixed, heavy_unicode };
 
+fn resetChunkCaches(chunk: *TextChunk) void {
+    chunk.layout_spans = null;
+    chunk.layout_cache_allocator = null;
+    chunk.layout_cache_valid = false;
+    chunk.layout_cache_mode = .full_cache;
+
+    chunk.legacy_graphemes = null;
+    chunk.legacy_grapheme_cache_valid = false;
+
+    chunk.legacy_wrap_offsets = null;
+    chunk.legacy_wrap_cache_valid = false;
+}
+
+fn iterationsForSize(size: usize) usize {
+    if (size >= 2 * 1024 * 1024) return 10;
+    if (size >= 256 * 1024) return 25;
+    return 100;
+}
+
 fn generateTestText(allocator: std.mem.Allocator, size: usize, text_type: TextType) ![]u8 {
     var buffer: std.ArrayListUnmanaged(u8) = .{};
     errdefer buffer.deinit(allocator);
@@ -121,8 +140,7 @@ fn benchGetGraphemes(
         defer arena.deinit();
         const arena_alloc = arena.allocator();
 
-        // Clear cached graphemes
-        chunk.graphemes = null;
+        resetChunkCaches(&chunk);
 
         var timer = try std.time.Timer.start();
         const graphemes = try chunk.getGraphemes(
@@ -149,11 +167,18 @@ fn benchGetGraphemes(
         .heavy_unicode => "Heavy Unicode",
     };
 
-    const name = try std.fmt.allocPrint(
-        allocator,
-        "getGraphemes {s} ({d} bytes, {d} graphemes)",
-        .{ type_str, size, grapheme_count },
-    );
+    const name = if (show_mem)
+        try std.fmt.allocPrint(
+            allocator,
+            "getGraphemes {s} ({d} bytes, {d} graphemes, mem={d} bytes)",
+            .{ type_str, size, grapheme_count, final_mem },
+        )
+    else
+        try std.fmt.allocPrint(
+            allocator,
+            "getGraphemes {s} ({d} bytes, {d} graphemes)",
+            .{ type_str, size, grapheme_count },
+        );
 
     const mem_stats: ?[]const MemStat = if (show_mem) blk: {
         const mem_stat_slice = try allocator.alloc(MemStat, 1);
@@ -196,6 +221,8 @@ fn computeBenchName(allocator: std.mem.Allocator, size: usize, text_type: TextTy
         .flags = if (is_ascii) TextChunk.Flags.ASCII_ONLY else 0,
     };
 
+    resetChunkCaches(&chunk);
+
     const graphemes = try chunk.getGraphemes(
         &registry,
         temp_alloc,
@@ -227,11 +254,16 @@ pub fn run(
     var results: std.ArrayListUnmanaged(BenchResult) = .{};
     errdefer results.deinit(allocator);
 
-    const iterations: usize = 100;
-
     // Test different chunk sizes: 100B, 1KB, 4KB, 16KB, 64KB
     const sizes = [_]usize{ 100, 1024, 4 * 1024, 16 * 1024, 64 * 1024 };
     const text_types = [_]TextType{ .ascii, .mixed, .heavy_unicode };
+    const stage2_policy_cases = [_]struct {
+        size: usize,
+        text_type: TextType,
+    }{
+        .{ .size = 2 * 1024 * 1024, .text_type = .ascii },
+        .{ .size = 8 * 1024, .text_type = .mixed },
+    };
 
     if (bench_filter == null) {
         for (text_types) |text_type| {
@@ -240,11 +272,22 @@ pub fn run(
                     allocator,
                     size,
                     text_type,
-                    iterations,
+                    iterationsForSize(size),
                     show_mem,
                 );
                 try results.append(allocator, result);
             }
+        }
+
+        for (stage2_policy_cases) |policy_case| {
+            const result = try benchGetGraphemes(
+                allocator,
+                policy_case.size,
+                policy_case.text_type,
+                iterationsForSize(policy_case.size),
+                show_mem,
+            );
+            try results.append(allocator, result);
         }
     } else {
         for (text_types) |text_type| {
@@ -259,13 +302,32 @@ pub fn run(
                     allocator,
                     size,
                     text_type,
-                    iterations,
+                    iterationsForSize(size),
                     show_mem,
                 );
                 allocator.free(result.name);
                 result.name = name;
                 try results.append(allocator, result);
             }
+        }
+
+        for (stage2_policy_cases) |policy_case| {
+            const name = try computeBenchName(allocator, policy_case.size, policy_case.text_type);
+            if (!bench_utils.matchesBenchFilter(name, bench_filter)) {
+                allocator.free(name);
+                continue;
+            }
+
+            var result = try benchGetGraphemes(
+                allocator,
+                policy_case.size,
+                policy_case.text_type,
+                iterationsForSize(policy_case.size),
+                show_mem,
+            );
+            allocator.free(result.name);
+            result.name = name;
+            try results.append(allocator, result);
         }
     }
 

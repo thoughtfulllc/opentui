@@ -2,6 +2,7 @@ const std = @import("std");
 const text_buffer = @import("../text-buffer.zig");
 const iter_mod = @import("../text-buffer-iterators.zig");
 const text_buffer_view = @import("../text-buffer-view.zig");
+const seg_mod = @import("../text-buffer-segment.zig");
 const gp = @import("../grapheme.zig");
 const link = @import("../link.zig");
 const utf8 = @import("../utf8.zig");
@@ -40,6 +41,25 @@ fn assertMonotonicAndProgress(starts: []const u32, widths: []const u32) !void {
             try std.testing.expect(starts[i] > starts[i - 1]);
         }
     }
+}
+
+fn getFirstTextChunk(tb: *const TextBuffer) ?*const seg_mod.TextChunk {
+    const Context = struct {
+        first_chunk: ?*const seg_mod.TextChunk = null,
+
+        fn segmentCallback(ctx_ptr: *anyopaque, _: u32, chunk: *const seg_mod.TextChunk, _: u32) void {
+            const ctx = @as(*@This(), @ptrCast(@alignCast(ctx_ptr)));
+            if (ctx.first_chunk == null) {
+                ctx.first_chunk = chunk;
+            }
+        }
+
+        fn lineEndCallback(_: *anyopaque, _: iter_mod.LineInfo) void {}
+    };
+
+    var ctx = Context{};
+    tb.walkLinesAndSegments(&ctx, Context.segmentCallback, Context.lineEndCallback);
+    return ctx.first_chunk;
 }
 
 test "TextBufferView wrapping - no wrap returns same line count" {
@@ -865,7 +885,6 @@ test "TextBufferView word wrapping - fragmented rope with word boundary" {
     const text = "hello my good friend";
     const mem_id = try tb.registerMemBuffer(text, false);
 
-    const seg_mod = @import("../text-buffer-segment.zig");
     const Segment = seg_mod.Segment;
 
     const chunk1 = tb.createChunk(mem_id, 0, 14); // "hello my good "
@@ -3504,6 +3523,124 @@ test "invariants hold across width methods" {
     }
 }
 
+test "line info parity under forced full-cache vs windowed layout modes" {
+    const pool = gp.initGlobalPool(std.testing.allocator);
+    defer gp.deinitGlobalPool();
+    const link_pool = link.initGlobalLinkPool(std.testing.allocator);
+    defer link.deinitGlobalLinkPool();
+
+    defer seg_mod.setLayoutCacheModeOverrideForTesting(null);
+
+    const text = "가나a hello\tworld 👋🏻 흐름도 테스트";
+    const wrap_width: u32 = 7;
+
+    seg_mod.setLayoutCacheModeOverrideForTesting(.full_cache);
+    var full_tb = try TextBuffer.init(std.testing.allocator, pool, link_pool, .wcwidth);
+    defer full_tb.deinit();
+
+    var full_view = try TextBufferView.init(std.testing.allocator, full_tb);
+    defer full_view.deinit();
+
+    try full_tb.setText(text);
+    full_view.setWrapMode(.word);
+    full_view.setWrapWidth(wrap_width);
+
+    const full_info = full_view.getCachedLineInfo();
+    const full_starts = try std.testing.allocator.dupe(u32, full_info.starts);
+    defer std.testing.allocator.free(full_starts);
+    const full_widths = try std.testing.allocator.dupe(u32, full_info.widths);
+    defer std.testing.allocator.free(full_widths);
+
+    seg_mod.setLayoutCacheModeOverrideForTesting(.windowed);
+    var window_tb = try TextBuffer.init(std.testing.allocator, pool, link_pool, .wcwidth);
+    defer window_tb.deinit();
+
+    var window_view = try TextBufferView.init(std.testing.allocator, window_tb);
+    defer window_view.deinit();
+
+    try window_tb.setText(text);
+    window_view.setWrapMode(.word);
+    window_view.setWrapWidth(wrap_width);
+
+    const window_info = window_view.getCachedLineInfo();
+
+    try std.testing.expectEqualSlices(u32, full_starts, window_info.starts);
+    try std.testing.expectEqualSlices(u32, full_widths, window_info.widths);
+}
+
+test "2 MiB ASCII line info uses windowed layout mode" {
+    const pool = gp.initGlobalPool(std.testing.allocator);
+    defer gp.deinitGlobalPool();
+    const link_pool = link.initGlobalLinkPool(std.testing.allocator);
+    defer link.deinitGlobalLinkPool();
+
+    seg_mod.setLayoutCacheModeOverrideForTesting(null);
+
+    var tb = try TextBuffer.init(std.testing.allocator, pool, link_pool, .wcwidth);
+    defer tb.deinit();
+
+    var view = try TextBufferView.init(std.testing.allocator, tb);
+    defer view.deinit();
+
+    const text = try std.testing.allocator.alloc(u8, 2 * 1024 * 1024);
+    defer std.testing.allocator.free(text);
+
+    for (text, 0..) |*byte, idx| {
+        byte.* = if (idx % 17 == 16) ' ' else 'a';
+    }
+
+    try tb.setText(text);
+    view.setWrapMode(.word);
+    view.setWrapWidth(80);
+
+    var iteration: usize = 0;
+    while (iteration < 6) : (iteration += 1) {
+        view.setWrapWidth(if (iteration % 2 == 0) 80 else 81);
+        const info = view.getCachedLineInfo();
+        try std.testing.expect(info.starts.len > 0);
+        try std.testing.expectEqual(info.starts.len, info.widths.len);
+    }
+
+    const first_chunk_opt = getFirstTextChunk(tb);
+    try std.testing.expect(first_chunk_opt != null);
+    const first_chunk = first_chunk_opt.?;
+    try std.testing.expectEqual(seg_mod.LayoutCacheMode.windowed, first_chunk.getLayoutCacheMode());
+}
+
+test "4-8 KiB mixed Unicode chunk selects full-cache mode" {
+    const pool = gp.initGlobalPool(std.testing.allocator);
+    defer gp.deinitGlobalPool();
+    const link_pool = link.initGlobalLinkPool(std.testing.allocator);
+    defer link.deinitGlobalLinkPool();
+
+    seg_mod.setLayoutCacheModeOverrideForTesting(null);
+
+    var tb = try TextBuffer.init(std.testing.allocator, pool, link_pool, .wcwidth);
+    defer tb.deinit();
+
+    var view = try TextBufferView.init(std.testing.allocator, tb);
+    defer view.deinit();
+
+    var text_builder: std.ArrayListUnmanaged(u8) = .{};
+    defer text_builder.deinit(std.testing.allocator);
+
+    while (text_builder.items.len + "가나a".len <= 4096) {
+        try text_builder.appendSlice(std.testing.allocator, "가나a");
+    }
+
+    try tb.setText(text_builder.items);
+    view.setWrapMode(.word);
+    view.setWrapWidth(32);
+
+    const line_info = view.getCachedLineInfo();
+    try assertMonotonicAndProgress(line_info.starts, line_info.widths);
+
+    const first_chunk_opt = getFirstTextChunk(tb);
+    try std.testing.expect(first_chunk_opt != null);
+    const first_chunk = first_chunk_opt.?;
+    try std.testing.expectEqual(seg_mod.LayoutCacheMode.full_cache, first_chunk.getLayoutCacheMode());
+}
+
 test "TextBufferView - highlights preserved after wrap width change" {
     const pool = gp.initGlobalPool(std.testing.allocator);
     defer gp.deinitGlobalPool();
@@ -3919,7 +4056,6 @@ test "TextBufferView word wrapping - chunk at exact wrap boundary" {
     const text = "hello world ddddddddd";
     const mem_id = try tb.registerMemBuffer(text, false);
 
-    const seg_mod = @import("../text-buffer-segment.zig");
     const Segment = seg_mod.Segment;
 
     var segments: std.ArrayListUnmanaged(Segment) = .{};
