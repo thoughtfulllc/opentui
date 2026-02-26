@@ -233,7 +233,7 @@ describe("TextBufferView", () => {
     it('word wrap width=1 advances bytes for "👋🏻a"', () => {
       const info = setWordWrap("👋🏻a", 1)
       expect(info.lineStarts).toEqual([0, 8])
-      expect(info.lineWidths).toEqual([2, 1])
+      expect(info.lineWidths).toEqual([4, 1])
       assertUtf8BoundarySlices("👋🏻a", info.lineStarts)
     })
 

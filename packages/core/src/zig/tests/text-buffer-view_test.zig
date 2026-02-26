@@ -3262,7 +3262,7 @@ test "word wrap width=1 emoji modifier advances byte starts" {
 
     const line_info = view.getCachedLineInfo();
     try std.testing.expectEqualSlices(u32, &[_]u32{ 0, 8 }, line_info.starts);
-    try std.testing.expectEqualSlices(u32, &[_]u32{ 2, 1 }, line_info.widths);
+    try std.testing.expectEqualSlices(u32, &[_]u32{ 4, 1 }, line_info.widths);
     try assertUtf8BoundarySlices(text, line_info.starts);
 }
 
@@ -4036,9 +4036,13 @@ test "TextBufferView findVisualLineIndex - finds correct line for wrapped text" 
     const idx50 = view.findVisualLineIndex(0, 50);
     try std.testing.expectEqual(@as(u32, 2), idx50);
 
-    // Column 51 should be in visual line 3 (starts at col 51)
+    // Overflowing boundary whitespace is dropped, so column 51 remains on line 2.
     const idx51 = view.findVisualLineIndex(0, 51);
-    try std.testing.expectEqual(@as(u32, 3), idx51);
+    try std.testing.expectEqual(@as(u32, 2), idx51);
+
+    // The next visual line starts after the dropped whitespace.
+    const idx56 = view.findVisualLineIndex(0, 56);
+    try std.testing.expectEqual(@as(u32, 3), idx56);
 }
 
 test "TextBufferView word wrapping - chunk at exact wrap boundary" {
