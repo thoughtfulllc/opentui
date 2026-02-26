@@ -2,6 +2,41 @@ const std = @import("std");
 const testing = std.testing;
 const utf8 = @import("../utf8.zig");
 
+fn scanLayoutFor(
+    text: []const u8,
+    tab_width: u8,
+    width_method: utf8.WidthMethod,
+    result: *utf8.LayoutScanResult,
+) !void {
+    try utf8.scanLayout(text, tab_width, utf8.isAsciiOnly(text), width_method, result);
+}
+
+fn findSpanByByteStart(spans: []const utf8.GraphemeSpan, byte_start: u32) ?utf8.GraphemeSpan {
+    for (spans) |span| {
+        if (span.byte_start == byte_start) {
+            return span;
+        }
+    }
+    return null;
+}
+
+fn findBreakSpanIndexByByteStart(spans: []const utf8.GraphemeSpan, byte_start: u32) ?usize {
+    for (spans, 0..) |span, idx| {
+        if (span.break_after != .none and span.byte_start == byte_start) {
+            return idx;
+        }
+    }
+    return null;
+}
+
+fn expectBreakAt(spans: []const utf8.GraphemeSpan, byte_start: u32, span_index: usize) !void {
+    const span = findSpanByByteStart(spans, byte_start) orelse return error.TestExpectedEqual;
+    try testing.expect(span.break_after != .none);
+
+    const idx = findBreakSpanIndexByByteStart(spans, byte_start) orelse return error.TestExpectedEqual;
+    try testing.expectEqual(span_index, idx);
+}
+
 // ============================================================================
 // ASCII-ONLY DETECTION TESTS
 // ============================================================================
@@ -796,15 +831,26 @@ const wrap_break_golden_tests = [_]WrapBreakTestCase{
 };
 
 fn testWrapBreaks(test_case: WrapBreakTestCase, allocator: std.mem.Allocator) !void {
-    var result = utf8.WrapBreakResult.init(allocator);
-    defer result.deinit();
+    var scan_result = utf8.LayoutScanResult.init(allocator);
+    defer scan_result.deinit();
 
-    try utf8.collectWrapBreaksFromLayout(test_case.input, &result, .unicode);
+    try scanLayoutFor(test_case.input, 4, .unicode, &scan_result);
 
-    try testing.expectEqual(test_case.expected.len, result.breaks.items.len);
+    var break_count: usize = 0;
+    for (scan_result.spans.items) |span| {
+        if (span.break_after != .none) {
+            break_count += 1;
+        }
+    }
+    try testing.expectEqual(test_case.expected.len, break_count);
 
-    for (test_case.expected, 0..) |exp, i| {
-        try testing.expectEqual(exp, result.breaks.items[i].byte_offset);
+    var break_index: usize = 0;
+    for (scan_result.spans.items) |span| {
+        if (span.break_after == .none) {
+            continue;
+        }
+        try testing.expectEqual(@as(u32, @intCast(test_case.expected[break_index])), span.byte_start);
+        break_index += 1;
     }
 }
 
@@ -914,13 +960,18 @@ test "wrap breaks: realistic text" {
         "Dashes test: pre-dash post-dash multi-word-expression\n" ++
         "Mixed: Hello, /path/to-file.txt [done]!\n";
 
-    var result = utf8.WrapBreakResult.init(testing.allocator);
-    defer result.deinit();
+    var scan_result = utf8.LayoutScanResult.init(testing.allocator);
+    defer scan_result.deinit();
 
-    try utf8.collectWrapBreaksFromLayout(sample_text, &result, .unicode);
+    try scanLayoutFor(sample_text, 4, .unicode, &scan_result);
 
-    // Verify we found many breaks
-    try testing.expect(result.breaks.items.len > 0);
+    var break_count: usize = 0;
+    for (scan_result.spans.items) |span| {
+        if (span.break_after != .none) {
+            break_count += 1;
+        }
+    }
+    try testing.expect(break_count > 0);
 }
 
 test "wrap breaks: random small buffers" {
@@ -946,9 +997,9 @@ test "wrap breaks: random small buffers" {
             }
         }
 
-        var result = utf8.WrapBreakResult.init(testing.allocator);
-        defer result.deinit();
-        try utf8.collectWrapBreaksFromLayout(buf, &result, .unicode);
+        var scan_result = utf8.LayoutScanResult.init(testing.allocator);
+        defer scan_result.deinit();
+        try scanLayoutFor(buf, 4, .unicode, &scan_result);
     }
 }
 
@@ -968,11 +1019,17 @@ test "wrap breaks: large buffer" {
         }
     }
 
-    var result = utf8.WrapBreakResult.init(testing.allocator);
-    defer result.deinit();
-    try utf8.collectWrapBreaksFromLayout(buf, &result, .unicode);
+    var scan_result = utf8.LayoutScanResult.init(testing.allocator);
+    defer scan_result.deinit();
+    try scanLayoutFor(buf, 4, .unicode, &scan_result);
 
-    try testing.expect(result.breaks.items.len > 0);
+    var break_count: usize = 0;
+    for (scan_result.spans.items) |span| {
+        if (span.break_after != .none) {
+            break_count += 1;
+        }
+    }
+    try testing.expect(break_count > 0);
 }
 
 test "wrap breaks: buffer exceeding 64KB" {
@@ -986,23 +1043,30 @@ test "wrap breaks: buffer exceeding 64KB" {
     const break_pos: usize = 70_000;
     buf[break_pos] = ' ';
 
-    var result = utf8.WrapBreakResult.init(testing.allocator);
-    defer result.deinit();
-    try utf8.collectWrapBreaksFromLayout(buf, &result, .unicode);
+    var scan_result = utf8.LayoutScanResult.init(testing.allocator);
+    defer scan_result.deinit();
+    try scanLayoutFor(buf, 4, .unicode, &scan_result);
 
-    // Should find exactly one wrap break
-    try testing.expectEqual(@as(usize, 1), result.breaks.items.len);
+    var break_count: usize = 0;
+    for (scan_result.spans.items) |span| {
+        if (span.break_after != .none) {
+            break_count += 1;
+        }
+    }
+    try testing.expectEqual(@as(usize, 1), break_count);
 
-    // The byte_offset must be the actual position, not truncated
-    try testing.expectEqual(@as(u32, break_pos), result.breaks.items[0].byte_offset);
-    try testing.expectEqual(@as(u32, break_pos), result.breaks.items[0].char_offset);
+    const span = findSpanByByteStart(scan_result.spans.items, @intCast(break_pos)) orelse return error.TestExpectedEqual;
+    try testing.expectEqual(@as(u32, @intCast(break_pos)), span.byte_start);
+
+    const break_span_index = findBreakSpanIndexByByteStart(scan_result.spans.items, @intCast(break_pos)) orelse return error.TestExpectedEqual;
+    try testing.expectEqual(@as(usize, break_pos), break_span_index);
 }
 
 // ============================================================================
 // SCAN LAYOUT
 //
 // scanLayout is the canonical scanner for byte+column facts. These tests pin
-// the invariants that adapter APIs depend on.
+// the invariants that wrap and cursor code depend on.
 // ============================================================================
 
 test "scanLayout: byte and column invariants" {
@@ -1132,154 +1196,105 @@ test "scanLayout: out parameter is reset after failure" {
     try testing.expectEqual(@as(u32, 0), result.total_cols);
 }
 
-test "scanLayout adapter parity: findWrapBreaks" {
-    const text = "ab 세계-test 👋🏿 cd";
+test "scanLayout: break markers are carried by spans" {
+    const text = "ab 世界-test 👋🏿 cd";
 
     var scan_result = utf8.LayoutScanResult.init(testing.allocator);
     defer scan_result.deinit();
-    try utf8.scanLayout(text, 4, false, .unicode, &scan_result);
+    try scanLayoutFor(text, 4, .unicode, &scan_result);
 
-    var wrap_result = utf8.WrapBreakResult.init(testing.allocator);
-    defer wrap_result.deinit();
-    try utf8.collectWrapBreaksFromLayout(text, &wrap_result, .unicode);
-
-    var expected_count: usize = 0;
-    for (scan_result.spans.items) |span| {
-        if (span.break_after != .none) {
-            expected_count += 1;
-        }
-    }
-
-    try testing.expectEqual(expected_count, wrap_result.breaks.items.len);
-
-    var actual_index: usize = 0;
+    var break_count: usize = 0;
     for (scan_result.spans.items, 0..) |span, idx| {
         if (span.break_after == .none) {
             continue;
         }
 
-        try testing.expectEqual(span.byte_start, wrap_result.breaks.items[actual_index].byte_offset);
-        // WrapBreak.char_offset is grapheme index, not display column.
-        try testing.expectEqual(@as(u32, @intCast(idx)), wrap_result.breaks.items[actual_index].char_offset);
-        actual_index += 1;
+        break_count += 1;
+
+        const by_start = findSpanByByteStart(scan_result.spans.items, span.byte_start) orelse return error.TestExpectedEqual;
+        try testing.expectEqual(span.byte_start, by_start.byte_start);
+
+        const break_idx = findBreakSpanIndexByByteStart(scan_result.spans.items, span.byte_start) orelse return error.TestExpectedEqual;
+        try testing.expectEqual(idx, break_idx);
     }
+
+    try testing.expect(break_count > 0);
 }
 
-test "scanLayout adapter parity: findGraphemeInfo" {
+test "scanLayout: tab and multibyte spans are represented directly" {
     const text = "a\t世界👋🏿z";
 
     var scan_result = utf8.LayoutScanResult.init(testing.allocator);
     defer scan_result.deinit();
-    try utf8.scanLayout(text, 4, false, .unicode, &scan_result);
+    try scanLayoutFor(text, 4, .unicode, &scan_result);
 
-    var grapheme_result: std.ArrayListUnmanaged(utf8.GraphemeInfo) = .{};
-    defer grapheme_result.deinit(testing.allocator);
-    try utf8.collectLegacyGraphemeInfoFromLayout(text, 4, false, .unicode, testing.allocator, &grapheme_result);
+    const tab_span = findSpanByByteStart(scan_result.spans.items, 1) orelse return error.TestExpectedEqual;
+    try testing.expectEqual(@as(u32, 1), tab_span.byte_len);
+    try testing.expectEqual(@as(u16, 4), tab_span.col_width);
 
-    var expected_count: usize = 0;
-    for (scan_result.spans.items) |span| {
-        const byte_start: usize = @intCast(span.byte_start);
-        const is_tab = span.byte_len == 1 and text[byte_start] == '\t';
-        const is_multibyte = span.byte_len > 1;
-        // Legacy GraphemeInfo stores tabs and multibyte graphemes only.
-        if ((is_tab or is_multibyte) and span.col_width > 0) {
-            expected_count += 1;
-        }
-    }
+    const first_cjk = findSpanByByteStart(scan_result.spans.items, 2) orelse return error.TestExpectedEqual;
+    try testing.expectEqual(@as(u32, 3), first_cjk.byte_len);
+    try testing.expectEqual(@as(u16, 2), first_cjk.col_width);
 
-    try testing.expectEqual(expected_count, grapheme_result.items.len);
+    const second_cjk = findSpanByByteStart(scan_result.spans.items, 5) orelse return error.TestExpectedEqual;
+    try testing.expectEqual(@as(u32, 3), second_cjk.byte_len);
+    try testing.expectEqual(@as(u16, 2), second_cjk.col_width);
 
-    var actual_index: usize = 0;
-    for (scan_result.spans.items) |span| {
-        const byte_start: usize = @intCast(span.byte_start);
-        const is_tab = span.byte_len == 1 and text[byte_start] == '\t';
-        const is_multibyte = span.byte_len > 1;
-        if (!is_tab and !is_multibyte) {
-            continue;
-        }
-        if (span.col_width == 0) {
-            continue;
-        }
-
-        const g = grapheme_result.items[actual_index];
-        try testing.expectEqual(span.byte_start, g.byte_offset);
-        try testing.expectEqual(@as(u8, @intCast(span.byte_len)), g.byte_len);
-        try testing.expectEqual(@as(u8, @intCast(span.col_width)), g.width);
-        try testing.expectEqual(span.col_start, g.col_offset);
-        actual_index += 1;
-    }
+    const emoji = findSpanByByteStart(scan_result.spans.items, 8) orelse return error.TestExpectedEqual;
+    try testing.expectEqual(@as(u32, 8), emoji.byte_len);
+    try testing.expectEqual(@as(u16, 2), emoji.col_width);
 }
 
-test "scanLayout adapter matrix: findWrapBreaks width methods preserve legacy output" {
+test "scanLayout: break byte starts are stable across width methods" {
     const text = "👩‍🚀 x";
+    const methods = [_]utf8.WidthMethod{ .unicode, .no_zwj, .wcwidth };
 
-    var unicode_result = utf8.WrapBreakResult.init(testing.allocator);
-    defer unicode_result.deinit();
-    try utf8.collectWrapBreaksFromLayout(text, &unicode_result, .unicode);
+    var baseline: std.ArrayListUnmanaged(u32) = .{};
+    defer baseline.deinit(testing.allocator);
 
-    const methods = [_]utf8.WidthMethod{ .no_zwj, .wcwidth };
-    for (methods) |method| {
-        var method_result = utf8.WrapBreakResult.init(testing.allocator);
-        defer method_result.deinit();
-        try utf8.collectWrapBreaksFromLayout(text, &method_result, method);
-
-        try testing.expectEqual(unicode_result.breaks.items.len, method_result.breaks.items.len);
-        for (unicode_result.breaks.items, method_result.breaks.items) |expected, actual| {
-            try testing.expectEqual(expected.byte_offset, actual.byte_offset);
-            try testing.expectEqual(expected.char_offset, actual.char_offset);
+    var baseline_scan = utf8.LayoutScanResult.init(testing.allocator);
+    defer baseline_scan.deinit();
+    try scanLayoutFor(text, 4, .unicode, &baseline_scan);
+    for (baseline_scan.spans.items) |span| {
+        if (span.break_after != .none) {
+            try baseline.append(testing.allocator, span.byte_start);
         }
+    }
+
+    for (methods) |method| {
+        var scan_result = utf8.LayoutScanResult.init(testing.allocator);
+        defer scan_result.deinit();
+        try scanLayoutFor(text, 4, method, &scan_result);
+
+        var break_index: usize = 0;
+        for (scan_result.spans.items) |span| {
+            if (span.break_after == .none) {
+                continue;
+            }
+
+            try testing.expectEqual(baseline.items[break_index], span.byte_start);
+            break_index += 1;
+        }
+        try testing.expectEqual(baseline.items.len, break_index);
     }
 }
 
-test "scanLayout adapter matrix: findGraphemeInfo parity across width methods" {
+test "scanLayout: width methods differ only in width or segmentation" {
     const text = "a\t👩‍🚀👋🏿🇺🇸e\u{0301}z";
     const methods = [_]utf8.WidthMethod{ .unicode, .no_zwj, .wcwidth };
 
     for (methods) |method| {
         var scan_result = utf8.LayoutScanResult.init(testing.allocator);
         defer scan_result.deinit();
-        try utf8.scanLayout(text, 4, false, method, &scan_result);
 
-        var grapheme_result: std.ArrayListUnmanaged(utf8.GraphemeInfo) = .{};
-        defer grapheme_result.deinit(testing.allocator);
-        try utf8.collectLegacyGraphemeInfoFromLayout(text, 4, false, method, testing.allocator, &grapheme_result);
+        try scanLayoutFor(text, 4, method, &scan_result);
+        try testing.expectEqual(@as(u32, @intCast(text.len)), scan_result.total_bytes);
+        try testing.expect(scan_result.spans.items.len > 0);
 
-        var expected_count: usize = 0;
-        for (scan_result.spans.items) |span| {
-            const byte_start: usize = @intCast(span.byte_start);
-            const is_tab = span.byte_len == 1 and text[byte_start] == '\t';
-            const is_multibyte = span.byte_len > 1;
-            if (!is_tab and !is_multibyte) {
-                continue;
-            }
-            // Unicode and no_zwj skip zero-width clusters. wcwidth keeps them.
-            if (method != .wcwidth and span.col_width == 0) {
-                continue;
-            }
-            expected_count += 1;
-        }
-
-        try testing.expectEqual(expected_count, grapheme_result.items.len);
-
-        var actual_index: usize = 0;
-        for (scan_result.spans.items) |span| {
-            const byte_start: usize = @intCast(span.byte_start);
-            const is_tab = span.byte_len == 1 and text[byte_start] == '\t';
-            const is_multibyte = span.byte_len > 1;
-            if (!is_tab and !is_multibyte) {
-                continue;
-            }
-            if (method != .wcwidth and span.col_width == 0) {
-                continue;
-            }
-
-            const actual = grapheme_result.items[actual_index];
-            try testing.expectEqual(span.byte_start, actual.byte_offset);
-            try testing.expectEqual(@as(u8, @intCast(span.byte_len)), actual.byte_len);
-            try testing.expectEqual(@as(u8, @intCast(span.col_width)), actual.width);
-            try testing.expectEqual(span.col_start, actual.col_offset);
-            actual_index += 1;
-        }
+        const tab_span = findSpanByByteStart(scan_result.spans.items, 1) orelse return error.TestExpectedEqual;
+        try testing.expectEqual(@as(u32, 1), tab_span.byte_len);
+        try testing.expectEqual(@as(u16, 4), tab_span.col_width);
+        try testing.expectEqual(utf8.BreakKind.whitespace, tab_span.break_after);
     }
 }
 
@@ -1291,20 +1306,22 @@ test "edge case: result reuse" {
     var line_result = utf8.LineBreakResult.init(testing.allocator);
     defer line_result.deinit();
 
-    // First use - line breaks
     try utf8.findLineBreaks("a\nb\nc", &line_result);
     try testing.expectEqual(@as(usize, 2), line_result.breaks.items.len);
 
-    // Second use - should reset automatically
     try utf8.findLineBreaks("x\ny", &line_result);
     try testing.expectEqual(@as(usize, 1), line_result.breaks.items.len);
     try testing.expectEqual(@as(usize, 1), line_result.breaks.items[0].pos);
 
-    // Third use - wrap breaks (different result type)
-    var wrap_result = utf8.WrapBreakResult.init(testing.allocator);
-    defer wrap_result.deinit();
-    try utf8.collectWrapBreaksFromLayout("a b c", &wrap_result, .unicode);
-    try testing.expectEqual(@as(usize, 2), wrap_result.breaks.items.len);
+    var scan_result = utf8.LayoutScanResult.init(testing.allocator);
+    defer scan_result.deinit();
+    try scanLayoutFor("a b c", 4, .unicode, &scan_result);
+
+    var break_count: usize = 0;
+    for (scan_result.spans.items) |span| {
+        if (span.break_after != .none) break_count += 1;
+    }
+    try testing.expectEqual(@as(usize, 2), break_count);
 }
 
 test "edge case: empty input" {
@@ -1314,245 +1331,160 @@ test "edge case: empty input" {
     try utf8.findLineBreaks("", &line_result);
     try testing.expectEqual(@as(usize, 0), line_result.breaks.items.len);
 
-    var wrap_result = utf8.WrapBreakResult.init(testing.allocator);
-    defer wrap_result.deinit();
-    try utf8.collectWrapBreaksFromLayout("", &wrap_result, .unicode);
-    try testing.expectEqual(@as(usize, 0), wrap_result.breaks.items.len);
+    var scan_result = utf8.LayoutScanResult.init(testing.allocator);
+    defer scan_result.deinit();
+    try scanLayoutFor("", 4, .unicode, &scan_result);
+    try testing.expectEqual(@as(usize, 0), scan_result.spans.items.len);
 }
 
 test "edge case: exactly 16 bytes" {
     var line_result = utf8.LineBreakResult.init(testing.allocator);
     defer line_result.deinit();
 
-    const input = "0123456789abcdef"; // exactly 16 bytes
+    const input = "0123456789abcdef";
     try utf8.findLineBreaks(input, &line_result);
     try testing.expectEqual(@as(usize, 0), line_result.breaks.items.len);
 
-    var wrap_result = utf8.WrapBreakResult.init(testing.allocator);
-    defer wrap_result.deinit();
-    try utf8.collectWrapBreaksFromLayout(input, &wrap_result, .unicode);
-    try testing.expectEqual(@as(usize, 0), wrap_result.breaks.items.len);
+    var scan_result = utf8.LayoutScanResult.init(testing.allocator);
+    defer scan_result.deinit();
+    try scanLayoutFor(input, 4, .unicode, &scan_result);
+
+    for (scan_result.spans.items) |span| {
+        try testing.expectEqual(utf8.BreakKind.none, span.break_after);
+    }
 }
 
 test "edge case: 17 bytes with break at 16" {
     var line_result = utf8.LineBreakResult.init(testing.allocator);
     defer line_result.deinit();
 
-    const input = "0123456789abcde\nx"; // break at position 15
+    const input = "0123456789abcde\nx";
     try utf8.findLineBreaks(input, &line_result);
     try testing.expectEqual(@as(usize, 1), line_result.breaks.items.len);
     try testing.expectEqual(@as(usize, 15), line_result.breaks.items[0].pos);
 
-    var wrap_result = utf8.WrapBreakResult.init(testing.allocator);
-    defer wrap_result.deinit();
-    const input2 = "0123456789abcde x"; // space at position 15
-    try utf8.collectWrapBreaksFromLayout(input2, &wrap_result, .unicode);
-    try testing.expectEqual(@as(usize, 1), wrap_result.breaks.items.len);
-    try testing.expectEqual(@as(u16, 15), wrap_result.breaks.items[0].byte_offset);
-    try testing.expectEqual(@as(u16, 15), wrap_result.breaks.items[0].char_offset);
+    const input2 = "0123456789abcde x";
+    var scan_result = utf8.LayoutScanResult.init(testing.allocator);
+    defer scan_result.deinit();
+    try scanLayoutFor(input2, 4, .unicode, &scan_result);
+
+    try expectBreakAt(scan_result.spans.items, 15, 15);
 }
 
 // ============================================================================
 // GRAPHEME CLUSTER TESTS
 // ============================================================================
 
-test "wrap breaks: emoji with ZWJ - char offset should count grapheme not codepoints" {
+test "scanLayout: break indices count graphemes for ZWJ clusters" {
     const input = "ab 👩‍🚀 cd";
-
-    var result = utf8.WrapBreakResult.init(testing.allocator);
-    defer result.deinit();
-    try utf8.collectWrapBreaksFromLayout(input, &result, .unicode);
-
-    try testing.expectEqual(@as(usize, 2), result.breaks.items.len);
-    try testing.expectEqual(@as(u16, 2), result.breaks.items[0].byte_offset);
-    try testing.expectEqual(@as(u16, 2), result.breaks.items[0].char_offset);
-    try testing.expectEqual(@as(u16, 14), result.breaks.items[1].byte_offset);
-    try testing.expectEqual(@as(u16, 4), result.breaks.items[1].char_offset); // Should be 4, not 6
+    var scan_result = utf8.LayoutScanResult.init(testing.allocator);
+    defer scan_result.deinit();
+    try scanLayoutFor(input, 4, .unicode, &scan_result);
+    try expectBreakAt(scan_result.spans.items, 2, 2);
+    try expectBreakAt(scan_result.spans.items, 14, 4);
 }
 
-test "wrap breaks: emoji with skin tone - char offset should count grapheme" {
+test "scanLayout: break indices count graphemes for skin tone clusters" {
     const input = "hi 👋🏿 bye";
-
-    var result = utf8.WrapBreakResult.init(testing.allocator);
-    defer result.deinit();
-    try utf8.collectWrapBreaksFromLayout(input, &result, .unicode);
-
-    try testing.expectEqual(@as(usize, 2), result.breaks.items.len);
-    try testing.expectEqual(@as(u16, 2), result.breaks.items[0].byte_offset);
-    try testing.expectEqual(@as(u16, 2), result.breaks.items[0].char_offset);
-    try testing.expectEqual(@as(u16, 11), result.breaks.items[1].byte_offset);
-    try testing.expectEqual(@as(u16, 4), result.breaks.items[1].char_offset); // Should be 4, not 5
+    var scan_result = utf8.LayoutScanResult.init(testing.allocator);
+    defer scan_result.deinit();
+    try scanLayoutFor(input, 4, .unicode, &scan_result);
+    try expectBreakAt(scan_result.spans.items, 2, 2);
+    try expectBreakAt(scan_result.spans.items, 11, 4);
 }
 
-test "wrap breaks: emoji with VS16 selector - char offset should count grapheme" {
+test "scanLayout: break indices count graphemes for VS16 clusters" {
     const input = "I ❤️ U";
-
-    var result = utf8.WrapBreakResult.init(testing.allocator);
-    defer result.deinit();
-    try utf8.collectWrapBreaksFromLayout(input, &result, .unicode);
-
-    try testing.expectEqual(@as(usize, 2), result.breaks.items.len);
-    try testing.expectEqual(@as(u16, 1), result.breaks.items[0].byte_offset);
-    try testing.expectEqual(@as(u16, 1), result.breaks.items[0].char_offset);
-    try testing.expectEqual(@as(u16, 8), result.breaks.items[1].byte_offset);
-    try testing.expectEqual(@as(u16, 3), result.breaks.items[1].char_offset); // Should be 3, not 4
+    var scan_result = utf8.LayoutScanResult.init(testing.allocator);
+    defer scan_result.deinit();
+    try scanLayoutFor(input, 4, .unicode, &scan_result);
+    try expectBreakAt(scan_result.spans.items, 1, 1);
+    try expectBreakAt(scan_result.spans.items, 8, 3);
 }
 
-test "wrap breaks: combining diacritic - char offset should count grapheme" {
+test "scanLayout: break indices count graphemes for combining marks" {
     const input = "cafe\u{0301} time";
-
-    var result = utf8.WrapBreakResult.init(testing.allocator);
-    defer result.deinit();
-    try utf8.collectWrapBreaksFromLayout(input, &result, .unicode);
-
-    try testing.expectEqual(@as(usize, 1), result.breaks.items.len);
-    try testing.expectEqual(@as(u16, 6), result.breaks.items[0].byte_offset);
-    try testing.expectEqual(@as(u16, 4), result.breaks.items[0].char_offset); // Should be 4, not 5
+    var scan_result = utf8.LayoutScanResult.init(testing.allocator);
+    defer scan_result.deinit();
+    try scanLayoutFor(input, 4, .unicode, &scan_result);
+    try expectBreakAt(scan_result.spans.items, 6, 4);
 }
 
-test "wrap breaks: flag emoji - char offset should count grapheme" {
+test "scanLayout: break indices count graphemes for flags" {
     const input = "USA🇺🇸 flag";
-
-    var result = utf8.WrapBreakResult.init(testing.allocator);
-    defer result.deinit();
-    try utf8.collectWrapBreaksFromLayout(input, &result, .unicode);
-
-    try testing.expectEqual(@as(usize, 1), result.breaks.items.len);
-    try testing.expectEqual(@as(u16, 11), result.breaks.items[0].byte_offset);
-    try testing.expectEqual(@as(u16, 4), result.breaks.items[0].char_offset); // 3(USA) + 1(flag) = 4
+    var scan_result = utf8.LayoutScanResult.init(testing.allocator);
+    defer scan_result.deinit();
+    try scanLayoutFor(input, 4, .unicode, &scan_result);
+    try expectBreakAt(scan_result.spans.items, 11, 4);
 }
 
-test "wrap breaks: mixed graphemes and ASCII" {
+test "scanLayout: mixed graphemes preserve break byte starts" {
     const input = "Hello 👋🏿 world 🇺🇸 test";
-
-    var result = utf8.WrapBreakResult.init(testing.allocator);
-    defer result.deinit();
-    try utf8.collectWrapBreaksFromLayout(input, &result, .unicode);
-
-    try testing.expectEqual(@as(usize, 4), result.breaks.items.len);
-    try testing.expectEqual(@as(u16, 5), result.breaks.items[0].byte_offset);
-    try testing.expectEqual(@as(u16, 5), result.breaks.items[0].char_offset);
-    try testing.expectEqual(@as(u16, 14), result.breaks.items[1].byte_offset);
-    try testing.expectEqual(@as(u16, 7), result.breaks.items[1].char_offset); // 5 + 1 + 1(grapheme) = 7
-    try testing.expectEqual(@as(u16, 20), result.breaks.items[2].byte_offset);
-    try testing.expectEqual(@as(u16, 13), result.breaks.items[2].char_offset); // 7 + 1 + 5 = 13
-    try testing.expectEqual(@as(u16, 29), result.breaks.items[3].byte_offset);
-    try testing.expectEqual(@as(u16, 15), result.breaks.items[3].char_offset); // 13 + 1(space) + 1(RI) + 1(RI) = 15 (per uucode)
+    var scan_result = utf8.LayoutScanResult.init(testing.allocator);
+    defer scan_result.deinit();
+    try scanLayoutFor(input, 4, .unicode, &scan_result);
+    try expectBreakAt(scan_result.spans.items, 5, 5);
+    try expectBreakAt(scan_result.spans.items, 14, 7);
+    try expectBreakAt(scan_result.spans.items, 20, 13);
+    try expectBreakAt(scan_result.spans.items, 29, 15);
 }
 
-test "wrap breaks: CJK characters keep break offsets" {
-    // Ensure multibyte graphemes don't shift wrap break offsets.
+test "scanLayout: CJK characters keep break offsets" {
     const input = "Hello 世界 test";
-
-    var result = utf8.WrapBreakResult.init(testing.allocator);
-    defer result.deinit();
-    try utf8.collectWrapBreaksFromLayout(input, &result, .unicode);
-
-    // Should find 2 wrap breaks (2 spaces)
-    try testing.expectEqual(@as(usize, 2), result.breaks.items.len);
-
-    // First break: space after "Hello"
-    try testing.expectEqual(@as(u16, 5), result.breaks.items[0].byte_offset);
-    try testing.expectEqual(@as(u16, 5), result.breaks.items[0].char_offset);
-
-    // Second break: space after "世界"
-    // Byte: "Hello " = 6 bytes, "世" = 3 bytes, "界" = 3 bytes, total = 12
-    try testing.expectEqual(@as(u16, 12), result.breaks.items[1].byte_offset);
-    try testing.expectEqual(@as(u16, 8), result.breaks.items[1].char_offset); // 6 graphemes(Hello space) + 2 graphemes(世界) = 8
+    var scan_result = utf8.LayoutScanResult.init(testing.allocator);
+    defer scan_result.deinit();
+    try scanLayoutFor(input, 4, .unicode, &scan_result);
+    try expectBreakAt(scan_result.spans.items, 5, 5);
+    try expectBreakAt(scan_result.spans.items, 12, 8);
 }
 
-test "wrap breaks: CJK to ASCII script transition" {
+test "scanLayout: CJK to ASCII script transition" {
     const input = "日本語abc";
-
-    var result = utf8.WrapBreakResult.init(testing.allocator);
-    defer result.deinit();
-    try utf8.collectWrapBreaksFromLayout(input, &result, .unicode);
-
-    try testing.expectEqual(@as(usize, 1), result.breaks.items.len);
-    try testing.expectEqual(@as(u16, 6), result.breaks.items[0].byte_offset);
-    try testing.expectEqual(@as(u16, 2), result.breaks.items[0].char_offset);
+    var scan_result = utf8.LayoutScanResult.init(testing.allocator);
+    defer scan_result.deinit();
+    try scanLayoutFor(input, 4, .unicode, &scan_result);
+    try expectBreakAt(scan_result.spans.items, 6, 2);
 }
 
-test "wrap breaks: ASCII to CJK script transition" {
+test "scanLayout: ASCII to CJK script transition" {
     const input = "abc日本語";
-
-    var result = utf8.WrapBreakResult.init(testing.allocator);
-    defer result.deinit();
-    try utf8.collectWrapBreaksFromLayout(input, &result, .unicode);
-
-    try testing.expectEqual(@as(usize, 1), result.breaks.items.len);
-    try testing.expectEqual(@as(u16, 2), result.breaks.items[0].byte_offset);
-    try testing.expectEqual(@as(u16, 2), result.breaks.items[0].char_offset);
+    var scan_result = utf8.LayoutScanResult.init(testing.allocator);
+    defer scan_result.deinit();
+    try scanLayoutFor(input, 4, .unicode, &scan_result);
+    try expectBreakAt(scan_result.spans.items, 2, 2);
 }
 
-test "wrap breaks: CJK punctuation before ASCII" {
+test "scanLayout: CJK punctuation before ASCII" {
     const input = "日本語。abc";
-
-    var result = utf8.WrapBreakResult.init(testing.allocator);
-    defer result.deinit();
-    try utf8.collectWrapBreaksFromLayout(input, &result, .unicode);
-
-    try testing.expectEqual(@as(usize, 1), result.breaks.items.len);
-    try testing.expectEqual(@as(u16, 9), result.breaks.items[0].byte_offset);
-    try testing.expectEqual(@as(u16, 3), result.breaks.items[0].char_offset);
+    var scan_result = utf8.LayoutScanResult.init(testing.allocator);
+    defer scan_result.deinit();
+    try scanLayoutFor(input, 4, .unicode, &scan_result);
+    try expectBreakAt(scan_result.spans.items, 9, 3);
 }
 
-test "wrap breaks: compat ideograph to ASCII script transition" {
+test "scanLayout: compat ideograph to ASCII script transition" {
     const input = "丽abc";
-
-    var result = utf8.WrapBreakResult.init(testing.allocator);
-    defer result.deinit();
-    try utf8.collectWrapBreaksFromLayout(input, &result, .unicode);
-
-    try testing.expectEqual(@as(usize, 1), result.breaks.items.len);
-    try testing.expectEqual(@as(u16, 0), result.breaks.items[0].byte_offset);
-    try testing.expectEqual(@as(u16, 0), result.breaks.items[0].char_offset);
+    var scan_result = utf8.LayoutScanResult.init(testing.allocator);
+    defer scan_result.deinit();
+    try scanLayoutFor(input, 4, .unicode, &scan_result);
+    try expectBreakAt(scan_result.spans.items, 0, 0);
 }
 
-test "wrap breaks: extension I ideograph to ASCII script transition" {
+test "scanLayout: extension I ideograph to ASCII script transition" {
     const input = "𮯰abc";
-
-    var result = utf8.WrapBreakResult.init(testing.allocator);
-    defer result.deinit();
-    try utf8.collectWrapBreaksFromLayout(input, &result, .unicode);
-
-    try testing.expectEqual(@as(usize, 1), result.breaks.items.len);
-    try testing.expectEqual(@as(u16, 0), result.breaks.items[0].byte_offset);
-    try testing.expectEqual(@as(u16, 0), result.breaks.items[0].char_offset);
+    var scan_result = utf8.LayoutScanResult.init(testing.allocator);
+    defer scan_result.deinit();
+    try scanLayoutFor(input, 4, .unicode, &scan_result);
+    try expectBreakAt(scan_result.spans.items, 0, 0);
 }
 
-test "wrap breaks: emoji and CJK mixed offsets" {
+test "scanLayout: emoji and CJK mixed offsets" {
     const input = "🌟 Unicode test: こんにちは世界 Hello World";
-
-    var result = utf8.WrapBreakResult.init(testing.allocator);
-    defer result.deinit();
-    try utf8.collectWrapBreaksFromLayout(input, &result, .unicode);
-
-    // Find the space before "Hello"
-    var space_before_hello: ?utf8.WrapBreak = null;
-    for (result.breaks.items) |brk| {
-        if (brk.byte_offset == 40) {
-            space_before_hello = brk;
-            break;
-        }
-    }
-
-    try testing.expect(space_before_hello != null);
-    try testing.expectEqual(@as(u16, 40), space_before_hello.?.byte_offset);
-    try testing.expectEqual(@as(u16, 23), space_before_hello.?.char_offset); // Graphemes before this space
-
-    // Find the space after "Hello"
-    var space_after_hello: ?utf8.WrapBreak = null;
-    for (result.breaks.items) |brk| {
-        if (brk.byte_offset == 46) {
-            space_after_hello = brk;
-            break;
-        }
-    }
-
-    try testing.expect(space_after_hello != null);
-    try testing.expectEqual(@as(u16, 46), space_after_hello.?.byte_offset);
-    try testing.expectEqual(@as(u16, 29), space_after_hello.?.char_offset);
+    var scan_result = utf8.LayoutScanResult.init(testing.allocator);
+    defer scan_result.deinit();
+    try scanLayoutFor(input, 4, .unicode, &scan_result);
+    try expectBreakAt(scan_result.spans.items, 40, 23);
+    try expectBreakAt(scan_result.spans.items, 46, 29);
 }
 
 // ============================================================================
@@ -2628,248 +2560,66 @@ test "calculateTextWidth: U+269B atom symbol should be width 2" {
 // GRAPHEME INFO TESTS (for caching multi-byte graphemes and tabs)
 // ============================================================================
 
-test "findGraphemeInfo: empty string" {
-    var result: std.ArrayListUnmanaged(utf8.GraphemeInfo) = .{};
-    defer result.deinit(testing.allocator);
+// ============================================================================
+// SCAN LAYOUT SPAN TESTS
+// ============================================================================
 
-    try utf8.collectLegacyGraphemeInfoFromLayout("", 4, false, .unicode, testing.allocator, &result);
-    try testing.expectEqual(@as(usize, 0), result.items.len);
+test "scanLayout: empty string has no spans" {
+    var result = utf8.LayoutScanResult.init(testing.allocator);
+    defer result.deinit();
+    try scanLayoutFor("", 4, .unicode, &result);
+    try testing.expectEqual(@as(usize, 0), result.spans.items.len);
+    try testing.expectEqual(@as(u32, 0), result.total_bytes);
+    try testing.expectEqual(@as(u32, 0), result.total_cols);
 }
 
-test "findGraphemeInfo: ASCII-only returns empty" {
-    var result: std.ArrayListUnmanaged(utf8.GraphemeInfo) = .{};
-    defer result.deinit(testing.allocator);
+test "scanLayout: tab and CJK spans have expected byte and col units" {
+    const text = "Hi\t世界!";
+    var result = utf8.LayoutScanResult.init(testing.allocator);
+    defer result.deinit();
+    try scanLayoutFor(text, 4, .unicode, &result);
 
-    try utf8.collectLegacyGraphemeInfoFromLayout("hello world", 4, true, .unicode, testing.allocator, &result);
-    try testing.expectEqual(@as(usize, 0), result.items.len);
+    const tab = findSpanByByteStart(result.spans.items, 2) orelse return error.TestExpectedEqual;
+    try testing.expectEqual(@as(u32, 1), tab.byte_len);
+    try testing.expectEqual(@as(u16, 4), tab.col_width);
+    try testing.expectEqual(@as(u32, 2), tab.col_start);
+
+    const cjk1 = findSpanByByteStart(result.spans.items, 3) orelse return error.TestExpectedEqual;
+    try testing.expectEqual(@as(u32, 3), cjk1.byte_len);
+    try testing.expectEqual(@as(u16, 2), cjk1.col_width);
+    try testing.expectEqual(@as(u32, 6), cjk1.col_start);
+
+    const cjk2 = findSpanByByteStart(result.spans.items, 6) orelse return error.TestExpectedEqual;
+    try testing.expectEqual(@as(u32, 3), cjk2.byte_len);
+    try testing.expectEqual(@as(u16, 2), cjk2.col_width);
+    try testing.expectEqual(@as(u32, 8), cjk2.col_start);
 }
 
-test "findGraphemeInfo: ASCII with tab" {
-    var result: std.ArrayListUnmanaged(utf8.GraphemeInfo) = .{};
-    defer result.deinit(testing.allocator);
+test "scanLayout: emoji and combining marks stay clustered in unicode mode" {
+    const text = "a👩‍🚀b e\u{0301}";
+    var result = utf8.LayoutScanResult.init(testing.allocator);
+    defer result.deinit();
+    try scanLayoutFor(text, 4, .unicode, &result);
 
-    try utf8.collectLegacyGraphemeInfoFromLayout("hello\tworld", 4, false, .unicode, testing.allocator, &result);
+    const astronaut = findSpanByByteStart(result.spans.items, 1) orelse return error.TestExpectedEqual;
+    try testing.expectEqual(@as(u32, 11), astronaut.byte_len);
+    try testing.expectEqual(@as(u16, 2), astronaut.col_width);
 
-    // Should have one entry for the tab
-    try testing.expectEqual(@as(usize, 1), result.items.len);
-    try testing.expectEqual(@as(u32, 5), result.items[0].byte_offset);
-    try testing.expectEqual(@as(u8, 1), result.items[0].byte_len);
-    try testing.expectEqual(@as(u8, 4), result.items[0].width);
-    try testing.expectEqual(@as(u32, 5), result.items[0].col_offset);
+    const combining = findSpanByByteStart(result.spans.items, 14) orelse return error.TestExpectedEqual;
+    try testing.expectEqual(@as(u32, 3), combining.byte_len);
+    try testing.expectEqual(@as(u16, 1), combining.col_width);
 }
 
-test "findGraphemeInfo: multiple tabs" {
-    var result: std.ArrayListUnmanaged(utf8.GraphemeInfo) = .{};
-    defer result.deinit(testing.allocator);
-
-    try utf8.collectLegacyGraphemeInfoFromLayout("a\tb\tc", 4, false, .unicode, testing.allocator, &result);
-
-    // Should have two entries for the tabs
-    try testing.expectEqual(@as(usize, 2), result.items.len);
-
-    // First tab at byte 1, col 1
-    try testing.expectEqual(@as(u32, 1), result.items[0].byte_offset);
-    try testing.expectEqual(@as(u8, 1), result.items[0].byte_len);
-    try testing.expectEqual(@as(u8, 4), result.items[0].width);
-    try testing.expectEqual(@as(u32, 1), result.items[0].col_offset);
-
-    // Second tab at byte 3, col 6 (1 + 4 + 1)
-    try testing.expectEqual(@as(u32, 3), result.items[1].byte_offset);
-    try testing.expectEqual(@as(u8, 1), result.items[1].byte_len);
-    try testing.expectEqual(@as(u8, 4), result.items[1].width);
-    try testing.expectEqual(@as(u32, 6), result.items[1].col_offset);
-}
-
-test "findGraphemeInfo: CJK characters" {
-    var result: std.ArrayListUnmanaged(utf8.GraphemeInfo) = .{};
-    defer result.deinit(testing.allocator);
-
-    const text = "hello世界";
-    try utf8.collectLegacyGraphemeInfoFromLayout(text, 4, false, .unicode, testing.allocator, &result);
-
-    // Should have two entries for the CJK characters
-    try testing.expectEqual(@as(usize, 2), result.items.len);
-
-    // 世 at byte 5
-    try testing.expectEqual(@as(u32, 5), result.items[0].byte_offset);
-    try testing.expectEqual(@as(u8, 3), result.items[0].byte_len);
-    try testing.expectEqual(@as(u8, 2), result.items[0].width);
-    try testing.expectEqual(@as(u32, 5), result.items[0].col_offset);
-
-    // 界 at byte 8
-    try testing.expectEqual(@as(u32, 8), result.items[1].byte_offset);
-    try testing.expectEqual(@as(u8, 3), result.items[1].byte_len);
-    try testing.expectEqual(@as(u8, 2), result.items[1].width);
-    try testing.expectEqual(@as(u32, 7), result.items[1].col_offset);
-}
-
-test "findGraphemeInfo: emoji with skin tone" {
-    var result: std.ArrayListUnmanaged(utf8.GraphemeInfo) = .{};
-    defer result.deinit(testing.allocator);
-
-    const text = "Hi👋🏿Bye"; // Hi + wave + dark skin tone + Bye
-    try utf8.collectLegacyGraphemeInfoFromLayout(text, 4, false, .unicode, testing.allocator, &result);
-
-    // Should have one entry for the emoji cluster
-    try testing.expectEqual(@as(usize, 1), result.items.len);
-
-    try testing.expectEqual(@as(u32, 2), result.items[0].byte_offset);
-    try testing.expectEqual(@as(u8, 8), result.items[0].byte_len); // 4 + 4 bytes
-    try testing.expectEqual(@as(u8, 2), result.items[0].width);
-    try testing.expectEqual(@as(u32, 2), result.items[0].col_offset);
-}
-
-test "findGraphemeInfo: emoji with ZWJ" {
-    var result: std.ArrayListUnmanaged(utf8.GraphemeInfo) = .{};
-    defer result.deinit(testing.allocator);
-
-    const text = "a👩‍🚀b"; // a + woman astronaut + b
-    try utf8.collectLegacyGraphemeInfoFromLayout(text, 4, false, .unicode, testing.allocator, &result);
-
-    // Should have one entry for the emoji cluster
-    try testing.expectEqual(@as(usize, 1), result.items.len);
-
-    try testing.expectEqual(@as(u32, 1), result.items[0].byte_offset);
-    try testing.expectEqual(@as(u8, 2), result.items[0].width);
-    try testing.expectEqual(@as(u32, 1), result.items[0].col_offset);
-}
-
-test "findGraphemeInfo: combining mark" {
-    var result: std.ArrayListUnmanaged(utf8.GraphemeInfo) = .{};
-    defer result.deinit(testing.allocator);
-
-    const text = "cafe\u{0301}"; // café with combining acute
-    try utf8.collectLegacyGraphemeInfoFromLayout(text, 4, false, .unicode, testing.allocator, &result);
-
-    // Should have one entry for e + combining mark
-    try testing.expectEqual(@as(usize, 1), result.items.len);
-
-    try testing.expectEqual(@as(u32, 3), result.items[0].byte_offset); // 'e' position
-    try testing.expectEqual(@as(u8, 3), result.items[0].byte_len); // e (1 byte) + combining (2 bytes)
-    try testing.expectEqual(@as(u8, 1), result.items[0].width);
-    try testing.expectEqual(@as(u32, 3), result.items[0].col_offset);
-}
-
-test "findGraphemeInfo: flag emoji" {
-    var result: std.ArrayListUnmanaged(utf8.GraphemeInfo) = .{};
-    defer result.deinit(testing.allocator);
-
-    const text = "US🇺🇸"; // US + flag
-    try utf8.collectLegacyGraphemeInfoFromLayout(text, 4, false, .unicode, testing.allocator, &result);
-
-    // Should have one entry for the flag (two regional indicators)
-    try testing.expectEqual(@as(usize, 1), result.items.len);
-
-    try testing.expectEqual(@as(u32, 2), result.items[0].byte_offset);
-    try testing.expectEqual(@as(u8, 8), result.items[0].byte_len); // Two 4-byte chars
-    try testing.expectEqual(@as(u8, 2), result.items[0].width);
-    try testing.expectEqual(@as(u32, 2), result.items[0].col_offset);
-}
-
-test "findGraphemeInfo: mixed content" {
-    var result: std.ArrayListUnmanaged(utf8.GraphemeInfo) = .{};
-    defer result.deinit(testing.allocator);
-
-    const text = "Hi\t世界!"; // Hi + tab + CJK + !
-    try utf8.collectLegacyGraphemeInfoFromLayout(text, 4, false, .unicode, testing.allocator, &result);
-
-    // Should have three entries: tab, 世, 界
-    try testing.expectEqual(@as(usize, 3), result.items.len);
-
-    // Tab at byte 2, col 2
-    try testing.expectEqual(@as(u32, 2), result.items[0].byte_offset);
-    try testing.expectEqual(@as(u8, 1), result.items[0].byte_len);
-    try testing.expectEqual(@as(u8, 4), result.items[0].width);
-    try testing.expectEqual(@as(u32, 2), result.items[0].col_offset);
-
-    // 世 at byte 3, col 6
-    try testing.expectEqual(@as(u32, 3), result.items[1].byte_offset);
-    try testing.expectEqual(@as(u8, 3), result.items[1].byte_len);
-    try testing.expectEqual(@as(u8, 2), result.items[1].width);
-    try testing.expectEqual(@as(u32, 6), result.items[1].col_offset);
-
-    // 界 at byte 6, col 8
-    try testing.expectEqual(@as(u32, 6), result.items[2].byte_offset);
-    try testing.expectEqual(@as(u8, 3), result.items[2].byte_len);
-    try testing.expectEqual(@as(u8, 2), result.items[2].width);
-    try testing.expectEqual(@as(u32, 8), result.items[2].col_offset);
-}
-
-test "findGraphemeInfo: only ASCII letters no cache" {
-    var result: std.ArrayListUnmanaged(utf8.GraphemeInfo) = .{};
-    defer result.deinit(testing.allocator);
-
-    try utf8.collectLegacyGraphemeInfoFromLayout("abcdefghij", 4, false, .unicode, testing.allocator, &result);
-
-    // No special characters, should be empty
-    try testing.expectEqual(@as(usize, 0), result.items.len);
-}
-
-test "findGraphemeInfo: emoji with VS16" {
-    var result: std.ArrayListUnmanaged(utf8.GraphemeInfo) = .{};
-    defer result.deinit(testing.allocator);
-
-    const text = "I ❤️ U"; // I + space + heart + VS16 + space + U
-    try utf8.collectLegacyGraphemeInfoFromLayout(text, 4, false, .unicode, testing.allocator, &result);
-
-    // Should have one entry for the emoji cluster
-    try testing.expectEqual(@as(usize, 1), result.items.len);
-
-    try testing.expectEqual(@as(u32, 2), result.items[0].byte_offset);
-    try testing.expectEqual(@as(u8, 2), result.items[0].width);
-    try testing.expectEqual(@as(u32, 2), result.items[0].col_offset);
-}
-
-test "findGraphemeInfo: realistic text" {
-    var result: std.ArrayListUnmanaged(utf8.GraphemeInfo) = .{};
-    defer result.deinit(testing.allocator);
-
-    const text = "function test() {\n\tconst 世界 = 10;\n}";
-    try utf8.collectLegacyGraphemeInfoFromLayout(text, 4, false, .unicode, testing.allocator, &result);
-
-    // Should have entries for: tab, 世, 界
-    try testing.expectEqual(@as(usize, 3), result.items.len);
-}
-
-test "findGraphemeInfo: hiragana" {
-    var result: std.ArrayListUnmanaged(utf8.GraphemeInfo) = .{};
-    defer result.deinit(testing.allocator);
-
+test "scanLayout: hiragana emits wide spans" {
     const text = "こんにちは";
-    try utf8.collectLegacyGraphemeInfoFromLayout(text, 4, false, .unicode, testing.allocator, &result);
-
-    // Should have 5 entries (each hiragana is 3 bytes, width 2)
-    try testing.expectEqual(@as(usize, 5), result.items.len);
-
-    // Check first character
-    try testing.expectEqual(@as(u32, 0), result.items[0].byte_offset);
-    try testing.expectEqual(@as(u8, 3), result.items[0].byte_len);
-    try testing.expectEqual(@as(u8, 2), result.items[0].width);
-}
-
-test "findGraphemeInfo: at SIMD boundary" {
-    var result: std.ArrayListUnmanaged(utf8.GraphemeInfo) = .{};
-    defer result.deinit(testing.allocator);
-
-    // Create text with multibyte char near SIMD boundary (16 bytes)
-    var buf: [32]u8 = undefined;
-    @memset(&buf, 'x');
-    const cjk = "世";
-    @memcpy(buf[14..17], cjk); // Place CJK char at boundary
-
-    try utf8.collectLegacyGraphemeInfoFromLayout(&buf, 4, false, .unicode, testing.allocator, &result);
-
-    // Should find the CJK character
-    var found = false;
-    for (result.items) |g| {
-        if (g.byte_offset == 14) {
-            found = true;
-            try testing.expectEqual(@as(u8, 3), g.byte_len);
-            try testing.expectEqual(@as(u8, 2), g.width);
-            break;
-        }
+    var result = utf8.LayoutScanResult.init(testing.allocator);
+    defer result.deinit();
+    try scanLayoutFor(text, 4, .unicode, &result);
+    try testing.expectEqual(@as(usize, 5), result.spans.items.len);
+    for (result.spans.items) |span| {
+        try testing.expectEqual(@as(u32, 3), span.byte_len);
+        try testing.expectEqual(@as(u16, 2), span.col_width);
     }
-    try testing.expect(found);
 }
 
 test "calculateTextWidth: book and writing hand emojis width 2" {
@@ -4114,55 +3864,6 @@ test "calculateTextWidth: validate against unicode-width-map.zon" {
     try testing.expectEqual(@as(usize, 0), failures);
 }
 
-test "findGraphemeInfo: comprehensive multilingual text" {
-    const text =
-        \\# The Celestial Journey of संस्कृति 🌟🔮✨
-        \\In the beginning, there was नमस्ते 🙏 and the ancient wisdom of the ॐ symbol echoing through dimensions. The travelers 🧑‍🚀👨‍🚀👩‍🚀 embarked on their quest through the cosmos, guided by the mysterious རྒྱ་མཚོ and the luminous 🌈🦄🧚‍♀️ beings of light. They encountered the great देवनागरी scribes who wrote in flowing अक्षर characters, documenting everything in their sacred texts 📜📖✍️.
-        \\## Chapter प्रथम: The Eastern Gardens 🏯🎋🌸
-        \\The journey led them to the mystical lands where 漢字 (kanji) danced with ひらがな and カタカナ across ancient scrolls 📯🎴🎎. In the gardens of Seoul, they found 한글 inscriptions speaking of 사랑 (love) and 평화 (peace) 💝🕊️☮️. The monks meditated under the bodhi tree 🧘‍♂️🌳, contemplating the nature of धर्म while drinking matcha 🍵 and eating 餃子 dumplings 🥟.
-        \\Strange creatures emerged from the mist: 🦥🦦🦧🦨🦩🦚🦜🦝🦞🦟. They spoke in riddles about the प्राचीन (ancient) ways and the नवीन (new) paths forward. "भविष्य में क्या है?" they asked, while the ໂຫຍ່າກເຈົ້າ whispered secrets in Lao script 🤫🗣️💬.
-        \\## The संगम (Confluence) of Scripts 🌊📝🎭
-        \\At the great confluence, they witnessed the merger of བོད་ཡིག (Tibetan), ગુજરાતી (Gujarati), and தமிழ் (Tamil) scripts flowing together like rivers 🏞️🌊💧. The scholars debated about ਪੰਜਾਬੀ philosophy while juggling 🤹‍♂️🎪🎨 colorful orbs that represented different తెలుగు concepts.
-        \\The marketplace buzzed with activity 🏪🛒💰: merchants sold বাংলা spices 🌶️🧄🧅, ಕನ್ನಡ silks 🧵👘, and മലയാളം handicrafts 🎨🖼️. Children played with toys shaped like 🦖🦕🐉🐲 while their parents bargained using ancient ଓଡ଼ିଆ numerals and gestures 🤝🤲👐.
-        \\## The Festival of ๑๐๐ Lanterns 🏮🎆🎇
-        \\During the grand festival, they lit exactly ๑๐๐ (100 in Thai numerals) lanterns 🏮🕯️💡 that floated into the night sky like ascending ความหวัง (hopes). The celebration featured dancers 💃🕺🩰 performing classical moves from भरतनाट्यम tradition, their मुद्रा hand gestures telling stories of प्रेम and वीरता.
-        \\Musicians played unusual instruments: the 🎻🎺🎷🎸🪕🪘 ensemble created harmonies that resonated with the वेद chants and མཆོད་རྟེན bells 🔔⛩️. The audience sat mesmerized 😵‍💫🤯✨, some sipping on bubble tea 🧋 while others enjoyed मिठाई sweets 🍬🍭🧁.
-        \\## The འཕྲུལ་དེབ (Machine) Age Arrives ⚙️🤖🦾
-        \\As modernity crept in, the ancient འཁོར་ལོ (wheel) gave way to 🚗🚕🚙🚌🚎 vehicles and eventually to 🚀🛸🛰️ spacecraft. The યુવાન (youth) learned to code in Python 🐍💻⌨️, but still honored their గురువు (teachers) who taught them the old ways of ज्ञान acquisition 🧠📚🎓.
-        \\The সমাজ (society) transformed: robots 🤖🦾🦿 worked alongside humans 👨‍💼👩‍💼👨‍🔬👩‍🔬, and AI learned to read སྐད (languages) from across the planet 🌍🌎🌏. Yet somehow, the essence of मानवता remained intact, preserved in the கவிதை (poetry) and the ກາບແກ້ວ stories passed down through generations 👴👵👨‍👩‍👧‍👦.
-        \\## The Final ಅಧ್ಯಾಯ (Chapter) 🌅🌄🌠
-        \\As the sun set over the പർവ്വതങ്ങൾ (mountains) 🏔️⛰️🗻, our travelers realized that every script, every symbol—from ا to ㄱ to অ to अ—represented not just sounds, but entire civilizations' worth of विचार (thoughts) and ಕನಸು (dreams) 💭💤🌌.
-        \\They gathered around the final campfire 🔥🏕️, sharing stories in ภาษา (languages) both ancient and new. Someone brought out a guitar 🎸 and started singing in ગીત form, while others prepared ආහාර (food) 🍛🍲🥘 seasoned with love ❤️💕💖 and memories 📸🎞️📹.
-        \\And so they learned that whether written in দেবনাগরী, 中文, 한글, or ไทย, the human experience transcends boundaries 🌐🤝🌈. The weird emojis 🦩🧿🪬🫀🫁🧠 and complex scripts were all part of the same beautiful བསྟན་པ (teaching): that diversity is our greatest strength 💪✊🙌.
-        \\The end. समाप्त. 끝. จบ. முடிவு. ముగింపు. সমাপ্তি. ഒടുക്കം. ಅಂತ್ಯ. અંત. 🎬🎭🎪✨🌟⭐
-        \\
-    ;
-
-    const expected_width = utf8.calculateTextWidth(text, 4, false, .unicode);
-
-    var result: std.ArrayListUnmanaged(utf8.GraphemeInfo) = .{};
-    defer result.deinit(testing.allocator);
-
-    try utf8.collectLegacyGraphemeInfoFromLayout(text, 4, false, .unicode, testing.allocator, &result);
-    try testing.expect(result.items.len > 0);
-
-    var prev_end_byte: usize = 0;
-
-    for (result.items) |g| {
-        try testing.expect(g.byte_offset >= prev_end_byte);
-
-        const text_before = text[0..g.byte_offset];
-        const expected_col = utf8.calculateTextWidth(text_before, 4, false, .unicode);
-
-        try testing.expectEqual(expected_col, g.col_offset);
-
-        prev_end_byte = g.byte_offset + g.byte_len;
-    }
-
-    const final_computed_width = utf8.calculateTextWidth(text, 4, false, .unicode);
-    try testing.expectEqual(expected_width, final_computed_width);
-}
-
 // ============================================================================
 // THAI DIACRITICS AND COMBINING MARKS TESTS
 // ============================================================================
@@ -4275,29 +3976,23 @@ test "Thai: wrap by width with tone marks" {
     try testing.expectEqual(@as(u32, 3), result3.columns_used);
 }
 
-test "Thai: grapheme info for combining marks" {
+test "Thai: scanLayout for combining marks" {
     const text = "กี่";
-
-    var result: std.ArrayListUnmanaged(utf8.GraphemeInfo) = .{};
-    defer result.deinit(testing.allocator);
-
-    try utf8.collectLegacyGraphemeInfoFromLayout(text, 4, false, .unicode, testing.allocator, &result);
-
-    try testing.expectEqual(@as(usize, 1), result.items.len);
-    try testing.expectEqual(@as(u8, 1), result.items[0].width);
+    var result = utf8.LayoutScanResult.init(testing.allocator);
+    defer result.deinit();
+    try scanLayoutFor(text, 4, .unicode, &result);
+    try testing.expectEqual(@as(usize, 1), result.spans.items.len);
+    try testing.expectEqual(@as(u16, 1), result.spans.items[0].col_width);
 }
 
-test "Thai: grapheme info for word with combining marks" {
+test "Thai: scanLayout for word with combining marks" {
     const text = "คือ";
-
-    var result: std.ArrayListUnmanaged(utf8.GraphemeInfo) = .{};
-    defer result.deinit(testing.allocator);
-
-    try utf8.collectLegacyGraphemeInfoFromLayout(text, 4, false, .unicode, testing.allocator, &result);
-
-    try testing.expectEqual(@as(usize, 2), result.items.len);
-    try testing.expectEqual(@as(u8, 1), result.items[0].width);
-    try testing.expectEqual(@as(u8, 1), result.items[1].width);
+    var result = utf8.LayoutScanResult.init(testing.allocator);
+    defer result.deinit();
+    try scanLayoutFor(text, 4, .unicode, &result);
+    try testing.expectEqual(@as(usize, 2), result.spans.items.len);
+    try testing.expectEqual(@as(u16, 1), result.spans.items[0].col_width);
+    try testing.expectEqual(@as(u16, 1), result.spans.items[1].col_width);
 }
 
 test "Thai: mixed Thai and ASCII" {
@@ -4331,12 +4026,9 @@ test "Thai: ว่ wcwidth vs unicode mode comparison" {
 
 test "Thai: ว่ is a single grapheme cluster" {
     const text = "ว่";
-
-    var result: std.ArrayListUnmanaged(utf8.GraphemeInfo) = .{};
-    defer result.deinit(testing.allocator);
-
-    try utf8.collectLegacyGraphemeInfoFromLayout(text, 4, false, .unicode, testing.allocator, &result);
-
-    try testing.expectEqual(@as(usize, 1), result.items.len);
-    try testing.expectEqual(@as(u8, 1), result.items[0].width);
+    var result = utf8.LayoutScanResult.init(testing.allocator);
+    defer result.deinit();
+    try scanLayoutFor(text, 4, .unicode, &result);
+    try testing.expectEqual(@as(usize, 1), result.spans.items.len);
+    try testing.expectEqual(@as(u16, 1), result.spans.items[0].col_width);
 }

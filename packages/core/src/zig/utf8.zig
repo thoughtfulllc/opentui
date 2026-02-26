@@ -99,16 +99,6 @@ pub const TabStopResult = struct {
     }
 };
 
-pub const WrapBreak = struct {
-    // byte_offset points at the grapheme that creates this break opportunity.
-    // For whitespace and punctuation, this is the delimiter grapheme.
-    // For CJK<->ASCII transitions, this is the last grapheme in the previous run.
-    byte_offset: u32,
-
-    // char_offset is grapheme-count based, not a display column.
-    char_offset: u32,
-};
-
 /// BreakKind tells callers why a span can end at a soft-wrap boundary.
 pub const BreakKind = enum(u8) {
     /// No soft-wrap boundary follows this span.
@@ -368,26 +358,6 @@ pub fn scanLayout(text: []const u8, tab_width: u8, is_ascii_only: bool, width_me
     result.total_cols = col;
 }
 
-pub const WrapBreakResult = struct {
-    breaks: std.ArrayListUnmanaged(WrapBreak),
-    allocator: std.mem.Allocator,
-
-    pub fn init(allocator: std.mem.Allocator) WrapBreakResult {
-        return .{
-            .breaks = .{},
-            .allocator = allocator,
-        };
-    }
-
-    pub fn deinit(self: *WrapBreakResult) void {
-        self.breaks.deinit(self.allocator);
-    }
-
-    pub fn reset(self: *WrapBreakResult) void {
-        self.breaks.clearRetainingCapacity();
-    }
-};
-
 // Returns soft-wrap break classifications for ASCII delimiters.
 // Hard line breaks (`\r`, `\n`, and `\r\n`) are represented as zero-width spans,
 // not as `break_after` markers.
@@ -397,10 +367,6 @@ inline fn asciiWrapBreakKind(b: u8) BreakKind {
         '-', '/', '\\', '.', ',', ';', ':', '!', '?', '(', ')', '[', ']', '{', '}' => .punctuation,
         else => .none,
     };
-}
-
-inline fn isAsciiWrapBreak(b: u8) bool {
-    return asciiWrapBreakKind(b) != .none;
 }
 
 // Decode a UTF-8 codepoint starting at pos. Assumes valid UTF-8 input.
@@ -452,10 +418,6 @@ inline fn unicodeWrapBreakKind(cp: u21) BreakKind {
         => .punctuation,
         else => .none,
     };
-}
-
-inline fn isUnicodeWrapBreak(cp: u21) bool {
-    return unicodeWrapBreakKind(cp) != .none;
 }
 
 // WordClass keeps word-boundary behavior predictable in mixed-script text.
@@ -519,33 +481,6 @@ pub fn isScriptTransitionBoundary(prev_cp: u21, curr_cp: u21) bool {
 inline fn isCjkAsciiTransition(prev_class: WordClass, curr_class: WordClass) bool {
     return (prev_class == .cjk_word and curr_class == .ascii_word) or
         (prev_class == .ascii_word and curr_class == .cjk_word);
-}
-
-/// collectWrapBreaksFromLayout returns compatibility wrap offsets derived from `scanLayout`.
-///
-/// The function rewrites `result.breaks` on every call.
-///
-/// `width_method` is intentionally ignored to preserve legacy break offsets.
-/// Break offsets follow delimiter and script-transition boundaries, not width policy.
-pub fn collectWrapBreaksFromLayout(text: []const u8, result: *WrapBreakResult, width_method: WidthMethod) !void {
-    result.reset();
-    _ = width_method;
-
-    var scan_result = LayoutScanResult.init(result.allocator);
-    defer scan_result.deinit();
-
-    try scanLayout(text, 4, isAsciiOnly(text), .unicode, &scan_result);
-
-    for (scan_result.spans.items, 0..) |span, idx| {
-        if (span.break_after == .none) {
-            continue;
-        }
-
-        try result.breaks.append(result.allocator, .{
-            .byte_offset = span.byte_start,
-            .char_offset = @intCast(idx),
-        });
-    }
 }
 
 pub fn findTabStops(text: []const u8, result: *TabStopResult) !void {
@@ -1673,76 +1608,4 @@ fn calculateTextWidthWCWidth(text: []const u8, tab_width: u8, isASCIIOnly: bool)
     }
 
     return total_width;
-}
-
-/// Grapheme cluster information for caching
-pub const GraphemeInfo = struct {
-    byte_offset: u32,
-    byte_len: u8,
-    width: u8,
-    col_offset: u32,
-};
-
-pub const GraphemeInfoResult = struct {
-    graphemes: std.ArrayList(GraphemeInfo),
-
-    pub fn init(allocator: std.mem.Allocator) GraphemeInfoResult {
-        return .{
-            .graphemes = std.ArrayList(GraphemeInfo).init(allocator),
-        };
-    }
-
-    pub fn deinit(self: *GraphemeInfoResult) void {
-        self.graphemes.deinit();
-    }
-
-    pub fn reset(self: *GraphemeInfoResult) void {
-        self.graphemes.clearRetainingCapacity();
-    }
-};
-
-/// collectLegacyGraphemeInfoFromLayout appends compatibility grapheme metadata derived from `scanLayout`.
-///
-/// The function appends only tab spans and multi-byte spans, matching legacy
-/// caching behavior. It does not clear `result`; callers can accumulate entries
-/// or clear `result` before calling.
-///
-/// In `.unicode` and `.no_zwj` modes, the function skips zero-width spans.
-/// In `.wcwidth` mode, it keeps zero-width spans to preserve legacy parity.
-pub fn collectLegacyGraphemeInfoFromLayout(
-    text: []const u8,
-    tab_width: u8,
-    isASCIIOnly: bool,
-    width_method: WidthMethod,
-    allocator: std.mem.Allocator,
-    result: *std.ArrayListUnmanaged(GraphemeInfo),
-) !void {
-    if (isASCIIOnly or text.len == 0) {
-        return;
-    }
-
-    var scan_result = LayoutScanResult.init(allocator);
-    defer scan_result.deinit();
-
-    try scanLayout(text, tab_width, isASCIIOnly, width_method, &scan_result);
-
-    for (scan_result.spans.items) |span| {
-        const byte_start: usize = @intCast(span.byte_start);
-        const is_tab = span.byte_len == 1 and text[byte_start] == '\t';
-        const is_multibyte = span.byte_len > 1;
-        if (!is_tab and !is_multibyte) {
-            continue;
-        }
-
-        if (width_method != .wcwidth and span.col_width == 0) {
-            continue;
-        }
-
-        try result.append(allocator, .{
-            .byte_offset = span.byte_start,
-            .byte_len = @intCast(span.byte_len),
-            .width = @intCast(span.col_width),
-            .col_offset = span.col_start,
-        });
-    }
 }

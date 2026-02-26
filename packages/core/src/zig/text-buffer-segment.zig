@@ -32,8 +32,6 @@ pub const ChunkFitResult = struct {
     width: u32,
 };
 
-pub const GraphemeInfo = utf8.GraphemeInfo;
-
 pub const LayoutCacheMode = enum {
     full_cache,
     windowed,
@@ -463,7 +461,6 @@ pub const TextChunk = struct {
         const mem_buf = mem_registry.get(self.mem_id) orelse return &[_]u8{};
         return mem_buf[self.byte_start..self.byte_end];
     }
-
 };
 
 /// A highlight represents a styled region on a line

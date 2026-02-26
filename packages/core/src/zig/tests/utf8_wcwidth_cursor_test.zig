@@ -2,6 +2,10 @@ const std = @import("std");
 const testing = std.testing;
 const utf8 = @import("../utf8.zig");
 
+fn scanLayoutFor(text: []const u8, width_method: utf8.WidthMethod, result: *utf8.LayoutScanResult) !void {
+    try utf8.scanLayout(text, 4, utf8.isAsciiOnly(text), width_method, result);
+}
+
 test "wcwidth: cursor movement through emoji with skin tone" {
     const text = "👋🏿"; // Wave + dark skin tone = 4 columns
 
@@ -199,45 +203,40 @@ test "wcwidth: mixed content with cursor movement" {
     try testing.expectEqual(@as(u32, 1), r_a.?.width);
 }
 
-test "wcwidth: findGraphemeInfo with emoji" {
-    var result: std.ArrayListUnmanaged(utf8.GraphemeInfo) = .{};
-    defer result.deinit(testing.allocator);
+test "wcwidth: scanLayout with emoji" {
+    const text = "👋🏿";
+    var result = utf8.LayoutScanResult.init(testing.allocator);
+    defer result.deinit();
 
-    const text = "👋🏿"; // Wave + skin tone modifier
-    try utf8.collectLegacyGraphemeInfoFromLayout(text, 4, false, .wcwidth, testing.allocator, &result);
-
-    try testing.expectEqual(@as(usize, 1), result.items.len);
-
-    try testing.expectEqual(@as(u32, 0), result.items[0].byte_offset);
-    try testing.expectEqual(@as(u8, 8), result.items[0].byte_len);
-    try testing.expectEqual(@as(u8, 4), result.items[0].width);
+    try scanLayoutFor(text, .wcwidth, &result);
+    try testing.expectEqual(@as(usize, 1), result.spans.items.len);
+    try testing.expectEqual(@as(u32, 0), result.spans.items[0].byte_start);
+    try testing.expectEqual(@as(u32, 8), result.spans.items[0].byte_len);
+    try testing.expectEqual(@as(u16, 4), result.spans.items[0].col_width);
 }
 
-test "wcwidth: findGraphemeInfo with ZWJ sequence" {
-    var result: std.ArrayListUnmanaged(utf8.GraphemeInfo) = .{};
-    defer result.deinit(testing.allocator);
+test "wcwidth: scanLayout with ZWJ sequence" {
+    const text = "👩‍🚀";
+    var result = utf8.LayoutScanResult.init(testing.allocator);
+    defer result.deinit();
 
-    const text = "👩‍🚀"; // Woman + ZWJ + Rocket
-    try utf8.collectLegacyGraphemeInfoFromLayout(text, 4, false, .wcwidth, testing.allocator, &result);
-
-    try testing.expectEqual(@as(usize, 1), result.items.len);
-
-    try testing.expectEqual(@as(u32, 0), result.items[0].byte_offset);
-    try testing.expectEqual(@as(u8, 11), result.items[0].byte_len);
-    try testing.expectEqual(@as(u8, 4), result.items[0].width);
+    try scanLayoutFor(text, .wcwidth, &result);
+    try testing.expectEqual(@as(usize, 1), result.spans.items.len);
+    try testing.expectEqual(@as(u32, 0), result.spans.items[0].byte_start);
+    try testing.expectEqual(@as(u32, 11), result.spans.items[0].byte_len);
+    try testing.expectEqual(@as(u16, 4), result.spans.items[0].col_width);
 }
 
-test "wcwidth: findGraphemeInfo with combining marks" {
-    var result: std.ArrayListUnmanaged(utf8.GraphemeInfo) = .{};
-    defer result.deinit(testing.allocator);
+test "wcwidth: scanLayout with combining marks" {
+    const text = "e\u{0301}";
+    var result = utf8.LayoutScanResult.init(testing.allocator);
+    defer result.deinit();
 
-    const text = "e\u{0301}"; // e + combining acute
-    try utf8.collectLegacyGraphemeInfoFromLayout(text, 4, false, .wcwidth, testing.allocator, &result);
-
-    try testing.expectEqual(@as(usize, 1), result.items.len);
-    try testing.expectEqual(@as(u32, 0), result.items[0].byte_offset);
-    try testing.expectEqual(@as(u8, 3), result.items[0].byte_len);
-    try testing.expectEqual(@as(u8, 1), result.items[0].width);
+    try scanLayoutFor(text, .wcwidth, &result);
+    try testing.expectEqual(@as(usize, 1), result.spans.items.len);
+    try testing.expectEqual(@as(u32, 0), result.spans.items[0].byte_start);
+    try testing.expectEqual(@as(u32, 3), result.spans.items[0].byte_len);
+    try testing.expectEqual(@as(u16, 1), result.spans.items[0].col_width);
 }
 
 test "wcwidth: tab width handling" {

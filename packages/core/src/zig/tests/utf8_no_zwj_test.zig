@@ -2,6 +2,10 @@ const std = @import("std");
 const testing = std.testing;
 const utf8 = @import("../utf8.zig");
 
+fn scanLayoutFor(text: []const u8, width_method: utf8.WidthMethod, result: *utf8.LayoutScanResult) !void {
+    try utf8.scanLayout(text, 4, utf8.isAsciiOnly(text), width_method, result);
+}
+
 test "no_zwj: basic emoji ZWJ sequence split" {
     const text = "👩‍🚀"; // Woman + ZWJ + Rocket
 
@@ -90,25 +94,33 @@ test "no_zwj: mixed text with ZWJ emoji" {
     try testing.expectEqual(@as(u32, 14), width_no_zwj);
 }
 
-test "no_zwj: findGraphemeInfo splits ZWJ sequences" {
-    var result_unicode: std.ArrayListUnmanaged(utf8.GraphemeInfo) = .{};
-    defer result_unicode.deinit(testing.allocator);
-    var result_no_zwj: std.ArrayListUnmanaged(utf8.GraphemeInfo) = .{};
-    defer result_no_zwj.deinit(testing.allocator);
-
+test "no_zwj: scanLayout splits ZWJ sequences" {
     const text = "Hi👩‍🚀Bye";
 
-    try utf8.collectLegacyGraphemeInfoFromLayout(text, 4, false, .unicode, testing.allocator, &result_unicode);
-    try utf8.collectLegacyGraphemeInfoFromLayout(text, 4, false, .no_zwj, testing.allocator, &result_no_zwj);
+    var unicode_result = utf8.LayoutScanResult.init(testing.allocator);
+    defer unicode_result.deinit();
+    try scanLayoutFor(text, .unicode, &unicode_result);
 
-    // unicode: 1 grapheme (the whole ZWJ sequence)
-    try testing.expectEqual(@as(usize, 1), result_unicode.items.len);
-    try testing.expectEqual(@as(u8, 2), result_unicode.items[0].width);
+    var no_zwj_result = utf8.LayoutScanResult.init(testing.allocator);
+    defer no_zwj_result.deinit();
+    try scanLayoutFor(text, .no_zwj, &no_zwj_result);
 
-    // no_zwj: 2 graphemes (woman and rocket separately)
-    try testing.expectEqual(@as(usize, 2), result_no_zwj.items.len);
-    try testing.expectEqual(@as(u8, 2), result_no_zwj.items[0].width);
-    try testing.expectEqual(@as(u8, 2), result_no_zwj.items[1].width);
+    var unicode_emoji_spans: usize = 0;
+    for (unicode_result.spans.items) |span| {
+        if (span.byte_start >= 2 and span.byte_start < 13) {
+            unicode_emoji_spans += 1;
+        }
+    }
+
+    var no_zwj_emoji_spans: usize = 0;
+    for (no_zwj_result.spans.items) |span| {
+        if (span.byte_start >= 2 and span.byte_start < 13) {
+            no_zwj_emoji_spans += 1;
+        }
+    }
+
+    try testing.expectEqual(@as(usize, 1), unicode_emoji_spans);
+    try testing.expectEqual(@as(usize, 2), no_zwj_emoji_spans);
 }
 
 test "no_zwj: findWrapPosByWidth with ZWJ sequences" {

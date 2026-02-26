@@ -49,6 +49,16 @@ fn generateUnicodeHeavyText(allocator: std.mem.Allocator, length: usize) ![]cons
     return text.toOwnedSlice(allocator);
 }
 
+fn countSoftBreakSpans(spans: []const utf8.GraphemeSpan) usize {
+    var count: usize = 0;
+    for (spans) |span| {
+        if (span.break_after != .none) {
+            count += 1;
+        }
+    }
+    return count;
+}
+
 // Benchmark isAsciiOnly
 fn benchIsAsciiOnly(
     results_alloc: std.mem.Allocator,
@@ -307,13 +317,14 @@ fn benchFindWrapBreaks(
             const alloc = temp.allocator();
             const text = try generateAsciiText(alloc, 10 * 1024);
 
-            var wrap_result = utf8.WrapBreakResult.init(alloc);
-            defer wrap_result.deinit();
+            var layout_result = utf8.LayoutScanResult.init(alloc);
+            defer layout_result.deinit();
 
             var stats = BenchStats{};
             for (0..iterations) |_| {
                 var timer = try std.time.Timer.start();
-                try utf8.collectWrapBreaksFromLayout(text, &wrap_result, .unicode);
+                try utf8.scanLayout(text, 4, true, .unicode, &layout_result);
+                std.mem.doNotOptimizeAway(countSoftBreakSpans(layout_result.spans.items));
                 stats.record(timer.read());
             }
 
@@ -338,13 +349,14 @@ fn benchFindWrapBreaks(
             const alloc = temp.allocator();
             const text = try generateMixedText(alloc, 10 * 1024);
 
-            var wrap_result = utf8.WrapBreakResult.init(alloc);
-            defer wrap_result.deinit();
+            var layout_result = utf8.LayoutScanResult.init(alloc);
+            defer layout_result.deinit();
 
             var stats = BenchStats{};
             for (0..iterations) |_| {
                 var timer = try std.time.Timer.start();
-                try utf8.collectWrapBreaksFromLayout(text, &wrap_result, .unicode);
+                try utf8.scanLayout(text, 4, false, .unicode, &layout_result);
+                std.mem.doNotOptimizeAway(countSoftBreakSpans(layout_result.spans.items));
                 stats.record(timer.read());
             }
 
@@ -450,151 +462,6 @@ fn benchScanLayout(
             for (0..iterations) |_| {
                 var timer = try std.time.Timer.start();
                 try utf8.scanLayout(text, 4, false, .unicode, &layout_result);
-                stats.record(timer.read());
-            }
-
-            try results.append(results_alloc, BenchResult{
-                .name = name,
-                .min_ns = stats.min_ns,
-                .avg_ns = stats.avg(),
-                .max_ns = stats.max_ns,
-                .total_ns = stats.total_ns,
-                .iterations = iterations,
-                .mem_stats = null,
-            });
-        }
-    }
-
-    return results.toOwnedSlice(results_alloc);
-}
-
-// Stage 1 perf gate: compare the canonical scanner against the temporary
-// compatibility path that calls both adapters.
-fn benchScanLayoutGate(
-    results_alloc: std.mem.Allocator,
-    iterations: usize,
-    bench_filter: ?[]const u8,
-) ![]BenchResult {
-    var results: std.ArrayListUnmanaged(BenchResult) = .{};
-    errdefer results.deinit(results_alloc);
-
-    {
-        const name = "scanLayout gate: Mixed (10KB) scan only";
-        if (bench_utils.matchesBenchFilter(name, bench_filter)) {
-            var temp = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-            defer temp.deinit();
-            const alloc = temp.allocator();
-            const text = try generateMixedText(alloc, 10 * 1024);
-
-            var layout_result = utf8.LayoutScanResult.init(alloc);
-            defer layout_result.deinit();
-
-            var stats = BenchStats{};
-            for (0..iterations) |_| {
-                var timer = try std.time.Timer.start();
-                try utf8.scanLayout(text, 4, false, .unicode, &layout_result);
-                stats.record(timer.read());
-            }
-
-            try results.append(results_alloc, BenchResult{
-                .name = name,
-                .min_ns = stats.min_ns,
-                .avg_ns = stats.avg(),
-                .max_ns = stats.max_ns,
-                .total_ns = stats.total_ns,
-                .iterations = iterations,
-                .mem_stats = null,
-            });
-        }
-    }
-
-    {
-        const name = "scanLayout gate: Mixed (10KB) adapters combined";
-        if (bench_utils.matchesBenchFilter(name, bench_filter)) {
-            var temp = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-            defer temp.deinit();
-            const alloc = temp.allocator();
-            const text = try generateMixedText(alloc, 10 * 1024);
-
-            var wrap_result = utf8.WrapBreakResult.init(alloc);
-            defer wrap_result.deinit();
-            var grapheme_result: std.ArrayListUnmanaged(utf8.GraphemeInfo) = .{};
-            defer grapheme_result.deinit(alloc);
-
-            var stats = BenchStats{};
-            for (0..iterations) |_| {
-                // Keep allocation shape stable across iterations.
-                grapheme_result.clearRetainingCapacity();
-
-                var timer = try std.time.Timer.start();
-                try utf8.collectWrapBreaksFromLayout(text, &wrap_result, .unicode);
-                try utf8.collectLegacyGraphemeInfoFromLayout(text, 4, false, .unicode, alloc, &grapheme_result);
-                stats.record(timer.read());
-            }
-
-            try results.append(results_alloc, BenchResult{
-                .name = name,
-                .min_ns = stats.min_ns,
-                .avg_ns = stats.avg(),
-                .max_ns = stats.max_ns,
-                .total_ns = stats.total_ns,
-                .iterations = iterations,
-                .mem_stats = null,
-            });
-        }
-    }
-
-    {
-        const name = "scanLayout gate: Unicode heavy (10KB) scan only";
-        if (bench_utils.matchesBenchFilter(name, bench_filter)) {
-            var temp = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-            defer temp.deinit();
-            const alloc = temp.allocator();
-            const text = try generateUnicodeHeavyText(alloc, 10 * 1024);
-
-            var layout_result = utf8.LayoutScanResult.init(alloc);
-            defer layout_result.deinit();
-
-            var stats = BenchStats{};
-            for (0..iterations) |_| {
-                var timer = try std.time.Timer.start();
-                try utf8.scanLayout(text, 4, false, .unicode, &layout_result);
-                stats.record(timer.read());
-            }
-
-            try results.append(results_alloc, BenchResult{
-                .name = name,
-                .min_ns = stats.min_ns,
-                .avg_ns = stats.avg(),
-                .max_ns = stats.max_ns,
-                .total_ns = stats.total_ns,
-                .iterations = iterations,
-                .mem_stats = null,
-            });
-        }
-    }
-
-    {
-        const name = "scanLayout gate: Unicode heavy (10KB) adapters combined";
-        if (bench_utils.matchesBenchFilter(name, bench_filter)) {
-            var temp = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-            defer temp.deinit();
-            const alloc = temp.allocator();
-            const text = try generateUnicodeHeavyText(alloc, 10 * 1024);
-
-            var wrap_result = utf8.WrapBreakResult.init(alloc);
-            defer wrap_result.deinit();
-            var grapheme_result: std.ArrayListUnmanaged(utf8.GraphemeInfo) = .{};
-            defer grapheme_result.deinit(alloc);
-
-            var stats = BenchStats{};
-            for (0..iterations) |_| {
-                // Keep allocation shape stable across iterations.
-                grapheme_result.clearRetainingCapacity();
-
-                var timer = try std.time.Timer.start();
-                try utf8.collectWrapBreaksFromLayout(text, &wrap_result, .unicode);
-                try utf8.collectLegacyGraphemeInfoFromLayout(text, 4, false, .unicode, alloc, &grapheme_result);
                 stats.record(timer.read());
             }
 
@@ -1036,10 +903,6 @@ pub fn run(
     // scanLayout benchmarks
     const scan_layout_results = try benchScanLayout(allocator, iterations, bench_filter);
     try all_results.appendSlice(allocator, scan_layout_results);
-
-    // Stage 1 scanLayout perf gate benchmarks
-    const scan_layout_gate_results = try benchScanLayoutGate(allocator, iterations, bench_filter);
-    try all_results.appendSlice(allocator, scan_layout_gate_results);
 
     // findWrapPosByWidth benchmarks
     const wrap_pos_results = try benchFindWrapPosByWidth(allocator, iterations, bench_filter);
