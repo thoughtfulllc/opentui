@@ -708,6 +708,119 @@ test "TextBufferView word wrapping - CJK boundary width" {
     try std.testing.expectEqual(@as(u32, 2), vlines[1].width);
 }
 
+test "TextBufferView line info - no-wrap returns byte starts for multi-byte lines" {
+    const pool = gp.initGlobalPool(std.testing.allocator);
+    defer gp.deinitGlobalPool();
+    const link_pool = link.initGlobalLinkPool(std.testing.allocator);
+    defer link.deinitGlobalLinkPool();
+
+    var tb = try TextBuffer.init(std.testing.allocator, pool, link_pool, .wcwidth);
+    defer tb.deinit();
+
+    var view = try TextBufferView.init(std.testing.allocator, tb);
+    defer view.deinit();
+
+    view.setWrapMode(.none);
+    try tb.setText("흐름\n도움");
+
+    const line_info = view.getCachedLineInfo();
+    try std.testing.expectEqualSlices(u32, &[_]u32{ 0, 7 }, line_info.starts);
+}
+
+test "TextBufferView line info - #609 byte starts for multi-byte wrap vectors" {
+    const pool = gp.initGlobalPool(std.testing.allocator);
+    defer gp.deinitGlobalPool();
+    const link_pool = link.initGlobalLinkPool(std.testing.allocator);
+    defer link.deinitGlobalLinkPool();
+
+    var tb = try TextBuffer.init(std.testing.allocator, pool, link_pool, .wcwidth);
+    defer tb.deinit();
+
+    var view = try TextBufferView.init(std.testing.allocator, tb);
+    defer view.deinit();
+
+    const Vector = struct {
+        text: []const u8,
+        width: u32,
+        starts: []const u32,
+        lines: []const []const u8,
+    };
+
+    const vectors = [_]Vector{
+        .{ .text = "흐름도", .width = 4, .starts = &[_]u32{ 0, 6 }, .lines = &[_][]const u8{ "흐름", "도" } },
+        .{ .text = "你好世界", .width = 4, .starts = &[_]u32{ 0, 6 }, .lines = &[_][]const u8{ "你好", "世界" } },
+        .{ .text = " 안녕a", .width = 5, .starts = &[_]u32{ 0, 7 }, .lines = &[_][]const u8{ " 안녕", "a" } },
+        .{ .text = "🇰🇷🇯🇵🇨🇳", .width = 4, .starts = &[_]u32{ 0, 16 }, .lines = &[_][]const u8{ "🇰🇷🇯🇵", "🇨🇳" } },
+        .{ .text = "👋🏻👋🏿hi", .width = 4, .starts = &[_]u32{ 0, 8, 16 }, .lines = &[_][]const u8{ "👋🏻", "👋🏿", "hi" } },
+        .{ .text = "1️⃣한글", .width = 4, .starts = &[_]u32{ 0, 10 }, .lines = &[_][]const u8{ "1️⃣한", "글" } },
+        .{ .text = "가나다라마바사", .width = 6, .starts = &[_]u32{ 0, 9, 18 }, .lines = &[_][]const u8{ "가나다", "라마바", "사" } },
+    };
+
+    view.setWrapMode(.char);
+    for (vectors) |vector| {
+        view.setWrapWidth(vector.width);
+        try tb.setText(vector.text);
+
+        const line_info = view.getCachedLineInfo();
+        try std.testing.expectEqualSlices(u32, vector.starts, line_info.starts);
+        try std.testing.expectEqual(@as(usize, vector.lines.len), line_info.starts.len);
+
+        for (vector.lines, 0..) |expected_line, idx| {
+            const start: usize = @intCast(line_info.starts[idx]);
+            const end: usize = if (idx + 1 < line_info.starts.len)
+                @intCast(line_info.starts[idx + 1])
+            else
+                vector.text.len;
+            try std.testing.expectEqualStrings(expected_line, vector.text[start..end]);
+        }
+    }
+}
+
+test "TextBufferView line info - wide first grapheme keeps byte starts aligned" {
+    const pool = gp.initGlobalPool(std.testing.allocator);
+    defer gp.deinitGlobalPool();
+    const link_pool = link.initGlobalLinkPool(std.testing.allocator);
+    defer link.deinitGlobalLinkPool();
+
+    var tb = try TextBuffer.init(std.testing.allocator, pool, link_pool, .wcwidth);
+    defer tb.deinit();
+
+    var view = try TextBufferView.init(std.testing.allocator, tb);
+    defer view.deinit();
+
+    view.setWrapMode(.word);
+    view.setWrapWidth(1);
+    try tb.setText("가a");
+
+    const line_info = view.getCachedLineInfo();
+    try std.testing.expectEqualSlices(u32, &[_]u32{ 0, 3 }, line_info.starts);
+    try std.testing.expectEqualSlices(u32, &[_]u32{ 2, 1 }, line_info.widths);
+
+    try std.testing.expectEqualStrings("가", "가a"[@as(usize, @intCast(line_info.starts[0]))..@as(usize, @intCast(line_info.starts[1]))]);
+    try std.testing.expectEqualStrings("a", "가a"[@as(usize, @intCast(line_info.starts[1]))..]);
+}
+
+test "TextBufferView line info - multi-byte word wrap uses byte starts" {
+    const pool = gp.initGlobalPool(std.testing.allocator);
+    defer gp.deinitGlobalPool();
+    const link_pool = link.initGlobalLinkPool(std.testing.allocator);
+    defer link.deinitGlobalLinkPool();
+
+    var tb = try TextBuffer.init(std.testing.allocator, pool, link_pool, .wcwidth);
+    defer tb.deinit();
+
+    var view = try TextBufferView.init(std.testing.allocator, tb);
+    defer view.deinit();
+
+    view.setWrapMode(.word);
+    view.setWrapWidth(5);
+    try tb.setText("안녕 세상");
+
+    const line_info = view.getCachedLineInfo();
+    try std.testing.expectEqualSlices(u32, &[_]u32{ 0, 7 }, line_info.starts);
+    try std.testing.expectEqualSlices(u32, &[_]u32{ 5, 4 }, line_info.widths);
+}
+
 test "TextBufferView word wrapping - compare char vs word mode" {
     const pool = gp.initGlobalPool(std.testing.allocator);
     defer gp.deinitGlobalPool();
@@ -2591,6 +2704,38 @@ test "TextBufferView truncation - verify prefix and suffix content" {
 
     // Verify total width matches viewport
     try std.testing.expectEqual(@as(u32, 10), vlines[0].width);
+}
+
+test "TextBufferView truncation - keeps byte windows aligned for partial chunks" {
+    const pool = gp.initGlobalPool(std.testing.allocator);
+    defer gp.deinitGlobalPool();
+    const link_pool = link.initGlobalLinkPool(std.testing.allocator);
+    defer link.deinitGlobalLinkPool();
+
+    var tb = try TextBuffer.init(std.testing.allocator, pool, link_pool, .wcwidth);
+    defer tb.deinit();
+
+    var view = try TextBufferView.init(std.testing.allocator, tb);
+    defer view.deinit();
+
+    try tb.setText("안녕하세요세");
+
+    view.setTruncate(true);
+    view.setWrapMode(.none);
+    view.setViewport(text_buffer_view.Viewport{ .x = 0, .y = 0, .width = 11, .height = 1 });
+
+    const vlines = view.getVirtualLines();
+    const chunks = vlines[0].chunks.items;
+    try std.testing.expectEqual(@as(usize, 3), chunks.len);
+
+    const prefix = chunks[0];
+    const suffix = chunks[2];
+
+    const prefix_bytes = prefix.chunk.getBytes(tb.memRegistry())[prefix.byte_start .. prefix.byte_start + prefix.byte_len];
+    const suffix_bytes = suffix.chunk.getBytes(tb.memRegistry())[suffix.byte_start .. suffix.byte_start + suffix.byte_len];
+
+    try std.testing.expectEqualStrings("안녕", prefix_bytes);
+    try std.testing.expectEqualStrings("요세", suffix_bytes);
 }
 
 test "TextBufferView measureForDimensions - multiple lines with different widths" {

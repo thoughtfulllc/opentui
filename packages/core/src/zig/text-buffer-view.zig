@@ -66,7 +66,9 @@ pub const VirtualLineSpanInfo = struct {
 
 pub const VirtualChunk = struct {
     grapheme_start: u32,
+    byte_start: u32,
     width: u32,
+    byte_len: u32,
     // Direct reference to source chunk for rendering
     chunk: *const TextChunk,
 };
@@ -831,6 +833,20 @@ pub const UnifiedTextBufferView = struct {
                 } else {
                     var partial = chunk;
                     partial.width = space_left;
+                    const is_ascii_only = (chunk.chunk.flags & TextChunk.Flags.ASCII_ONLY) != 0;
+                    if (is_ascii_only) {
+                        partial.byte_len = space_left;
+                    } else {
+                        const chunk_bytes = chunk.chunk.getBytes(self.text_buffer.memRegistry());
+                        const partial_window = chunk_bytes[chunk.byte_start .. chunk.byte_start + chunk.byte_len];
+                        partial.byte_len = utf8.findWrapPosByWidth(
+                            partial_window,
+                            space_left,
+                            self.text_buffer.tabWidth(),
+                            false,
+                            self.text_buffer.widthMethod(),
+                        ).byte_offset;
+                    }
                     new_chunks.append(self.virtual_lines_arena.allocator(), partial) catch return;
                     prefix_accumulated += space_left;
                     break;
@@ -839,7 +855,9 @@ pub const UnifiedTextBufferView = struct {
 
             new_chunks.append(self.virtual_lines_arena.allocator(), VirtualChunk{
                 .grapheme_start = 0,
+                .byte_start = 0,
                 .width = ellipsis_width,
+                .byte_len = ellipsis_width,
                 .chunk = &self.ellipsis_chunk,
             }) catch return;
 
@@ -859,8 +877,23 @@ pub const UnifiedTextBufferView = struct {
                 } else {
                     const offset_in_chunk = suffix_start_pos - pos_accumulated;
                     var partial = chunk;
+                    const is_ascii_only = (chunk.chunk.flags & TextChunk.Flags.ASCII_ONLY) != 0;
+                    const chunk_bytes = chunk.chunk.getBytes(self.text_buffer.memRegistry());
+                    const partial_window = chunk_bytes[chunk.byte_start .. chunk.byte_start + chunk.byte_len];
+                    const byte_offset: u32 = if (is_ascii_only)
+                        offset_in_chunk
+                    else
+                        utf8.findWrapPosByWidth(
+                            partial_window,
+                            offset_in_chunk,
+                            self.text_buffer.tabWidth(),
+                            false,
+                            self.text_buffer.widthMethod(),
+                        ).byte_offset;
                     partial.grapheme_start += offset_in_chunk;
+                    partial.byte_start += byte_offset;
                     partial.width = chunk.width - offset_in_chunk;
+                    partial.byte_len = chunk.byte_len - byte_offset;
                     new_chunks.append(self.virtual_lines_arena.allocator(), partial) catch return;
                 }
 
@@ -985,18 +1018,26 @@ pub const UnifiedTextBufferView = struct {
                 allocator: Allocator,
                 output: VirtualLineOutput,
                 current_vline: ?VirtualLine = null,
+                line_start_byte_offset: u32 = 0,
+                global_byte_offset: u32 = 0,
 
                 fn segment_callback(ctx_ptr: *anyopaque, line_idx: u32, chunk: *const TextChunk, _: u32) void {
                     _ = line_idx;
                     const ctx = @as(*@This(), @ptrCast(@alignCast(ctx_ptr)));
+                    const chunk_bytes = chunk.getBytes(ctx.text_buffer.memRegistry());
+                    const chunk_byte_len: u32 = @intCast(chunk_bytes.len);
 
                     if (ctx.current_vline) |*vline| {
                         vline.chunks.append(ctx.allocator, VirtualChunk{
                             .grapheme_start = 0,
+                            .byte_start = 0,
                             .width = chunk.width,
+                            .byte_len = chunk_byte_len,
                             .chunk = chunk,
                         }) catch {};
                     }
+
+                    ctx.global_byte_offset += chunk_byte_len;
                 }
 
                 fn line_end_callback(ctx_ptr: *anyopaque, line_info: iter_mod.LineInfo) void {
@@ -1013,12 +1054,14 @@ pub const UnifiedTextBufferView = struct {
                     vline.source_col_offset = 0;
 
                     ctx.output.virtual_lines.append(ctx.allocator, vline) catch {};
-                    ctx.output.cached_line_starts.append(ctx.allocator, vline.char_offset) catch {};
+                    ctx.output.cached_line_starts.append(ctx.allocator, ctx.line_start_byte_offset) catch {};
                     ctx.output.cached_line_widths.append(ctx.allocator, vline.width) catch {};
                     ctx.output.cached_line_sources.append(ctx.allocator, @intCast(line_info.line_idx)) catch {};
                     ctx.output.cached_line_wrap_indices.append(ctx.allocator, 0) catch {};
 
                     ctx.current_vline = VirtualLine.init();
+                    ctx.global_byte_offset += 1;
+                    ctx.line_start_byte_offset = ctx.global_byte_offset;
                 }
             };
 
@@ -1027,6 +1070,8 @@ pub const UnifiedTextBufferView = struct {
                 .allocator = allocator,
                 .output = output,
                 .current_vline = VirtualLine.init(),
+                .line_start_byte_offset = 0,
+                .global_byte_offset = 0,
             };
 
             text_buffer.walkLinesAndSegments(&ctx, Context.segment_callback, Context.line_end_callback);
@@ -1040,6 +1085,8 @@ pub const UnifiedTextBufferView = struct {
                 wrap_mode: WrapMode,
                 wrap_w: u32,
                 global_char_offset: u32 = 0,
+                global_byte_offset: u32 = 0,
+                line_start_byte_offset: u32 = 0,
                 line_idx: u32 = 0,
                 line_col_offset: u32 = 0,
                 line_position: u32 = 0,
@@ -1051,13 +1098,14 @@ pub const UnifiedTextBufferView = struct {
                 last_wrap_chunk_count: u32 = 0,
                 last_wrap_line_position: u32 = 0,
                 last_wrap_global_offset: u32 = 0,
+                last_wrap_global_byte_offset: u32 = 0,
 
                 fn commitVirtualLine(wctx: *@This()) void {
                     wctx.current_vline.width = wctx.line_position;
                     wctx.current_vline.source_line = wctx.line_idx;
                     wctx.current_vline.source_col_offset = wctx.line_col_offset;
                     wctx.output.virtual_lines.append(wctx.allocator, wctx.current_vline) catch {};
-                    wctx.output.cached_line_starts.append(wctx.allocator, wctx.current_vline.char_offset) catch {};
+                    wctx.output.cached_line_starts.append(wctx.allocator, wctx.line_start_byte_offset) catch {};
                     wctx.output.cached_line_widths.append(wctx.allocator, wctx.current_vline.width) catch {};
                     wctx.output.cached_line_sources.append(wctx.allocator, wctx.line_idx) catch {};
                     wctx.output.cached_line_wrap_indices.append(wctx.allocator, wctx.current_line_vline_count) catch {};
@@ -1067,20 +1115,25 @@ pub const UnifiedTextBufferView = struct {
                     wctx.line_col_offset += wctx.line_position;
                     wctx.current_vline = VirtualLine.init();
                     wctx.current_vline.char_offset = wctx.global_char_offset;
+                    wctx.line_start_byte_offset = wctx.global_byte_offset;
                     wctx.line_position = 0;
 
                     wctx.last_wrap_chunk_count = 0;
                     wctx.last_wrap_line_position = 0;
                     wctx.last_wrap_global_offset = 0;
+                    wctx.last_wrap_global_byte_offset = 0;
                 }
 
-                fn addVirtualChunk(wctx: *@This(), chunk: *const TextChunk, _: u32, start: u32, width_param: u32) void {
+                fn addVirtualChunk(wctx: *@This(), chunk: *const TextChunk, start: u32, byte_start: u32, width_param: u32, byte_len: u32) void {
                     wctx.current_vline.chunks.append(wctx.allocator, VirtualChunk{
                         .grapheme_start = start,
+                        .byte_start = byte_start,
                         .width = width_param,
+                        .byte_len = byte_len,
                         .chunk = chunk,
                     }) catch {};
                     wctx.global_char_offset += width_param;
+                    wctx.global_byte_offset += byte_len;
                     wctx.line_position += width_param;
                 }
 
@@ -1153,15 +1206,12 @@ pub const UnifiedTextBufferView = struct {
                                 to_add = boundary_w;
                                 has_wrap_after = true;
                             } else if (wctx.line_position == 0) {
-                                // Use tracked byte_offset instead of recalculating from scratch (avoids O(n²))
                                 const remaining_bytes = chunk_bytes[byte_offset..];
                                 const wrap_result = utf8.findWrapPosByWidth(remaining_bytes, remaining_on_line, wctx.text_buffer.tabWidth(), is_ascii_only, wctx.text_buffer.widthMethod());
                                 to_add = wrap_result.columns_used;
-                                byte_offset += wrap_result.byte_offset;
                                 if (to_add == 0) {
-                                    to_add = 1;
-                                    const single_result = utf8.findWrapPosByWidth(remaining_bytes, 1, wctx.text_buffer.tabWidth(), is_ascii_only, wctx.text_buffer.widthMethod());
-                                    byte_offset += single_result.byte_offset;
+                                    const force_result = utf8.findPosByWidth(remaining_bytes, 1, wctx.text_buffer.tabWidth(), is_ascii_only, true, wctx.text_buffer.widthMethod());
+                                    to_add = if (force_result.columns_used > 0) force_result.columns_used else 1;
                                 }
                             } else if (wctx.last_wrap_chunk_count > 0) {
                                 var accumulated_width: u32 = 0;
@@ -1175,16 +1225,41 @@ pub const UnifiedTextBufferView = struct {
 
                                 if (accumulated_width > wctx.last_wrap_line_position) {
                                     const last_chunk_idx = wctx.last_wrap_chunk_count - 1;
-                                    const last_chunk = wctx.current_vline.chunks.items[last_chunk_idx];
+                                    const last_chunk = &wctx.current_vline.chunks.items[last_chunk_idx];
                                     const overhang = accumulated_width - wctx.last_wrap_line_position;
+                                    const keep_width = last_chunk.width - overhang;
+                                    const split_is_ascii = (last_chunk.chunk.flags & TextChunk.Flags.ASCII_ONLY) != 0;
+                                    const split_chunk_bytes = last_chunk.chunk.getBytes(wctx.text_buffer.memRegistry());
+                                    const split_window = split_chunk_bytes[last_chunk.byte_start .. last_chunk.byte_start + last_chunk.byte_len];
+
+                                    const keep_byte_len_raw: u32 = if (keep_width == 0)
+                                        0
+                                    else if (split_is_ascii)
+                                        keep_width
+                                    else blk: {
+                                        var keep_result = utf8.findWrapPosByWidth(split_window, keep_width, wctx.text_buffer.tabWidth(), split_is_ascii, wctx.text_buffer.widthMethod());
+                                        if (keep_result.byte_offset == 0 and split_window.len > 0) {
+                                            const force_result = utf8.findPosByWidth(split_window, 1, wctx.text_buffer.tabWidth(), split_is_ascii, true, wctx.text_buffer.widthMethod());
+                                            keep_result.byte_offset = if (force_result.byte_offset > 0)
+                                                force_result.byte_offset
+                                            else
+                                                @min(@as(u32, @intCast(split_window.len)), @as(u32, 1));
+                                        }
+                                        break :blk keep_result.byte_offset;
+                                    };
+                                    const keep_byte_len = @min(keep_byte_len_raw, last_chunk.byte_len);
+                                    const split_byte_len = last_chunk.byte_len - keep_byte_len;
 
                                     split_chunk = VirtualChunk{
-                                        .grapheme_start = last_chunk.grapheme_start + last_chunk.width - overhang,
+                                        .grapheme_start = last_chunk.grapheme_start + keep_width,
+                                        .byte_start = last_chunk.byte_start + keep_byte_len,
                                         .width = overhang,
+                                        .byte_len = split_byte_len,
                                         .chunk = last_chunk.chunk,
                                     };
 
-                                    wctx.current_vline.chunks.items[last_chunk_idx].width -= overhang;
+                                    last_chunk.width = keep_width;
+                                    last_chunk.byte_len = keep_byte_len;
 
                                     chunks_to_move_count += 1;
                                 }
@@ -1202,6 +1277,7 @@ pub const UnifiedTextBufferView = struct {
 
                                     wctx.line_position = wctx.last_wrap_line_position;
                                     wctx.global_char_offset = wctx.last_wrap_global_offset;
+                                    wctx.global_byte_offset = wctx.last_wrap_global_byte_offset;
                                     wctx.current_vline.chunks.items.len = wctx.last_wrap_chunk_count;
 
                                     commitVirtualLine(wctx);
@@ -1209,6 +1285,7 @@ pub const UnifiedTextBufferView = struct {
                                     for (saved_chunks) |vchunk| {
                                         wctx.current_vline.chunks.append(wctx.allocator, vchunk) catch {};
                                         wctx.global_char_offset += vchunk.width;
+                                        wctx.global_byte_offset += vchunk.byte_len;
                                         wctx.line_position += vchunk.width;
                                     }
                                 } else |_| {
@@ -1225,20 +1302,35 @@ pub const UnifiedTextBufferView = struct {
                                 const remaining_bytes = chunk_bytes[byte_offset..];
                                 const wrap_result = utf8.findWrapPosByWidth(remaining_bytes, wctx.wrap_w, wctx.text_buffer.tabWidth(), is_ascii_only, wctx.text_buffer.widthMethod());
                                 to_add = wrap_result.columns_used;
-                                byte_offset += wrap_result.byte_offset;
                                 if (to_add == 0) {
-                                    to_add = 1;
-                                    const single_result = utf8.findWrapPosByWidth(remaining_bytes, 1, wctx.text_buffer.tabWidth(), is_ascii_only, wctx.text_buffer.widthMethod());
-                                    byte_offset += single_result.byte_offset;
+                                    const force_result = utf8.findPosByWidth(remaining_bytes, 1, wctx.text_buffer.tabWidth(), is_ascii_only, true, wctx.text_buffer.widthMethod());
+                                    to_add = if (force_result.columns_used > 0) force_result.columns_used else 1;
                                 }
                             }
 
                             if (to_add > 0) {
                                 const position_before_add = wctx.line_position;
                                 const offset_before_add = wctx.global_char_offset;
+                                const byte_offset_before_add = wctx.global_byte_offset;
+                                const local_byte_offset_before_add = byte_offset;
+                                const remaining_bytes = chunk_bytes[byte_offset..];
 
-                                addVirtualChunk(wctx, chunk, chunk_idx_in_line, char_offset, to_add);
+                                var byte_len_to_add = utf8.findWrapPosByWidth(remaining_bytes, to_add, wctx.text_buffer.tabWidth(), is_ascii_only, wctx.text_buffer.widthMethod()).byte_offset;
+                                if (byte_len_to_add == 0 and remaining_bytes.len > 0) {
+                                    const force_result = utf8.findPosByWidth(remaining_bytes, 1, wctx.text_buffer.tabWidth(), is_ascii_only, true, wctx.text_buffer.widthMethod());
+                                    if (force_result.byte_offset > 0) {
+                                        byte_len_to_add = force_result.byte_offset;
+                                        if (force_result.columns_used > to_add) {
+                                            to_add = force_result.columns_used;
+                                        }
+                                    } else {
+                                        byte_len_to_add = @min(@as(u32, @intCast(remaining_bytes.len)), @as(u32, 1));
+                                    }
+                                }
+
+                                addVirtualChunk(wctx, chunk, char_offset, byte_offset, to_add, byte_len_to_add);
                                 char_offset += to_add;
+                                byte_offset += byte_len_to_add;
 
                                 if (has_wrap_after) {
                                     const wrap_pos_in_added = if (last_wrap_that_fits) |boundary_w|
@@ -1246,9 +1338,20 @@ pub const UnifiedTextBufferView = struct {
                                     else
                                         to_add;
 
+                                    const wrap_remaining_bytes = chunk_bytes[local_byte_offset_before_add..];
+                                    var wrap_byte_len = utf8.findWrapPosByWidth(wrap_remaining_bytes, wrap_pos_in_added, wctx.text_buffer.tabWidth(), is_ascii_only, wctx.text_buffer.widthMethod()).byte_offset;
+                                    if (wrap_byte_len == 0 and wrap_remaining_bytes.len > 0) {
+                                        const force_result = utf8.findPosByWidth(wrap_remaining_bytes, 1, wctx.text_buffer.tabWidth(), is_ascii_only, true, wctx.text_buffer.widthMethod());
+                                        wrap_byte_len = if (force_result.byte_offset > 0)
+                                            force_result.byte_offset
+                                        else
+                                            @min(@as(u32, @intCast(wrap_remaining_bytes.len)), @as(u32, 1));
+                                    }
+
                                     wctx.last_wrap_chunk_count = @intCast(wctx.current_vline.chunks.items.len);
                                     wctx.last_wrap_line_position = position_before_add + wrap_pos_in_added;
                                     wctx.last_wrap_global_offset = offset_before_add + wrap_pos_in_added;
+                                    wctx.last_wrap_global_byte_offset = byte_offset_before_add + wrap_byte_len;
                                 }
 
                                 if (wctx.line_position >= wctx.wrap_w and char_offset < chunk.width) {
@@ -1261,7 +1364,7 @@ pub const UnifiedTextBufferView = struct {
                     } else {
                         const chunk_bytes = chunk.getBytes(wctx.text_buffer.memRegistry());
                         const is_ascii_only = (chunk.flags & TextChunk.Flags.ASCII_ONLY) != 0;
-                        var byte_offset: usize = 0;
+                        var byte_offset: u32 = 0;
                         var char_offset: u32 = 0;
 
                         while (char_offset < chunk.width) {
@@ -1275,7 +1378,7 @@ pub const UnifiedTextBufferView = struct {
                                 const remaining_bytes = chunk_bytes[byte_offset..];
                                 const force_result = utf8.findWrapPosByWidth(remaining_bytes, 1, wctx.text_buffer.tabWidth(), is_ascii_only, wctx.text_buffer.widthMethod());
                                 if (force_result.grapheme_count > 0) {
-                                    addVirtualChunk(wctx, chunk, chunk_idx_in_line, char_offset, force_result.columns_used);
+                                    addVirtualChunk(wctx, chunk, char_offset, byte_offset, force_result.columns_used, force_result.byte_offset);
                                     char_offset += force_result.columns_used;
                                     byte_offset += force_result.byte_offset;
                                 } else {
@@ -1300,7 +1403,7 @@ pub const UnifiedTextBufferView = struct {
                                 }
                                 const force_result = utf8.findWrapPosByWidth(remaining_bytes, 1000, wctx.text_buffer.tabWidth(), is_ascii_only, wctx.text_buffer.widthMethod());
                                 if (force_result.grapheme_count > 0) {
-                                    addVirtualChunk(wctx, chunk, chunk_idx_in_line, char_offset, force_result.columns_used);
+                                    addVirtualChunk(wctx, chunk, char_offset, byte_offset, force_result.columns_used, force_result.byte_offset);
                                     char_offset += force_result.columns_used;
                                     byte_offset += force_result.byte_offset;
                                     if (char_offset < chunk.width) {
@@ -1310,7 +1413,7 @@ pub const UnifiedTextBufferView = struct {
                                 break;
                             }
 
-                            addVirtualChunk(wctx, chunk, chunk_idx_in_line, char_offset, wrap_result.columns_used);
+                            addVirtualChunk(wctx, chunk, char_offset, byte_offset, wrap_result.columns_used, wrap_result.byte_offset);
                             char_offset += wrap_result.columns_used;
                             byte_offset += wrap_result.byte_offset;
 
@@ -1329,7 +1432,7 @@ pub const UnifiedTextBufferView = struct {
                         wctx.current_vline.source_line = wctx.line_idx;
                         wctx.current_vline.source_col_offset = wctx.line_col_offset;
                         wctx.output.virtual_lines.append(wctx.allocator, wctx.current_vline) catch {};
-                        wctx.output.cached_line_starts.append(wctx.allocator, wctx.current_vline.char_offset) catch {};
+                        wctx.output.cached_line_starts.append(wctx.allocator, wctx.line_start_byte_offset) catch {};
                         wctx.output.cached_line_widths.append(wctx.allocator, wctx.current_vline.width) catch {};
                         wctx.output.cached_line_sources.append(wctx.allocator, wctx.line_idx) catch {};
                         wctx.output.cached_line_wrap_indices.append(wctx.allocator, wctx.current_line_vline_count) catch {};
@@ -1340,12 +1443,14 @@ pub const UnifiedTextBufferView = struct {
                     wctx.output.cached_line_vline_counts.append(wctx.allocator, wctx.current_line_vline_count) catch {};
 
                     wctx.global_char_offset += 1;
+                    wctx.global_byte_offset += 1;
 
                     wctx.line_idx += 1;
                     wctx.line_col_offset = 0;
                     wctx.line_position = 0;
                     wctx.current_vline = VirtualLine.init();
                     wctx.current_vline.char_offset = wctx.global_char_offset;
+                    wctx.line_start_byte_offset = wctx.global_byte_offset;
                     wctx.chunk_idx_in_line = 0;
                     wctx.current_line_first_vline_idx = @intCast(wctx.output.virtual_lines.items.len);
                     wctx.current_line_vline_count = 0;
