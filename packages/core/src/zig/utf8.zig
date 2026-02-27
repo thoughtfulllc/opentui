@@ -157,21 +157,337 @@ pub const LayoutScanResult = struct {
     }
 };
 
+pub const LayoutScanCursor = struct {
+    byte_offset: u32 = 0,
+    col_offset: u32 = 0,
+    prev_cp: ?u21 = null,
+    break_state: uucode.grapheme.BreakState = .default,
+    prev_word_class: WordClass = .other,
+};
+
+pub const LayoutSpanBatch = struct {
+    spans: []const GraphemeSpan,
+    consumed_bytes: u32,
+    consumed_cols: u32,
+    done: bool,
+};
+
+inline fn classifyWordClassAtOffset(text: []const u8, byte_offset: u32) WordClass {
+    const pos: usize = @intCast(byte_offset);
+    if (pos >= text.len) return .other;
+
+    const b0 = text[pos];
+    const cp: u21 = if (b0 < 0x80) @intCast(b0) else decodeUtf8Unchecked(text, pos).cp;
+    return classifyWordClass(cp);
+}
+
+fn scanLayoutNextBatchInternal(
+    comptime track_breaks: bool,
+    text: []const u8,
+    tab_width: u8,
+    is_ascii_only: bool,
+    width_method: WidthMethod,
+    cursor: *LayoutScanCursor,
+    scratch: []GraphemeSpan,
+) !LayoutSpanBatch {
+    if (scratch.len == 0) {
+        return .{
+            .spans = scratch,
+            .consumed_bytes = 0,
+            .consumed_cols = 0,
+            .done = cursor.byte_offset >= text.len,
+        };
+    }
+
+    const start_byte = cursor.byte_offset;
+    const start_col = cursor.col_offset;
+
+    if (cursor.byte_offset >= text.len) {
+        return .{
+            .spans = scratch[0..0],
+            .consumed_bytes = 0,
+            .consumed_cols = 0,
+            .done = true,
+        };
+    }
+
+    var written: usize = 0;
+    const track_script_transitions = track_breaks and !is_ascii_only;
+    var has_last_class = if (track_script_transitions) cursor.byte_offset > 0 else false;
+    var last_class: WordClass = if (track_script_transitions) cursor.prev_word_class else .other;
+    const max_span_width: u16 = std.math.maxInt(u16);
+
+    if (is_ascii_only) {
+        while (cursor.byte_offset < text.len) {
+            const span_byte_start = cursor.byte_offset;
+            const pos: usize = @intCast(span_byte_start);
+            const b = text[pos];
+            if (!asciiRunStopByte(track_breaks, b)) {
+                const max_run_len: usize = @intCast(max_span_width);
+                var run_end = pos + 1;
+                while (run_end < text.len and (run_end - pos) < max_run_len) : (run_end += 1) {
+                    const next_b = text[run_end];
+                    if (asciiRunStopByte(track_breaks, next_b)) break;
+                }
+
+                if (written >= scratch.len) {
+                    break;
+                }
+
+                const run_len: u32 = @intCast(run_end - pos);
+                scratch[written] = .{
+                    .byte_start = span_byte_start,
+                    .byte_len = run_len,
+                    .col_start = cursor.col_offset,
+                    .col_width = @intCast(run_len),
+                    .break_after = .none,
+                };
+                written += 1;
+
+                cursor.byte_offset += run_len;
+                cursor.col_offset += run_len;
+                cursor.prev_cp = @intCast(text[run_end - 1]);
+                cursor.break_state = .default;
+                continue;
+            }
+
+            const break_kind: BreakKind = if (track_breaks) asciiWrapBreakKind(b) else .none;
+            const width: u16 = switch (b) {
+                '\t' => tab_width,
+                0...8, 10...31, 127 => 0,
+                else => 1,
+            };
+
+            if (written >= scratch.len) {
+                break;
+            }
+
+            scratch[written] = .{
+                .byte_start = span_byte_start,
+                .byte_len = 1,
+                .col_start = cursor.col_offset,
+                .col_width = @intCast(width),
+                .break_after = break_kind,
+            };
+            written += 1;
+
+            cursor.byte_offset += 1;
+            cursor.col_offset += width;
+            cursor.prev_cp = @intCast(b);
+            cursor.break_state = .default;
+        }
+    } else {
+        while (cursor.byte_offset < text.len) {
+            const span_start: usize = @intCast(cursor.byte_offset);
+            const span_col_start = cursor.col_offset;
+
+            const ascii_b0 = text[span_start];
+            const has_next = span_start + 1 < text.len;
+            const next_is_ascii = has_next and text[span_start + 1] < 0x80;
+            const safe_ascii_fast_path = ascii_b0 != '\r' and (!has_next or next_is_ascii);
+
+            if (ascii_b0 < 0x80 and safe_ascii_fast_path) {
+                const span_class: WordClass = if (track_breaks)
+                    (if (isAsciiWordByte(ascii_b0)) .ascii_word else .other)
+                else
+                    .other;
+                if (track_breaks and written > 0 and has_last_class and isCjkAsciiTransition(last_class, span_class)) {
+                    const previous = &scratch[written - 1];
+                    if (previous.break_after == .none) {
+                        previous.break_after = .script_transition;
+                    }
+                }
+
+                const break_kind: BreakKind = if (track_breaks) asciiWrapBreakKind(ascii_b0) else .none;
+                const width = asciiCharWidth(ascii_b0, tab_width);
+
+                const can_extend_previous = written > 0 and
+                    break_kind == .none and
+                    width == 1 and
+                    scratch[written - 1].break_after == .none and
+                    scratch[written - 1].byte_len == scratch[written - 1].col_width and
+                    scratch[written - 1].col_width < max_span_width;
+
+                if (can_extend_previous) {
+                    const previous = &scratch[written - 1];
+                    previous.byte_len += 1;
+                    previous.col_width += 1;
+                } else {
+                    if (written >= scratch.len) {
+                        break;
+                    }
+
+                    scratch[written] = .{
+                        .byte_start = cursor.byte_offset,
+                        .byte_len = 1,
+                        .col_start = cursor.col_offset,
+                        .col_width = @intCast(width),
+                        .break_after = break_kind,
+                    };
+                    written += 1;
+                }
+
+                cursor.byte_offset += 1;
+                cursor.col_offset += width;
+                cursor.prev_cp = @intCast(ascii_b0);
+                cursor.break_state = .default;
+                if (track_breaks) {
+                    cursor.prev_word_class = span_class;
+                    has_last_class = true;
+                    last_class = span_class;
+                }
+                continue;
+            }
+
+            var pos = span_start;
+            var prev_cp: ?u21 = null;
+            var break_state: uucode.grapheme.BreakState = .default;
+            var span_started = false;
+            var span_break_after: BreakKind = .none;
+            var span_class: WordClass = .other;
+            var width_state: GraphemeWidthState = undefined;
+
+            while (pos < text.len) {
+                const b0 = text[pos];
+                var curr_cp: u21 = 0;
+                var cp_len: usize = 1;
+                if (b0 < 0x80) {
+                    curr_cp = @intCast(b0);
+                } else {
+                    const decode = decodeUtf8Unchecked(text, pos);
+                    curr_cp = decode.cp;
+                    cp_len = @max(@as(usize, decode.len), 1);
+                }
+
+                const is_break = isGraphemeBreak(prev_cp, curr_cp, &break_state, width_method);
+                if (is_break and span_started) {
+                    break;
+                }
+
+                const cp_width = charWidth(b0, curr_cp, tab_width);
+
+                if (!span_started) {
+                    span_started = true;
+                    if (track_breaks) {
+                        span_class = classifyWordClass(curr_cp);
+                        span_break_after = if (b0 < 0x80) asciiWrapBreakKind(b0) else unicodeWrapBreakKind(curr_cp);
+                    }
+                    width_state = GraphemeWidthState.init(curr_cp, cp_width, width_method);
+                } else {
+                    width_state.addCodepoint(curr_cp, cp_width);
+                    if (track_breaks) {
+                        const break_kind = if (b0 < 0x80) asciiWrapBreakKind(b0) else unicodeWrapBreakKind(curr_cp);
+                        if (span_break_after == .none and break_kind != .none) {
+                            span_break_after = break_kind;
+                        }
+                    }
+                }
+
+                prev_cp = curr_cp;
+                pos += cp_len;
+            }
+
+            if (!span_started or pos <= span_start) {
+                break;
+            }
+
+            if (track_breaks and written > 0 and has_last_class and isCjkAsciiTransition(last_class, span_class)) {
+                const previous = &scratch[written - 1];
+                if (previous.break_after == .none) {
+                    previous.break_after = .script_transition;
+                }
+            }
+
+            const span_byte_len: u32 = @intCast(pos - span_start);
+            const span_width = width_state.width;
+
+            const span_byte_start_u32: u32 = @intCast(span_start);
+            const can_extend_previous = written > 0 and
+                span_break_after == .none and
+                span_width == 1 and
+                span_byte_len == span_width and
+                scratch[written - 1].break_after == .none and
+                scratch[written - 1].byte_len == scratch[written - 1].col_width and
+                scratch[written - 1].col_width < max_span_width and
+                scratch[written - 1].byte_start + scratch[written - 1].byte_len == span_byte_start_u32 and
+                scratch[written - 1].col_start + scratch[written - 1].col_width == span_col_start;
+
+            if (can_extend_previous) {
+                const previous = &scratch[written - 1];
+                previous.byte_len += 1;
+                previous.col_width += 1;
+            } else {
+                if (written >= scratch.len) {
+                    break;
+                }
+
+                scratch[written] = .{
+                    .byte_start = span_byte_start_u32,
+                    .byte_len = span_byte_len,
+                    .col_start = span_col_start,
+                    .col_width = @intCast(span_width),
+                    .break_after = span_break_after,
+                };
+
+                written += 1;
+            }
+
+            cursor.byte_offset = @intCast(pos);
+            cursor.col_offset += span_width;
+            cursor.prev_cp = prev_cp;
+            cursor.break_state = break_state;
+            if (track_breaks) {
+                cursor.prev_word_class = span_class;
+                has_last_class = true;
+                last_class = span_class;
+            }
+        }
+    }
+
+    if (track_script_transitions and written > 0 and cursor.byte_offset < text.len) {
+        const next_class = classifyWordClassAtOffset(text, cursor.byte_offset);
+        if (has_last_class and isCjkAsciiTransition(last_class, next_class)) {
+            const previous = &scratch[written - 1];
+            if (previous.break_after == .none) {
+                previous.break_after = .script_transition;
+            }
+        }
+    }
+
+    return .{
+        .spans = scratch[0..written],
+        .consumed_bytes = cursor.byte_offset - start_byte,
+        .consumed_cols = cursor.col_offset - start_col,
+        .done = cursor.byte_offset >= text.len,
+    };
+}
+
+pub fn scanLayoutNextBatch(
+    text: []const u8,
+    tab_width: u8,
+    is_ascii_only: bool,
+    width_method: WidthMethod,
+    cursor: *LayoutScanCursor,
+    scratch: []GraphemeSpan,
+) !LayoutSpanBatch {
+    return scanLayoutNextBatchInternal(true, text, tab_width, is_ascii_only, width_method, cursor, scratch);
+}
+
+pub fn scanLayoutNextBatchNoBreaks(
+    text: []const u8,
+    tab_width: u8,
+    is_ascii_only: bool,
+    width_method: WidthMethod,
+    cursor: *LayoutScanCursor,
+    scratch: []GraphemeSpan,
+) !LayoutSpanBatch {
+    return scanLayoutNextBatchInternal(false, text, tab_width, is_ascii_only, width_method, cursor, scratch);
+}
+
 /// scanLayout emits grapheme spans with both byte and column coordinates.
 ///
-/// The function is the canonical scanner for wrapping and cursor math. It keeps
-/// byte and column ledgers in one stream, so callers do not need cross-domain
-/// conversions later.
-///
-/// Invariants:
-/// - Every emitted span makes byte progress (`byte_len >= 1`).
-/// - Spans stay contiguous in byte space and column space.
-/// - `result.total_bytes == text.len` on success.
-/// - `result.total_cols` equals the sum of all `span.col_width` values.
-///
-/// Side effects:
-/// - The function clears `result` before scanning.
-/// - If scanning fails, it clears `result` again, so callers never see partial output.
+/// This wrapper materializes full output by repeatedly consuming
+/// `scanLayoutNextBatch`.
 pub fn scanLayout(text: []const u8, tab_width: u8, is_ascii_only: bool, width_method: WidthMethod, result: *LayoutScanResult) !void {
     result.reset();
     errdefer result.reset();
@@ -180,193 +496,93 @@ pub fn scanLayout(text: []const u8, tab_width: u8, is_ascii_only: bool, width_me
         return;
     }
 
-    if (is_ascii_only) {
-        // ASCII fast path emits exactly one span per byte, so one reservation is enough.
-        try result.spans.ensureTotalCapacity(result.allocator, text.len);
+    var cursor = LayoutScanCursor{};
+    var scratch: [2048]GraphemeSpan = undefined;
 
-        var pos: usize = 0;
-        var col: u32 = 0;
-        const vector_len = 16;
-        const Vec = @Vector(vector_len, u8);
+    while (true) {
+        const batch = try scanLayoutNextBatch(
+            text,
+            tab_width,
+            is_ascii_only,
+            width_method,
+            &cursor,
+            scratch[0..],
+        );
 
-        const v_space: Vec = @splat(' ');
-        const v_tab: Vec = @splat('\t');
-
-        const v_dash: Vec = @splat('-');
-        const v_slash: Vec = @splat('/');
-        const v_backslash: Vec = @splat('\\');
-        const v_dot: Vec = @splat('.');
-        const v_comma: Vec = @splat(',');
-        const v_semicolon: Vec = @splat(';');
-        const v_colon: Vec = @splat(':');
-        const v_bang: Vec = @splat('!');
-        const v_question: Vec = @splat('?');
-        const v_lparen: Vec = @splat('(');
-        const v_rparen: Vec = @splat(')');
-        const v_lbracket: Vec = @splat('[');
-        const v_rbracket: Vec = @splat(']');
-        const v_lbrace: Vec = @splat('{');
-        const v_rbrace: Vec = @splat('}');
-
-        while (pos + vector_len <= text.len) {
-            const chunk: Vec = text[pos..][0..vector_len].*;
-
-            const whitespace_mask = (chunk == v_space) | (chunk == v_tab);
-
-            var punctuation_mask: @Vector(vector_len, bool) = @splat(false);
-            punctuation_mask = punctuation_mask | (chunk == v_dash);
-            punctuation_mask = punctuation_mask | (chunk == v_slash);
-            punctuation_mask = punctuation_mask | (chunk == v_backslash);
-            punctuation_mask = punctuation_mask | (chunk == v_dot);
-            punctuation_mask = punctuation_mask | (chunk == v_comma);
-            punctuation_mask = punctuation_mask | (chunk == v_semicolon);
-            punctuation_mask = punctuation_mask | (chunk == v_colon);
-            punctuation_mask = punctuation_mask | (chunk == v_bang);
-            punctuation_mask = punctuation_mask | (chunk == v_question);
-            punctuation_mask = punctuation_mask | (chunk == v_lparen);
-            punctuation_mask = punctuation_mask | (chunk == v_rparen);
-            punctuation_mask = punctuation_mask | (chunk == v_lbracket);
-            punctuation_mask = punctuation_mask | (chunk == v_rbracket);
-            punctuation_mask = punctuation_mask | (chunk == v_lbrace);
-            punctuation_mask = punctuation_mask | (chunk == v_rbrace);
-
-            inline for (0..vector_len) |i| {
-                const b = chunk[i];
-                const width = asciiCharWidth(b, tab_width);
-
-                const break_kind: BreakKind = if (whitespace_mask[i])
-                    .whitespace
-                else if (punctuation_mask[i])
-                    .punctuation
-                else
-                    .none;
-
-                result.spans.appendAssumeCapacity(.{
-                    .byte_start = @intCast(pos + i),
-                    .byte_len = 1,
-                    .col_start = col,
-                    .col_width = @intCast(width),
-                    .break_after = break_kind,
-                });
-                col += width;
-            }
-            pos += vector_len;
+        if (batch.spans.len > 0) {
+            try result.spans.appendSlice(result.allocator, batch.spans);
         }
 
-        // Collect remaining bytes
-        while (pos < text.len) : (pos += 1) {
-            const b = text[pos];
-            const width = asciiCharWidth(b, tab_width);
-            result.spans.appendAssumeCapacity(.{
-                .byte_start = @intCast(pos),
-                .byte_len = 1,
-                .col_start = col,
-                .col_width = @intCast(width),
-                .break_after = asciiWrapBreakKind(b),
-            });
-            col += width;
+        if (batch.done) {
+            break;
         }
 
-        result.total_bytes = @intCast(text.len);
-        result.total_cols = col;
-        return;
-    }
-
-    var pos: usize = 0;
-    var col: u32 = 0;
-    var prev_cp: ?u21 = null;
-    var break_state: uucode.grapheme.BreakState = .default;
-
-    var cluster_started = false;
-    var cluster_start: usize = 0;
-    var cluster_col_start: u32 = 0;
-    var cluster_width_state: GraphemeWidthState = undefined;
-    var cluster_class: WordClass = .other;
-    var cluster_break_after: BreakKind = .none;
-
-    while (pos < text.len) {
-        const b0 = text[pos];
-        const curr_cp: u21 = if (b0 < 0x80) b0 else decodeUtf8Unchecked(text, pos).cp;
-        const cp_len: usize = if (b0 < 0x80) 1 else decodeUtf8Unchecked(text, pos).len;
-        // Grapheme-break logic keeps CRLF as one cluster and keeps ZWJ behavior
-        // aligned with the selected width method.
-        const is_break = isGraphemeBreak(prev_cp, curr_cp, &break_state, width_method);
-        const current_class = classifyWordClass(curr_cp);
-
-        if (is_break) {
-            if (cluster_started) {
-                const previous_class = cluster_class;
-                const cluster_width = cluster_width_state.width;
-
-                try result.spans.append(result.allocator, .{
-                    .byte_start = @intCast(cluster_start),
-                    .byte_len = @intCast(pos - cluster_start),
-                    .col_start = cluster_col_start,
-                    .col_width = @intCast(cluster_width),
-                    .break_after = cluster_break_after,
-                });
-
-                if (isCjkAsciiTransition(previous_class, current_class)) {
-                    const previous = &result.spans.items[result.spans.items.len - 1];
-                    // Attach the transition marker to the previous span so wrap
-                    // callers can break before the new script run starts.
-                    if (previous.break_after == .none) {
-                        previous.break_after = .script_transition;
-                    }
-                }
-
-                col += cluster_width;
-            }
-
-            cluster_started = true;
-            cluster_start = pos;
-            cluster_col_start = col;
-            cluster_class = current_class;
-            cluster_break_after = if (b0 < 0x80) asciiWrapBreakKind(b0) else unicodeWrapBreakKind(curr_cp);
-
-            const cp_width = charWidth(b0, curr_cp, tab_width);
-            cluster_width_state = GraphemeWidthState.init(curr_cp, cp_width, width_method);
-        } else {
-            const cp_width = charWidth(b0, curr_cp, tab_width);
-            cluster_width_state.addCodepoint(curr_cp, cp_width);
-
-            const break_kind = if (b0 < 0x80) asciiWrapBreakKind(b0) else unicodeWrapBreakKind(curr_cp);
-            // Keep the first non-none break marker in the cluster.
-            // This preserves delimiter semantics for multi-codepoint clusters.
-            if (cluster_break_after == .none and break_kind != .none) {
-                cluster_break_after = break_kind;
-            }
+        if (batch.spans.len == 0) {
+            return error.InvalidDimensions;
         }
-
-        prev_cp = curr_cp;
-        pos += cp_len;
     }
 
-    if (cluster_started) {
-        const cluster_width = cluster_width_state.width;
-        try result.spans.append(result.allocator, .{
-            .byte_start = @intCast(cluster_start),
-            .byte_len = @intCast(text.len - cluster_start),
-            .col_start = cluster_col_start,
-            .col_width = @intCast(cluster_width),
-            .break_after = cluster_break_after,
-        });
-        col += cluster_width;
-    }
-
-    result.total_bytes = @intCast(text.len);
-    result.total_cols = col;
+    result.total_bytes = cursor.byte_offset;
+    result.total_cols = cursor.col_offset;
 }
 
 // Returns soft-wrap break classifications for ASCII delimiters.
 // Hard line breaks (`\r`, `\n`, and `\r\n`) are represented as zero-width spans,
 // not as `break_after` markers.
+const ASCII_BREAK_KIND_TABLE: [256]BreakKind = blk: {
+    var table = [_]BreakKind{.none} ** 256;
+
+    table[' '] = .whitespace;
+    table['\t'] = .whitespace;
+
+    table['-'] = .punctuation;
+    table['/'] = .punctuation;
+    table['\\'] = .punctuation;
+    table['.'] = .punctuation;
+    table[','] = .punctuation;
+    table[';'] = .punctuation;
+    table[':'] = .punctuation;
+    table['!'] = .punctuation;
+    table['?'] = .punctuation;
+    table['('] = .punctuation;
+    table[')'] = .punctuation;
+    table['['] = .punctuation;
+    table[']'] = .punctuation;
+    table['{'] = .punctuation;
+    table['}'] = .punctuation;
+
+    break :blk table;
+};
+
+const ASCII_RUN_STOP_WITH_BREAKS_TABLE: [256]bool = blk: {
+    var table = [_]bool{false} ** 256;
+    var i: usize = 0;
+    while (i < table.len) : (i += 1) {
+        const b: u8 = @intCast(i);
+        table[i] = b == '\t' or b < 0x20 or b == 0x7f or ASCII_BREAK_KIND_TABLE[b] != .none;
+    }
+    break :blk table;
+};
+
+const ASCII_RUN_STOP_NO_BREAKS_TABLE: [256]bool = blk: {
+    var table = [_]bool{false} ** 256;
+    var i: usize = 0;
+    while (i < table.len) : (i += 1) {
+        const b: u8 = @intCast(i);
+        table[i] = b == '\t' or b < 0x20 or b == 0x7f;
+    }
+    break :blk table;
+};
+
+inline fn asciiRunStopByte(comptime track_breaks: bool, b: u8) bool {
+    return if (track_breaks)
+        ASCII_RUN_STOP_WITH_BREAKS_TABLE[b]
+    else
+        ASCII_RUN_STOP_NO_BREAKS_TABLE[b];
+}
+
 inline fn asciiWrapBreakKind(b: u8) BreakKind {
-    return switch (b) {
-        ' ', '\t' => .whitespace,
-        '-', '/', '\\', '.', ',', ';', ':', '!', '?', '(', ')', '[', ']', '{', '}' => .punctuation,
-        else => .none,
-    };
+    return ASCII_BREAK_KIND_TABLE[b];
 }
 
 // Decode a UTF-8 codepoint starting at pos. Assumes valid UTF-8 input.

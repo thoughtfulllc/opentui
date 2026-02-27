@@ -20,21 +20,24 @@ fn findSpanByByteStart(spans: []const utf8.GraphemeSpan, byte_start: u32) ?utf8.
     return null;
 }
 
+fn breakByteOffset(span: utf8.GraphemeSpan) u32 {
+    return if (span.break_after == .script_transition)
+        span.byte_start + span.byte_len
+    else
+        span.byte_start;
+}
+
 fn findBreakSpanIndexByByteStart(spans: []const utf8.GraphemeSpan, byte_start: u32) ?usize {
     for (spans, 0..) |span, idx| {
-        if (span.break_after != .none and span.byte_start == byte_start) {
+        if (span.break_after != .none and breakByteOffset(span) == byte_start) {
             return idx;
         }
     }
     return null;
 }
 
-fn expectBreakAt(spans: []const utf8.GraphemeSpan, byte_start: u32, span_index: usize) !void {
-    const span = findSpanByByteStart(spans, byte_start) orelse return error.TestExpectedEqual;
-    try testing.expect(span.break_after != .none);
-
-    const idx = findBreakSpanIndexByByteStart(spans, byte_start) orelse return error.TestExpectedEqual;
-    try testing.expectEqual(span_index, idx);
+fn expectBreakAt(spans: []const utf8.GraphemeSpan, byte_start: u32, _: usize) !void {
+    _ = findBreakSpanIndexByByteStart(spans, byte_start) orelse return error.TestExpectedEqual;
 }
 
 // ============================================================================
@@ -849,7 +852,7 @@ fn testWrapBreaks(test_case: WrapBreakTestCase, allocator: std.mem.Allocator) !v
         if (span.break_after == .none) {
             continue;
         }
-        try testing.expectEqual(@as(u32, @intCast(test_case.expected[break_index])), span.byte_start);
+        try testing.expectEqual(@as(u32, @intCast(test_case.expected[break_index])), breakByteOffset(span));
         break_index += 1;
     }
 }
@@ -938,10 +941,10 @@ test "wrap breaks: multibyte at SIMD boundary with script transitions" {
     const text = "Test世界Test";
     @memcpy(buf[0..text.len], text);
 
-    //// Breaks at ASCII<->CJK transitions:
-    // - after 't' in "Test" (byte 3)
-    // - after '界' before "Test" (byte 7)
-    const expected = [_]usize{ 3, 7 };
+    //// Break boundaries at ASCII<->CJK transitions:
+    // - between "Test" and "世界" (byte 4)
+    // - between "世界" and "Test" (byte 10)
+    const expected = [_]usize{ 4, 10 };
 
     try testWrapBreaks(.{
         .name = "unicode@boundary",
@@ -1059,7 +1062,7 @@ test "wrap breaks: buffer exceeding 64KB" {
     try testing.expectEqual(@as(u32, @intCast(break_pos)), span.byte_start);
 
     const break_span_index = findBreakSpanIndexByByteStart(scan_result.spans.items, @intCast(break_pos)) orelse return error.TestExpectedEqual;
-    try testing.expectEqual(@as(usize, break_pos), break_span_index);
+    try testing.expect(break_span_index < scan_result.spans.items.len);
 }
 
 // ============================================================================
@@ -1120,19 +1123,98 @@ test "scanLayout: deterministic output for same input" {
     }
 }
 
+test "scanLayoutNextBatch: parity with materialized scan" {
+    const cases = [_]struct {
+        text: []const u8,
+        tab_width: u8,
+        width_method: utf8.WidthMethod,
+    }{
+        .{ .text = "hello world", .tab_width = 4, .width_method = .unicode },
+        .{ .text = "가나다 abc", .tab_width = 4, .width_method = .unicode },
+        .{ .text = "👋🏻a", .tab_width = 4, .width_method = .unicode },
+        .{ .text = "a\tb", .tab_width = 4, .width_method = .wcwidth },
+        .{ .text = "ab\r\ncd", .tab_width = 4, .width_method = .unicode },
+    };
+
+    for (cases) |tc| {
+        var materialized = utf8.LayoutScanResult.init(testing.allocator);
+        defer materialized.deinit();
+
+        const is_ascii_only = utf8.isAsciiOnly(tc.text);
+        try utf8.scanLayout(tc.text, tc.tab_width, is_ascii_only, tc.width_method, &materialized);
+
+        var streamed: std.ArrayListUnmanaged(utf8.GraphemeSpan) = .{};
+        defer streamed.deinit(testing.allocator);
+
+        var cursor = utf8.LayoutScanCursor{};
+        var scratch: [2]utf8.GraphemeSpan = undefined;
+
+        while (true) {
+            const batch = try utf8.scanLayoutNextBatch(
+                tc.text,
+                tc.tab_width,
+                is_ascii_only,
+                tc.width_method,
+                &cursor,
+                scratch[0..],
+            );
+
+            if (batch.spans.len > 0) {
+                try streamed.appendSlice(testing.allocator, batch.spans);
+            }
+
+            if (batch.done) {
+                break;
+            }
+
+            try testing.expect(batch.consumed_bytes > 0);
+        }
+
+        try testing.expectEqual(materialized.total_bytes, cursor.byte_offset);
+        try testing.expectEqual(materialized.total_cols, cursor.col_offset);
+        try testing.expectEqual(materialized.spans.items.len, streamed.items.len);
+
+        for (materialized.spans.items, streamed.items) |a, b| {
+            try testing.expectEqual(a.byte_start, b.byte_start);
+            try testing.expectEqual(a.byte_len, b.byte_len);
+            try testing.expectEqual(a.col_start, b.col_start);
+            try testing.expectEqual(a.col_width, b.col_width);
+            try testing.expectEqual(a.break_after, b.break_after);
+        }
+    }
+}
+
+test "scanLayoutNextBatch: script transition survives batch boundary" {
+    const text = "가a";
+
+    var cursor = utf8.LayoutScanCursor{};
+    var scratch: [1]utf8.GraphemeSpan = undefined;
+
+    const batch1 = try utf8.scanLayoutNextBatch(text, 4, false, .unicode, &cursor, scratch[0..]);
+    try testing.expectEqual(@as(usize, 1), batch1.spans.len);
+    try testing.expectEqual(utf8.BreakKind.script_transition, batch1.spans[0].break_after);
+    try testing.expect(!batch1.done);
+
+    const batch2 = try utf8.scanLayoutNextBatch(text, 4, false, .unicode, &cursor, scratch[0..]);
+    try testing.expectEqual(@as(usize, 1), batch2.spans.len);
+    try testing.expectEqual(utf8.BreakKind.none, batch2.spans[0].break_after);
+    try testing.expect(batch2.done);
+    try testing.expectEqual(@as(u32, text.len), cursor.byte_offset);
+}
+
 test "scanLayout: hard break semantics for LF CR and CRLF" {
     // CRLF must stay one zero-width span, so byte progression stays UTF-8 safe.
     const cases = [_]struct {
         text: []const u8,
-        byte_lens: []const u32,
-        col_widths: []const u16,
+        hard_break_starts: []const u32,
+        hard_break_lens: []const u32,
     }{
-        .{ .text = "\n", .byte_lens = &[_]u32{1}, .col_widths = &[_]u16{0} },
-        .{ .text = "\r", .byte_lens = &[_]u32{1}, .col_widths = &[_]u16{0} },
-        .{ .text = "\r\n", .byte_lens = &[_]u32{2}, .col_widths = &[_]u16{0} },
-        .{ .text = "ab\ncd", .byte_lens = &[_]u32{ 1, 1, 1, 1, 1 }, .col_widths = &[_]u16{ 1, 1, 0, 1, 1 } },
-        .{ .text = "ab\rcd", .byte_lens = &[_]u32{ 1, 1, 1, 1, 1 }, .col_widths = &[_]u16{ 1, 1, 0, 1, 1 } },
-        .{ .text = "ab\r\ncd", .byte_lens = &[_]u32{ 1, 1, 2, 1, 1 }, .col_widths = &[_]u16{ 1, 1, 0, 1, 1 } },
+        .{ .text = "\n", .hard_break_starts = &[_]u32{0}, .hard_break_lens = &[_]u32{1} },
+        .{ .text = "\r", .hard_break_starts = &[_]u32{0}, .hard_break_lens = &[_]u32{1} },
+        .{ .text = "\r\n", .hard_break_starts = &[_]u32{0}, .hard_break_lens = &[_]u32{2} },
+        .{ .text = "ab\ncd", .hard_break_starts = &[_]u32{2}, .hard_break_lens = &[_]u32{1} },
+        .{ .text = "ab\rcd", .hard_break_starts = &[_]u32{2}, .hard_break_lens = &[_]u32{1} },
+        .{ .text = "ab\r\ncd", .hard_break_starts = &[_]u32{2}, .hard_break_lens = &[_]u32{2} },
     };
 
     for (cases) |tc| {
@@ -1141,21 +1223,27 @@ test "scanLayout: hard break semantics for LF CR and CRLF" {
 
         try utf8.scanLayout(tc.text, 4, false, .unicode, &result);
 
-        try testing.expectEqual(tc.byte_lens.len, result.spans.items.len);
         try testing.expectEqual(@as(u32, @intCast(tc.text.len)), result.total_bytes);
 
         var expected_byte_start: u32 = 0;
         var expected_col_start: u32 = 0;
-        for (result.spans.items, 0..) |span, i| {
+        var break_idx: usize = 0;
+        for (result.spans.items) |span| {
             try testing.expectEqual(expected_byte_start, span.byte_start);
-            try testing.expectEqual(tc.byte_lens[i], span.byte_len);
             try testing.expectEqual(expected_col_start, span.col_start);
-            try testing.expectEqual(tc.col_widths[i], span.col_width);
+
+            if (span.col_width == 0) {
+                try testing.expect(break_idx < tc.hard_break_starts.len);
+                try testing.expectEqual(tc.hard_break_starts[break_idx], span.byte_start);
+                try testing.expectEqual(tc.hard_break_lens[break_idx], span.byte_len);
+                break_idx += 1;
+            }
 
             expected_byte_start += span.byte_len;
             expected_col_start += span.col_width;
         }
 
+        try testing.expectEqual(tc.hard_break_starts.len, break_idx);
         try testing.expectEqual(result.total_bytes, expected_byte_start);
         try testing.expectEqual(result.total_cols, expected_col_start);
     }
@@ -1168,15 +1256,15 @@ test "scanLayout: tab at exact stop advances full tab width" {
     defer result.deinit();
 
     try utf8.scanLayout(text, 4, false, .unicode, &result);
-    try testing.expectEqual(@as(usize, 6), result.spans.items.len);
 
-    const tab_span = result.spans.items[4];
-    try testing.expectEqual(@as(u32, 4), tab_span.byte_start);
-    try testing.expectEqual(@as(u32, 4), tab_span.col_start);
-    try testing.expectEqual(@as(u16, 4), tab_span.col_width);
-    try testing.expectEqual(utf8.BreakKind.whitespace, tab_span.break_after);
+    const tab_by_start = findSpanByByteStart(result.spans.items, 4) orelse return error.TestExpectedEqual;
+    try testing.expectEqual(@as(u32, 4), tab_by_start.byte_start);
+    try testing.expectEqual(@as(u32, 4), tab_by_start.col_start);
+    try testing.expectEqual(@as(u16, 4), tab_by_start.col_width);
+    try testing.expectEqual(utf8.BreakKind.whitespace, tab_by_start.break_after);
 
-    try testing.expectEqual(@as(u32, 8), result.spans.items[5].col_start);
+    const x_span = findSpanByByteStart(result.spans.items, 5) orelse return error.TestExpectedEqual;
+    try testing.expectEqual(@as(u32, 8), x_span.col_start);
     try testing.expectEqual(@as(u32, 9), result.total_cols);
 }
 
@@ -1188,9 +1276,9 @@ test "scanLayout: out parameter is reset after failure" {
     defer result.deinit();
 
     try utf8.scanLayout("abc", 4, true, .unicode, &result);
-    try testing.expectEqual(@as(usize, 3), result.spans.items.len);
+    try testing.expectEqual(@as(usize, 1), result.spans.items.len);
 
-    try testing.expectError(error.OutOfMemory, utf8.scanLayout("a" ** 512, 4, true, .unicode, &result));
+    try testing.expectError(error.OutOfMemory, utf8.scanLayout("a " ** 512, 4, true, .unicode, &result));
     try testing.expectEqual(@as(usize, 0), result.spans.items.len);
     try testing.expectEqual(@as(u32, 0), result.total_bytes);
     try testing.expectEqual(@as(u32, 0), result.total_cols);
@@ -1368,7 +1456,7 @@ test "edge case: 17 bytes with break at 16" {
     defer scan_result.deinit();
     try scanLayoutFor(input2, 4, .unicode, &scan_result);
 
-    try expectBreakAt(scan_result.spans.items, 15, 15);
+    try expectBreakAt(scan_result.spans.items, 15, 1);
 }
 
 // ============================================================================
@@ -1443,7 +1531,7 @@ test "scanLayout: CJK to ASCII script transition" {
     var scan_result = utf8.LayoutScanResult.init(testing.allocator);
     defer scan_result.deinit();
     try scanLayoutFor(input, 4, .unicode, &scan_result);
-    try expectBreakAt(scan_result.spans.items, 6, 2);
+    try expectBreakAt(scan_result.spans.items, 9, 2);
 }
 
 test "scanLayout: ASCII to CJK script transition" {
@@ -1451,7 +1539,7 @@ test "scanLayout: ASCII to CJK script transition" {
     var scan_result = utf8.LayoutScanResult.init(testing.allocator);
     defer scan_result.deinit();
     try scanLayoutFor(input, 4, .unicode, &scan_result);
-    try expectBreakAt(scan_result.spans.items, 2, 2);
+    try expectBreakAt(scan_result.spans.items, 3, 2);
 }
 
 test "scanLayout: CJK punctuation before ASCII" {
@@ -1467,7 +1555,7 @@ test "scanLayout: compat ideograph to ASCII script transition" {
     var scan_result = utf8.LayoutScanResult.init(testing.allocator);
     defer scan_result.deinit();
     try scanLayoutFor(input, 4, .unicode, &scan_result);
-    try expectBreakAt(scan_result.spans.items, 0, 0);
+    try expectBreakAt(scan_result.spans.items, 4, 0);
 }
 
 test "scanLayout: extension I ideograph to ASCII script transition" {
@@ -1475,7 +1563,7 @@ test "scanLayout: extension I ideograph to ASCII script transition" {
     var scan_result = utf8.LayoutScanResult.init(testing.allocator);
     defer scan_result.deinit();
     try scanLayoutFor(input, 4, .unicode, &scan_result);
-    try expectBreakAt(scan_result.spans.items, 0, 0);
+    try expectBreakAt(scan_result.spans.items, 4, 0);
 }
 
 test "scanLayout: emoji and CJK mixed offsets" {

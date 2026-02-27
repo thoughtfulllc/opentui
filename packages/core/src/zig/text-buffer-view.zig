@@ -810,53 +810,93 @@ pub const UnifiedTextBufferView = struct {
         const source_byte_start = source_chunk.byte_start_in_chunk;
         const source_byte_end = source_chunk.byte_start_in_chunk + source_chunk.byte_len;
 
-        const stable_allocator = self.text_buffer.getAllocator();
-        const spans = self.text_buffer.getLayoutSpansFor(source_chunk.chunk, stable_allocator) catch {
+        const SliceContext = struct {
+            source_byte_start: u32,
+            source_byte_end: u32,
+            local_start_col: u32,
+            local_end_col: u32,
+            slice_byte_start: ?u32 = null,
+            slice_byte_end: u32 = 0,
+            slice_col_start: ?u32 = null,
+            slice_col_end: u32 = 0,
+
+            fn consume(ctx_ptr: *anyopaque, spans: []const utf8.GraphemeSpan) anyerror!void {
+                const ctx = @as(*@This(), @ptrCast(@alignCast(ctx_ptr)));
+
+                for (spans) |span| {
+                    const span_byte_start = span.byte_start;
+                    const span_byte_end = span.byte_start + span.byte_len;
+                    if (span_byte_end <= ctx.source_byte_start) continue;
+                    if (span_byte_start >= ctx.source_byte_end) return;
+
+                    const span_col_start = span.col_start;
+                    const span_col_end = span.col_start + span.col_width;
+
+                    var include_byte_start: ?u32 = null;
+                    var include_byte_end: u32 = 0;
+                    var include_col_start: ?u32 = null;
+                    var include_col_end: u32 = 0;
+
+                    if (span_col_start >= ctx.local_start_col and span_col_end <= ctx.local_end_col) {
+                        include_byte_start = span_byte_start;
+                        include_byte_end = span_byte_end;
+                        include_col_start = span_col_start;
+                        include_col_end = span_col_end;
+                    } else if (span.byte_len == span.col_width) {
+                        const clipped_col_start = @max(span_col_start, ctx.local_start_col);
+                        const clipped_col_end = @min(span_col_end, ctx.local_end_col);
+
+                        if (clipped_col_start < clipped_col_end) {
+                            const rel_start = clipped_col_start - span_col_start;
+                            const rel_end = clipped_col_end - span_col_start;
+                            include_byte_start = span_byte_start + rel_start;
+                            include_byte_end = span_byte_start + rel_end;
+                            include_col_start = clipped_col_start;
+                            include_col_end = clipped_col_end;
+                        }
+                    }
+
+                    if (include_byte_start == null or include_col_start == null) continue;
+
+                    if (ctx.slice_byte_start == null) {
+                        ctx.slice_byte_start = include_byte_start;
+                        ctx.slice_col_start = include_col_start;
+                    }
+                    ctx.slice_byte_end = include_byte_end;
+                    ctx.slice_col_end = include_col_end;
+                }
+            }
+        };
+
+        var slice_ctx = SliceContext{
+            .source_byte_start = source_byte_start,
+            .source_byte_end = source_byte_end,
+            .local_start_col = local_start_col,
+            .local_end_col = local_end_col,
+        };
+
+        var layout_scratch = tb.LayoutSpanScratch{};
+        self.text_buffer.forEachLayoutSpansForWithScratch(
+            source_chunk.chunk,
+            self.text_buffer.getAllocator(),
+            &layout_scratch,
+            &slice_ctx,
+            SliceContext.consume,
+        ) catch {
             return .{ .width_added = 0, .first_col_in_line = null };
         };
-        const free_windowed_spans = source_chunk.chunk.getLayoutCacheMode() == .windowed;
-        defer if (free_windowed_spans) {
-            stable_allocator.free(@constCast(spans));
-        };
 
-        var slice_byte_start: ?u32 = null;
-        var slice_byte_end: u32 = 0;
-        var slice_col_start: ?u32 = null;
-        var slice_col_end: u32 = 0;
-
-        for (spans) |span| {
-            const span_byte_start = span.byte_start;
-            const span_byte_end = span.byte_start + span.byte_len;
-            if (span_byte_end <= source_byte_start) continue;
-            if (span_byte_start >= source_byte_end) break;
-
-            const span_col_start = span.col_start;
-            const span_col_end = span.col_start + span.col_width;
-
-            // Keep only full-span boundaries for truncation windows.
-            if (span_col_start < local_start_col or span_col_end > local_end_col) {
-                continue;
-            }
-
-            if (slice_byte_start == null) {
-                slice_byte_start = span_byte_start;
-                slice_col_start = span_col_start;
-            }
-            slice_byte_end = span_byte_end;
-            slice_col_end = span_col_end;
-        }
-
-        if (slice_byte_start == null or slice_col_start == null) {
+        if (slice_ctx.slice_byte_start == null or slice_ctx.slice_col_start == null) {
             return .{ .width_added = 0, .first_col_in_line = null };
         }
 
-        const first_col_in_line = line_chunk_start_col + (slice_col_start.? - source_chunk.col_start_in_chunk);
+        const first_col_in_line = line_chunk_start_col + (slice_ctx.slice_col_start.? - source_chunk.col_start_in_chunk);
         const chunk_window = VirtualChunk{
             .chunk = source_chunk.chunk,
-            .byte_start_in_chunk = slice_byte_start.?,
-            .byte_len = slice_byte_end - slice_byte_start.?,
-            .col_start_in_chunk = slice_col_start.?,
-            .width_cols = slice_col_end - slice_col_start.?,
+            .byte_start_in_chunk = slice_ctx.slice_byte_start.?,
+            .byte_len = slice_ctx.slice_byte_end - slice_ctx.slice_byte_start.?,
+            .col_start_in_chunk = slice_ctx.slice_col_start.?,
+            .width_cols = slice_ctx.slice_col_end - slice_ctx.slice_col_start.?,
         };
 
         var append_result = self.appendOrExtendChunkWindow(out_chunks, chunk_window);
@@ -940,6 +980,243 @@ pub const UnifiedTextBufferView = struct {
         }
     }
 
+    fn isCoalescedAsciiRunSpan(span: utf8.GraphemeSpan) bool {
+        if (span.break_after != .none) {
+            return false;
+        }
+
+        if (span.col_width == 0) {
+            return false;
+        }
+
+        return span.byte_len == span.col_width;
+    }
+
+    fn splitCoalescedAsciiRunSpan(span: utf8.GraphemeSpan, take_cols: u32) struct { head: utf8.GraphemeSpan, tail: ?utf8.GraphemeSpan } {
+        const clamped_take = @min(take_cols, @as(u32, span.col_width));
+        const remaining_cols = @as(u32, span.col_width) - clamped_take;
+
+        const head = utf8.GraphemeSpan{
+            .byte_start = span.byte_start,
+            .byte_len = clamped_take,
+            .col_start = span.col_start,
+            .col_width = @intCast(clamped_take),
+            .break_after = if (remaining_cols == 0) span.break_after else .none,
+        };
+
+        if (remaining_cols == 0) {
+            return .{ .head = head, .tail = null };
+        }
+
+        const tail = utf8.GraphemeSpan{
+            .byte_start = span.byte_start + clamped_take,
+            .byte_len = span.byte_len - clamped_take,
+            .col_start = span.col_start + clamped_take,
+            .col_width = @intCast(remaining_cols),
+            .break_after = span.break_after,
+        };
+
+        return .{ .head = head, .tail = tail };
+    }
+
+    fn runWordWrapSpans(comptime Context: type, ctx: *Context, chunk: *const TextChunk, spans: []const utf8.GraphemeSpan) void {
+        var span_idx: usize = 0;
+        var pending_span: ?utf8.GraphemeSpan = null;
+
+        while (true) {
+            const span = blk: {
+                if (pending_span) |p| {
+                    pending_span = null;
+                    break :blk p;
+                }
+
+                if (span_idx >= spans.len) {
+                    break;
+                }
+
+                const next = spans[span_idx];
+                span_idx += 1;
+                break :blk next;
+            };
+
+            const span_width: u32 = span.col_width;
+            const fits = ctx.line_position + span_width <= ctx.wrap_w;
+
+            if (fits and span.break_after == .none) {
+                const available = ctx.wrap_w - ctx.line_position;
+                const max_col_width: u32 = std.math.maxInt(u16);
+                var run_width: u32 = 0;
+                var run_byte_len: u32 = 0;
+                var consumed_current = false;
+
+                while (true) {
+                    const candidate = if (!consumed_current)
+                        span
+                    else if (span_idx < spans.len)
+                        spans[span_idx]
+                    else
+                        break;
+
+                    const candidate_width: u32 = candidate.col_width;
+                    if (candidate.break_after != .none) break;
+                    if (run_width + candidate_width > available) break;
+                    if (run_width + candidate_width > max_col_width) break;
+
+                    run_width += candidate_width;
+                    run_byte_len += candidate.byte_len;
+
+                    if (!consumed_current) {
+                        consumed_current = true;
+                    } else {
+                        span_idx += 1;
+                    }
+
+                    if (run_width == available and available != 0) break;
+                }
+
+                if (run_width > 0) {
+                    ctx.appendSpan(chunk, .{
+                        .byte_start = span.byte_start,
+                        .byte_len = run_byte_len,
+                        .col_start = span.col_start,
+                        .col_width = @intCast(run_width),
+                        .break_after = .none,
+                    }, true);
+                    continue;
+                }
+            }
+
+            if (fits) {
+                ctx.appendSpan(chunk, span, true);
+                continue;
+            }
+
+            if (ctx.line_position == 0) {
+                if (ctx.wrap_w > 0 and isCoalescedAsciiRunSpan(span) and span_width > ctx.wrap_w) {
+                    const split = splitCoalescedAsciiRunSpan(span, ctx.wrap_w);
+                    ctx.appendSpan(chunk, split.head, true);
+                    pending_span = split.tail;
+                    ctx.commitLine();
+                    continue;
+                }
+
+                ctx.appendSpan(chunk, span, true);
+                ctx.commitLine();
+                continue;
+            }
+
+            if (span.break_after == .whitespace) {
+                ctx.commitLine();
+                ctx.dropOverflowSpan(span);
+                continue;
+            }
+
+            if (ctx.rewindToLastWrap()) {
+                pending_span = span;
+                continue;
+            }
+
+            pending_span = span;
+            ctx.commitLine();
+        }
+    }
+
+    fn runCharWrapSpans(comptime Context: type, ctx: *Context, chunk: *const TextChunk, spans: []const utf8.GraphemeSpan) void {
+        var span_idx: usize = 0;
+        var pending_span: ?utf8.GraphemeSpan = null;
+
+        while (true) {
+            const span = blk: {
+                if (pending_span) |p| {
+                    pending_span = null;
+                    break :blk p;
+                }
+
+                if (span_idx >= spans.len) {
+                    break;
+                }
+
+                const next = spans[span_idx];
+                span_idx += 1;
+                break :blk next;
+            };
+
+            const span_width: u32 = span.col_width;
+            const fits = ctx.line_position + span_width <= ctx.wrap_w;
+
+            if (fits) {
+                const available = ctx.wrap_w - ctx.line_position;
+                const max_col_width: u32 = std.math.maxInt(u16);
+                var run_width: u32 = 0;
+                var run_byte_len: u32 = 0;
+                var consumed_current = false;
+
+                while (true) {
+                    const candidate = if (!consumed_current)
+                        span
+                    else if (span_idx < spans.len)
+                        spans[span_idx]
+                    else
+                        break;
+
+                    const candidate_width: u32 = candidate.col_width;
+                    if (run_width + candidate_width > available) break;
+                    if (run_width + candidate_width > max_col_width) break;
+
+                    run_width += candidate_width;
+                    run_byte_len += candidate.byte_len;
+
+                    if (!consumed_current) {
+                        consumed_current = true;
+                    } else {
+                        span_idx += 1;
+                    }
+
+                    if (run_width == available and available != 0) break;
+                }
+
+                if (run_width > 0) {
+                    ctx.appendSpan(chunk, .{
+                        .byte_start = span.byte_start,
+                        .byte_len = run_byte_len,
+                        .col_start = span.col_start,
+                        .col_width = @intCast(run_width),
+                        .break_after = .none,
+                    }, false);
+                    continue;
+                }
+            }
+
+            if (ctx.wrap_w > 0 and isCoalescedAsciiRunSpan(span)) {
+                const available = if (ctx.line_position < ctx.wrap_w) ctx.wrap_w - ctx.line_position else 0;
+                if (available > 0 and span_width > available) {
+                    const split = splitCoalescedAsciiRunSpan(span, available);
+                    ctx.appendSpan(chunk, split.head, false);
+                    pending_span = split.tail;
+                    ctx.commitLine();
+                    continue;
+                }
+            }
+
+            if (ctx.line_position == 0) {
+                if (ctx.wrap_w > 0 and isCoalescedAsciiRunSpan(span) and span_width > ctx.wrap_w) {
+                    const split = splitCoalescedAsciiRunSpan(span, ctx.wrap_w);
+                    ctx.appendSpan(chunk, split.head, false);
+                    pending_span = split.tail;
+                    ctx.commitLine();
+                    continue;
+                }
+
+                ctx.appendSpan(chunk, span, false);
+                ctx.commitLine();
+                continue;
+            }
+
+            pending_span = span;
+            ctx.commitLine();
+        }
+    }
+
     /// Measure dimensions for given width/height WITHOUT modifying virtual lines cache
     /// This is useful for Yoga measure functions that need to know dimensions without committing changes
     /// Special case: width=0 or wrap_mode=.none means "measure intrinsic/max-content width" (no wrapping)
@@ -979,51 +1256,18 @@ pub const UnifiedTextBufferView = struct {
             return result;
         }
 
-        // Reuse arena capacity to avoid allocation overhead during streaming.
         _ = self.measure_arena.reset(.retain_capacity);
         const measure_allocator = self.measure_arena.allocator();
 
-        // Create temporary output structures
-        var temp_virtual_lines = std.ArrayListUnmanaged(VirtualLine){};
-        var temp_line_starts = std.ArrayListUnmanaged(u32){};
-        var temp_line_widths = std.ArrayListUnmanaged(u32){};
-        var temp_line_sources = std.ArrayListUnmanaged(u32){};
-        var temp_line_wrap_indices = std.ArrayListUnmanaged(u32){};
-        var temp_line_first_vline = std.ArrayListUnmanaged(u32){};
-        var temp_line_vline_counts = std.ArrayListUnmanaged(u32){};
-
-        const output = VirtualLineOutput{
-            .virtual_lines = &temp_virtual_lines,
-            .cached_line_starts = &temp_line_starts,
-            .cached_line_widths = &temp_line_widths,
-            .cached_line_sources = &temp_line_sources,
-            .cached_line_wrap_indices = &temp_line_wrap_indices,
-            .cached_line_first_vline = &temp_line_first_vline,
-            .cached_line_vline_counts = &temp_line_vline_counts,
-        };
-
-        // Use width for wrap calculation
-        const wrap_width_for_measure = if (self.wrap_mode != .none and width > 0) width else null;
-
-        // Call generic calculation with temporary structures
-        calculateVirtualLinesGeneric(
+        const wrap_width_for_measure = if (self.wrap_mode != .none and width > 0) width else 0;
+        const use_cached_spans_for_measure = self.cached_measure_result != null and self.cached_measure_epoch != epoch;
+        const result = measureWrappedSpanStateMachine(
             self.text_buffer,
             self.wrap_mode,
             wrap_width_for_measure,
+            use_cached_spans_for_measure,
             measure_allocator,
-            output,
         );
-
-        // Calculate max width from temp structures
-        var max_width: u32 = 0;
-        for (temp_line_widths.items) |w| {
-            max_width = @max(max_width, w);
-        }
-
-        const result = MeasureResult{
-            .line_count = @intCast(temp_virtual_lines.items.len),
-            .max_width = max_width,
-        };
 
         self.cached_measure_width = width;
         self.cached_measure_wrap_mode = self.wrap_mode;
@@ -1032,6 +1276,150 @@ pub const UnifiedTextBufferView = struct {
         self.cached_measure_buffer = self.text_buffer;
 
         return result;
+    }
+
+    fn measureWrappedSpanStateMachine(
+        text_buffer: *UnifiedTextBuffer,
+        wrap_mode: WrapMode,
+        wrap_width: u32,
+        use_cached_spans: bool,
+        allocator: Allocator,
+    ) MeasureResult {
+        if (wrap_mode == .none or wrap_width == 0) {
+            return .{ .line_count = 0, .max_width = 0 };
+        }
+
+        const MetricsContext = struct {
+            text_buffer: *UnifiedTextBuffer,
+            wrap_mode: WrapMode,
+            wrap_w: u32,
+            line_position: u32 = 0,
+            line_count: u32 = 0,
+            max_width: u32 = 0,
+            last_wrap_line_position: ?u32 = null,
+            active_chunk: ?*const TextChunk = null,
+            layout_scratch: tb.LayoutSpanScratch = .{},
+            use_cached_spans: bool,
+
+            fn clearLastWrap(ctx: *@This()) void {
+                ctx.last_wrap_line_position = null;
+            }
+
+            fn rememberLastWrap(ctx: *@This()) void {
+                ctx.last_wrap_line_position = ctx.line_position;
+            }
+
+            fn appendSpan(ctx: *@This(), _: *const TextChunk, span: utf8.GraphemeSpan, track_wrap_breaks: bool) void {
+                const span_width: u32 = span.col_width;
+                ctx.line_position += span_width;
+                if (track_wrap_breaks and span.break_after != .none) {
+                    ctx.rememberLastWrap();
+                }
+            }
+
+            fn commitLine(ctx: *@This()) void {
+                ctx.max_width = @max(ctx.max_width, ctx.line_position);
+                ctx.line_count += 1;
+                ctx.line_position = 0;
+                ctx.clearLastWrap();
+            }
+
+            fn rewindToLastWrap(ctx: *@This()) bool {
+                if (ctx.last_wrap_line_position == null) {
+                    return false;
+                }
+
+                const break_col = ctx.last_wrap_line_position.?;
+                const suffix_width = ctx.line_position - break_col;
+                ctx.max_width = @max(ctx.max_width, break_col);
+                ctx.line_count += 1;
+                ctx.line_position = suffix_width;
+                ctx.clearLastWrap();
+                return true;
+            }
+
+            fn dropOverflowSpan(ctx: *@This(), _: utf8.GraphemeSpan) void {
+                ctx.clearLastWrap();
+            }
+
+            fn consumeWordSpans(ctx_ptr: *anyopaque, spans: []const utf8.GraphemeSpan) anyerror!void {
+                const ctx = @as(*@This(), @ptrCast(@alignCast(ctx_ptr)));
+                const chunk = ctx.active_chunk orelse return;
+                runWordWrapSpans(@This(), ctx, chunk, spans);
+            }
+
+            fn consumeCharSpans(ctx_ptr: *anyopaque, spans: []const utf8.GraphemeSpan) anyerror!void {
+                const ctx = @as(*@This(), @ptrCast(@alignCast(ctx_ptr)));
+                const chunk = ctx.active_chunk orelse return;
+                runCharWrapSpans(@This(), ctx, chunk, spans);
+            }
+
+            fn segment_callback(ctx_ptr: *anyopaque, _line_idx: u32, chunk: *const TextChunk, _chunk_idx_in_line: u32) void {
+                _ = _line_idx;
+                _ = _chunk_idx_in_line;
+
+                const ctx = @as(*@This(), @ptrCast(@alignCast(ctx_ptr)));
+                ctx.active_chunk = chunk;
+                defer ctx.active_chunk = null;
+
+                if (ctx.wrap_mode == .char) {
+                    if (ctx.use_cached_spans) {
+                        ctx.text_buffer.forEachLayoutSpansForWithScratchCached(
+                            chunk,
+                            ctx.text_buffer.getAllocator(),
+                            &ctx.layout_scratch,
+                            ctx,
+                            @This().consumeCharSpans,
+                        ) catch {};
+                    } else {
+                        ctx.text_buffer.forEachLayoutSpansForWithScratchNoBreaks(
+                            chunk,
+                            ctx.text_buffer.getAllocator(),
+                            &ctx.layout_scratch,
+                            ctx,
+                            @This().consumeCharSpans,
+                        ) catch {};
+                    }
+                    return;
+                }
+
+                if (ctx.use_cached_spans) {
+                    ctx.text_buffer.forEachLayoutSpansForWithScratchCached(
+                        chunk,
+                        ctx.text_buffer.getAllocator(),
+                        &ctx.layout_scratch,
+                        ctx,
+                        @This().consumeWordSpans,
+                    ) catch {};
+                } else {
+                    ctx.text_buffer.forEachLayoutSpansForWithScratch(
+                        chunk,
+                        ctx.text_buffer.getAllocator(),
+                        &ctx.layout_scratch,
+                        ctx,
+                        @This().consumeWordSpans,
+                    ) catch {};
+                }
+            }
+
+            fn line_end_callback(ctx_ptr: *anyopaque, line_info: iter_mod.LineInfo) void {
+                const ctx = @as(*@This(), @ptrCast(@alignCast(ctx_ptr)));
+                if (ctx.line_position > 0 or line_info.width_cols == 0) {
+                    ctx.commitLine();
+                }
+            }
+        };
+
+        var ctx = MetricsContext{
+            .text_buffer = text_buffer,
+            .wrap_mode = wrap_mode,
+            .wrap_w = wrap_width,
+            .use_cached_spans = use_cached_spans,
+        };
+        _ = allocator;
+
+        text_buffer.walkLinesAndSegments(&ctx, MetricsContext.segment_callback, MetricsContext.line_end_callback);
+        return .{ .line_count = ctx.line_count, .max_width = ctx.max_width };
     }
 
     /// Generic virtual line calculation that writes to provided output structures
@@ -1054,31 +1442,24 @@ pub const UnifiedTextBufferView = struct {
                     return 0;
                 }
 
-                var seg_idx = line_info.seg_end;
-                while (seg_idx > line_info.seg_start) {
-                    seg_idx -= 1;
-                    const seg = rope.get(seg_idx) orelse break;
-                    if (seg.asText()) |chunk| {
-                        const mem = buffer.memRegistry().get(chunk.mem_id) orelse return 1;
-                        const break_pos: usize = @intCast(chunk.byte_end);
-                        if (break_pos >= mem.len) {
-                            return 1;
-                        }
+                if (line_info.seg_end == 0) {
+                    return 1;
+                }
 
-                        const b0 = mem[break_pos];
-                        if (b0 == '\r') {
-                            if (break_pos + 1 < mem.len and mem[break_pos + 1] == '\n') {
-                                return 2;
-                            }
-                            return 1;
-                        }
+                const prev_seg = rope.get(line_info.seg_end - 1) orelse return 1;
+                const chunk = prev_seg.asText() orelse return 1;
+                const mem = buffer.memRegistry().get(chunk.mem_id) orelse return 1;
+                const break_pos: usize = @intCast(chunk.byte_end);
+                if (break_pos >= mem.len) {
+                    return 1;
+                }
 
-                        if (b0 == '\n') {
-                            return 1;
-                        }
-
-                        return 1;
+                const b0 = mem[break_pos];
+                if (b0 == '\r') {
+                    if (break_pos + 1 < mem.len and mem[break_pos + 1] == '\n') {
+                        return 2;
                     }
+                    return 1;
                 }
 
                 return 1;
@@ -1160,26 +1541,45 @@ pub const UnifiedTextBufferView = struct {
                 line_idx: u32 = 0,
                 line_col_offset: u32 = 0,
                 line_position: u32 = 0,
+                line_needs_merge: bool = false,
                 current_vline: VirtualLine = VirtualLine.init(),
                 current_line_first_vline_idx: u32 = 0,
                 current_line_vline_count: u32 = 0,
 
-                current_chunk_wrap_breaks: std.ArrayListUnmanaged(bool) = .{},
+                active_chunk: ?*const TextChunk = null,
+                layout_scratch: tb.LayoutSpanScratch = .{},
 
-                last_wrap_chunk_count: u32 = 0,
+                last_wrap_active: bool = false,
+                last_wrap_chunk_idx: u32 = 0,
+                last_wrap_chunk_byte_len: u32 = 0,
+                last_wrap_chunk_width_cols: u32 = 0,
                 last_wrap_line_position: u32 = 0,
                 last_wrap_global_col_offset: u32 = 0,
                 last_wrap_global_byte_offset: u32 = 0,
 
                 fn clearLastWrap(wctx: *@This()) void {
-                    wctx.last_wrap_chunk_count = 0;
+                    wctx.last_wrap_active = false;
+                    wctx.last_wrap_chunk_idx = 0;
+                    wctx.last_wrap_chunk_byte_len = 0;
+                    wctx.last_wrap_chunk_width_cols = 0;
                     wctx.last_wrap_line_position = 0;
                     wctx.last_wrap_global_col_offset = 0;
                     wctx.last_wrap_global_byte_offset = 0;
                 }
 
                 fn rememberLastWrap(wctx: *@This()) void {
-                    wctx.last_wrap_chunk_count = @as(u32, @intCast(wctx.current_vline.chunks.items.len));
+                    if (wctx.current_vline.chunks.items.len == 0) {
+                        wctx.clearLastWrap();
+                        return;
+                    }
+
+                    const last_idx = wctx.current_vline.chunks.items.len - 1;
+                    const last_chunk = wctx.current_vline.chunks.items[last_idx];
+
+                    wctx.last_wrap_active = true;
+                    wctx.last_wrap_chunk_idx = @intCast(last_idx);
+                    wctx.last_wrap_chunk_byte_len = last_chunk.byte_len;
+                    wctx.last_wrap_chunk_width_cols = last_chunk.width_cols;
                     wctx.last_wrap_line_position = wctx.line_position;
                     wctx.last_wrap_global_col_offset = wctx.global_col_offset;
                     wctx.last_wrap_global_byte_offset = wctx.global_byte_offset;
@@ -1189,8 +1589,6 @@ pub const UnifiedTextBufferView = struct {
                     if (wctx.current_vline.chunks.items.len == 0) return false;
 
                     const last_idx = wctx.current_vline.chunks.items.len - 1;
-                    if (wctx.current_chunk_wrap_breaks.items[last_idx]) return false;
-
                     const last_chunk = wctx.current_vline.chunks.items[last_idx];
                     if (last_chunk.chunk != chunk) return false;
 
@@ -1198,22 +1596,15 @@ pub const UnifiedTextBufferView = struct {
                         last_chunk.byte_start_in_chunk + last_chunk.byte_len == span.byte_start;
                 }
 
-                fn appendSpanChunk(wctx: *@This(), chunk: *const TextChunk, span: utf8.GraphemeSpan, track_wrap_breaks: bool) void {
+                fn appendSpan(wctx: *@This(), chunk: *const TextChunk, span: utf8.GraphemeSpan, track_wrap_breaks: bool) void {
                     const span_width: u32 = span.col_width;
                     const span_byte_len: u32 = span.byte_len;
-                    const has_wrap_break = track_wrap_breaks and span.break_after != .none;
-                    var should_remember_wrap = false;
 
                     if (wctx.canExtendLastChunk(chunk, span)) {
                         const last_idx = wctx.current_vline.chunks.items.len - 1;
                         wctx.current_vline.chunks.items[last_idx].width_cols += span_width;
                         wctx.current_vline.chunks.items[last_idx].byte_len += span_byte_len;
-                        if (has_wrap_break) {
-                            wctx.current_chunk_wrap_breaks.items[last_idx] = true;
-                            should_remember_wrap = true;
-                        }
                     } else {
-                        const previous_len = wctx.current_vline.chunks.items.len;
                         wctx.current_vline.chunks.append(wctx.allocator, VirtualChunk{
                             .chunk = chunk,
                             .byte_start_in_chunk = span.byte_start,
@@ -1221,28 +1612,18 @@ pub const UnifiedTextBufferView = struct {
                             .col_start_in_chunk = span.col_start,
                             .width_cols = span_width,
                         }) catch {};
-
-                        if (wctx.current_vline.chunks.items.len == previous_len + 1) {
-                            wctx.current_chunk_wrap_breaks.append(wctx.allocator, has_wrap_break) catch {
-                                wctx.current_vline.chunks.items.len = previous_len;
-                            };
-
-                            if (has_wrap_break and wctx.current_chunk_wrap_breaks.items.len == previous_len + 1) {
-                                should_remember_wrap = true;
-                            }
-                        }
                     }
 
                     wctx.global_byte_offset += span_byte_len;
                     wctx.global_col_offset += span_width;
                     wctx.line_position += span_width;
 
-                    if (should_remember_wrap) {
+                    if (track_wrap_breaks and span.break_after != .none) {
                         wctx.rememberLastWrap();
                     }
                 }
 
-                fn consumeDroppedSpan(wctx: *@This(), span: utf8.GraphemeSpan) void {
+                fn dropOverflowSpan(wctx: *@This(), span: utf8.GraphemeSpan) void {
                     wctx.global_byte_offset += span.byte_len;
                     wctx.global_col_offset += span.col_width;
                     wctx.line_col_offset += span.col_width;
@@ -1251,8 +1632,8 @@ pub const UnifiedTextBufferView = struct {
                     wctx.clearLastWrap();
                 }
 
-                fn commitVirtualLine(wctx: *@This()) void {
-                    if (wctx.current_vline.chunks.items.len > 1) {
+                fn commitLine(wctx: *@This()) void {
+                    if (wctx.line_needs_merge and wctx.current_vline.chunks.items.len > 1) {
                         var write_idx: usize = 0;
                         var read_idx: usize = 1;
                         while (read_idx < wctx.current_vline.chunks.items.len) : (read_idx += 1) {
@@ -1298,115 +1679,86 @@ pub const UnifiedTextBufferView = struct {
                     wctx.current_vline = VirtualLine.init();
                     wctx.current_vline.col_offset = wctx.global_col_offset;
                     wctx.line_position = 0;
-
-                    wctx.current_chunk_wrap_breaks.clearRetainingCapacity();
+                    wctx.line_needs_merge = false;
 
                     wctx.clearLastWrap();
                 }
 
                 fn rewindToLastWrap(wctx: *@This()) bool {
-                    if (wctx.last_wrap_chunk_count == 0) {
+                    if (!wctx.last_wrap_active) {
                         return false;
                     }
 
-                    const wrap_chunk_count: usize = @intCast(wctx.last_wrap_chunk_count);
-                    if (wrap_chunk_count > wctx.current_vline.chunks.items.len) {
+                    const wrap_idx: usize = @intCast(wctx.last_wrap_chunk_idx);
+                    if (wrap_idx >= wctx.current_vline.chunks.items.len) {
                         wctx.clearLastWrap();
                         return false;
                     }
 
-                    const suffix_chunks = wctx.current_vline.chunks.items[wrap_chunk_count..];
-                    const suffix_wrap_breaks = wctx.current_chunk_wrap_breaks.items[wrap_chunk_count..];
+                    const saved_byte_len = wctx.last_wrap_chunk_byte_len;
+                    const saved_width_cols = wctx.last_wrap_chunk_width_cols;
 
-                    wctx.current_vline.chunks.items.len = wrap_chunk_count;
-                    wctx.current_chunk_wrap_breaks.items.len = wrap_chunk_count;
+                    var split_tail: ?VirtualChunk = null;
+                    const wrap_chunk = wctx.current_vline.chunks.items[wrap_idx];
+                    if (saved_byte_len < wrap_chunk.byte_len and saved_width_cols < wrap_chunk.width_cols) {
+                        split_tail = .{
+                            .chunk = wrap_chunk.chunk,
+                            .byte_start_in_chunk = wrap_chunk.byte_start_in_chunk + saved_byte_len,
+                            .byte_len = wrap_chunk.byte_len - saved_byte_len,
+                            .col_start_in_chunk = wrap_chunk.col_start_in_chunk + saved_width_cols,
+                            .width_cols = wrap_chunk.width_cols - saved_width_cols,
+                        };
+                    }
+
+                    const suffix_chunks = wctx.current_vline.chunks.items[wrap_idx + 1 ..];
+
+                    wctx.current_vline.chunks.items[wrap_idx].byte_len = saved_byte_len;
+                    wctx.current_vline.chunks.items[wrap_idx].width_cols = saved_width_cols;
+                    wctx.current_vline.chunks.items.len = wrap_idx + 1;
+
+                    if (saved_byte_len == 0 or saved_width_cols == 0) {
+                        wctx.current_vline.chunks.items.len = wrap_idx;
+                    }
+
                     wctx.line_position = wctx.last_wrap_line_position;
                     wctx.global_col_offset = wctx.last_wrap_global_col_offset;
                     wctx.global_byte_offset = wctx.last_wrap_global_byte_offset;
 
-                    wctx.commitVirtualLine();
+                    wctx.commitLine();
+
+                    if (split_tail) |tail_chunk| {
+                        wctx.current_vline.chunks.append(wctx.allocator, tail_chunk) catch {};
+                        wctx.global_byte_offset += tail_chunk.byte_len;
+                        wctx.global_col_offset += tail_chunk.width_cols;
+                        wctx.line_position += tail_chunk.width_cols;
+                        wctx.line_needs_merge = true;
+                    }
 
                     var moved_idx: usize = 0;
                     while (moved_idx < suffix_chunks.len) : (moved_idx += 1) {
                         const moved_chunk = suffix_chunks[moved_idx];
-                        const moved_has_wrap_break = suffix_wrap_breaks[moved_idx];
 
-                        const previous_len = wctx.current_vline.chunks.items.len;
                         wctx.current_vline.chunks.append(wctx.allocator, moved_chunk) catch continue;
-                        wctx.current_chunk_wrap_breaks.append(wctx.allocator, moved_has_wrap_break) catch {
-                            wctx.current_vline.chunks.items.len = previous_len;
-                            continue;
-                        };
 
                         wctx.global_byte_offset += moved_chunk.byte_len;
                         wctx.global_col_offset += moved_chunk.width_cols;
                         wctx.line_position += moved_chunk.width_cols;
-
-                        if (moved_has_wrap_break) {
-                            wctx.rememberLastWrap();
-                        }
+                        wctx.line_needs_merge = true;
                     }
 
                     return true;
                 }
 
-                fn runWordWrap(wctx: *@This(), chunk: *const TextChunk, spans: []const utf8.GraphemeSpan) void {
-                    var span_idx: usize = 0;
-                    while (span_idx < spans.len) {
-                        const span = spans[span_idx];
-                        const span_width: u32 = span.col_width;
-                        const fits = wctx.line_position + span_width <= wctx.wrap_w;
-
-                        if (fits) {
-                            wctx.appendSpanChunk(chunk, span, true);
-                            span_idx += 1;
-                            continue;
-                        }
-
-                        if (wctx.line_position == 0) {
-                            wctx.appendSpanChunk(chunk, span, true);
-                            span_idx += 1;
-                            wctx.commitVirtualLine();
-                            continue;
-                        }
-
-                        if (span.break_after == .whitespace) {
-                            wctx.commitVirtualLine();
-                            wctx.consumeDroppedSpan(span);
-                            span_idx += 1;
-                            continue;
-                        }
-
-                        if (wctx.rewindToLastWrap()) {
-                            continue;
-                        }
-
-                        wctx.commitVirtualLine();
-                    }
+                fn consumeWordSpans(ctx_ptr: *anyopaque, spans: []const utf8.GraphemeSpan) anyerror!void {
+                    const wctx = @as(*@This(), @ptrCast(@alignCast(ctx_ptr)));
+                    const chunk = wctx.active_chunk orelse return;
+                    runWordWrapSpans(@This(), wctx, chunk, spans);
                 }
 
-                fn runCharWrap(wctx: *@This(), chunk: *const TextChunk, spans: []const utf8.GraphemeSpan) void {
-                    var span_idx: usize = 0;
-                    while (span_idx < spans.len) {
-                        const span = spans[span_idx];
-                        const span_width: u32 = span.col_width;
-                        const fits = wctx.line_position + span_width <= wctx.wrap_w;
-
-                        if (fits) {
-                            wctx.appendSpanChunk(chunk, span, false);
-                            span_idx += 1;
-                            continue;
-                        }
-
-                        if (wctx.line_position == 0) {
-                            wctx.appendSpanChunk(chunk, span, false);
-                            span_idx += 1;
-                            wctx.commitVirtualLine();
-                            continue;
-                        }
-
-                        wctx.commitVirtualLine();
-                    }
+                fn consumeCharSpans(ctx_ptr: *anyopaque, spans: []const utf8.GraphemeSpan) anyerror!void {
+                    const wctx = @as(*@This(), @ptrCast(@alignCast(ctx_ptr)));
+                    const chunk = wctx.active_chunk orelse return;
+                    runCharWrapSpans(@This(), wctx, chunk, spans);
                 }
 
                 fn segment_callback(ctx_ptr: *anyopaque, _line_idx: u32, chunk: *const TextChunk, _chunk_idx_in_line: u32) void {
@@ -1414,28 +1766,34 @@ pub const UnifiedTextBufferView = struct {
                     _ = _chunk_idx_in_line;
                     const wctx = @as(*@This(), @ptrCast(@alignCast(ctx_ptr)));
 
-                    const stable_allocator = wctx.text_buffer.getAllocator();
-                    const spans = wctx.text_buffer.getLayoutSpansFor(chunk, stable_allocator) catch {
+                    wctx.active_chunk = chunk;
+                    defer wctx.active_chunk = null;
+
+                    if (wctx.wrap_mode == .char) {
+                        wctx.text_buffer.forEachLayoutSpansForWithScratchNoBreaks(
+                            chunk,
+                            wctx.text_buffer.getAllocator(),
+                            &wctx.layout_scratch,
+                            wctx,
+                            @This().consumeCharSpans,
+                        ) catch {};
                         return;
-                    };
-
-                    const free_windowed_spans = chunk.getLayoutCacheMode() == .windowed;
-                    defer if (free_windowed_spans) {
-                        stable_allocator.free(@constCast(spans));
-                    };
-
-                    if (wctx.wrap_mode == .word) {
-                        wctx.runWordWrap(chunk, spans);
-                    } else {
-                        wctx.runCharWrap(chunk, spans);
                     }
+
+                    wctx.text_buffer.forEachLayoutSpansForWithScratch(
+                        chunk,
+                        wctx.text_buffer.getAllocator(),
+                        &wctx.layout_scratch,
+                        wctx,
+                        @This().consumeWordSpans,
+                    ) catch {};
                 }
 
                 fn line_end_callback(ctx_ptr: *anyopaque, line_info: iter_mod.LineInfo) void {
                     const wctx = @as(*@This(), @ptrCast(@alignCast(ctx_ptr)));
 
                     if (wctx.current_vline.chunks.items.len > 0 or line_info.width_cols == 0) {
-                        wctx.commitVirtualLine();
+                        wctx.commitLine();
                     }
 
                     wctx.output.cached_line_first_vline.append(wctx.allocator, wctx.current_line_first_vline_idx) catch {};
@@ -1447,13 +1805,13 @@ pub const UnifiedTextBufferView = struct {
                     wctx.line_idx += 1;
                     wctx.line_col_offset = 0;
                     wctx.line_position = 0;
+                    wctx.line_needs_merge = false;
                     wctx.line_start_byte_offset = wctx.global_byte_offset;
                     wctx.current_vline = VirtualLine.init();
                     wctx.current_vline.col_offset = wctx.global_col_offset;
                     wctx.current_line_first_vline_idx = @intCast(wctx.output.virtual_lines.items.len);
                     wctx.current_line_vline_count = 0;
 
-                    wctx.current_chunk_wrap_breaks.clearRetainingCapacity();
                     wctx.clearLastWrap();
                 }
             };

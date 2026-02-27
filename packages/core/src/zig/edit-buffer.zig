@@ -684,6 +684,7 @@ pub const EditBuffer = struct {
         var seg_idx = linestart.leaf_index + 1;
         var cols_before: u32 = 0;
         var passed_cursor = false;
+        var layout_scratch = tb.LayoutSpanScratch{};
 
         while (seg_idx < self.tb.rope().count()) : (seg_idx += 1) {
             const seg = self.tb.rope().get(seg_idx) orelse break;
@@ -693,53 +694,87 @@ pub const EditBuffer = struct {
 
                 // Check this chunk if cursor is within it OR if we've already passed the cursor
                 if (cursor.col < next_cols or passed_cursor) {
-                    const stable_allocator = self.tb.getAllocator();
-                    const layout_spans = self.tb.getLayoutSpansFor(chunk, stable_allocator) catch {
-                        cols_before = next_cols;
-                        passed_cursor = true;
-                        continue;
-                    };
-                    const free_windowed_spans = chunk.getLayoutCacheMode() == .windowed;
-                    defer if (free_windowed_spans) {
-                        stable_allocator.free(@constCast(layout_spans));
-                    };
+                    const SearchError = error{FoundBoundary};
                     const chunk_bytes = chunk.getBytes(self.tb.memRegistry());
 
-                    // For chunks containing or after the cursor, find the first break after cursor position
-                    const local_cursor_col = if (cursor.col > cols_before) cursor.col - cols_before else 0;
+                    const SearchState = struct {
+                        tb: *UnifiedTextBuffer,
+                        row: u32,
+                        cursor_offset: u32,
+                        cols_before: u32,
+                        line_width: u32,
+                        local_cursor_col: u32,
+                        passed_cursor: bool,
+                        chunk_bytes: []const u8,
+                        target: ?Cursor = null,
 
-                    for (layout_spans) |span| {
-                        if (!isEditorWordBoundarySpan(span)) {
-                            continue;
-                        }
+                        fn consume(ctx_ptr: *anyopaque, layout_spans: []const utf8.GraphemeSpan) anyerror!void {
+                            const ctx = @as(*@This(), @ptrCast(@alignCast(ctx_ptr)));
 
-                        const break_col = span.col_start;
-                        const break_width: u32 = span.col_width;
+                            for (layout_spans) |span| {
+                                if (!isEditorWordBoundarySpan(span)) {
+                                    continue;
+                                }
 
-                        // If we've passed the cursor chunk, any break is valid
-                        // If we're in the cursor chunk, break must be after cursor position
-                        if (passed_cursor or break_col > local_cursor_col) {
-                            // break_col points at the break grapheme start.
-                            // Adding width moves the cursor to the boundary after it.
-                            const target_col = cols_before + break_col + break_width;
-                            if (target_col <= line_width) {
-                                const offset = iter_mod.coordsToOffset(self.tb.rope(), cursor.row, target_col) orelse cursor.offset;
-                                return .{ .row = cursor.row, .col = target_col, .desired_col = target_col, .offset = offset };
-                            }
-                        }
+                                const break_col = span.col_start;
+                                const break_width: u32 = span.col_width;
 
-                        // A boundary at the cursor can still be the next word step
-                        // for script-transition cases like "a日", "日a", or "丽abc".
-                        // Only script-transition boundaries are accepted at the cursor.
-                        if (!passed_cursor and break_col == local_cursor_col) {
-                            if (isCursorAlignedScriptTransitionBoundary(chunk_bytes, span)) {
-                                const target_col = cols_before + break_col + break_width;
-                                if (target_col <= line_width) {
-                                    const offset = iter_mod.coordsToOffset(self.tb.rope(), cursor.row, target_col) orelse cursor.offset;
-                                    return .{ .row = cursor.row, .col = target_col, .desired_col = target_col, .offset = offset };
+                                if (ctx.passed_cursor or break_col > ctx.local_cursor_col) {
+                                    const target_col = ctx.cols_before + break_col + break_width;
+                                    if (target_col <= ctx.line_width) {
+                                        const offset = iter_mod.coordsToOffset(ctx.tb.rope(), ctx.row, target_col) orelse ctx.cursor_offset;
+                                        ctx.target = .{ .row = ctx.row, .col = target_col, .desired_col = target_col, .offset = offset };
+                                        return SearchError.FoundBoundary;
+                                    }
+                                }
+
+                                if (!ctx.passed_cursor and break_col == ctx.local_cursor_col) {
+                                    if (isCursorAlignedScriptTransitionBoundary(ctx.chunk_bytes, span)) {
+                                        const target_col = ctx.cols_before + break_col + break_width;
+                                        if (target_col <= ctx.line_width) {
+                                            const offset = iter_mod.coordsToOffset(ctx.tb.rope(), ctx.row, target_col) orelse ctx.cursor_offset;
+                                            ctx.target = .{ .row = ctx.row, .col = target_col, .desired_col = target_col, .offset = offset };
+                                            return SearchError.FoundBoundary;
+                                        }
+                                    }
                                 }
                             }
                         }
+                    };
+
+                    const local_cursor_col = if (cursor.col > cols_before) cursor.col - cols_before else 0;
+                    var search_state = SearchState{
+                        .tb = self.tb,
+                        .row = cursor.row,
+                        .cursor_offset = cursor.offset,
+                        .cols_before = cols_before,
+                        .line_width = line_width,
+                        .local_cursor_col = local_cursor_col,
+                        .passed_cursor = passed_cursor,
+                        .chunk_bytes = chunk_bytes,
+                    };
+
+                    var scan_failed = false;
+                    self.tb.forEachLayoutSpansForWithScratch(
+                        chunk,
+                        self.tb.getAllocator(),
+                        &layout_scratch,
+                        &search_state,
+                        SearchState.consume,
+                    ) catch |err| {
+                        if (err != SearchError.FoundBoundary) {
+                            scan_failed = true;
+                        }
+                    };
+
+                    if (search_state.target) |target| {
+                        return target;
+                    }
+
+                    if (scan_failed) {
+                        cols_before = next_cols;
+                        passed_cursor = true;
+                        continue;
                     }
 
                     // Mark that we've processed/passed the cursor position
@@ -768,6 +803,7 @@ pub const EditBuffer = struct {
         var seg_idx = linestart.leaf_index + 1;
         var cols_before: u32 = 0;
         var last_boundary: ?u32 = null;
+        var layout_scratch = tb.LayoutSpanScratch{};
 
         while (seg_idx < self.tb.rope().count()) : (seg_idx += 1) {
             const seg = self.tb.rope().get(seg_idx) orelse break;
@@ -775,28 +811,44 @@ pub const EditBuffer = struct {
             if (seg.asText()) |chunk| {
                 const next_cols = cols_before + chunk.width;
 
-                const stable_allocator = self.tb.getAllocator();
-                const layout_spans = self.tb.getLayoutSpansFor(chunk, stable_allocator) catch {
+                const SearchState = struct {
+                    cols_before: u32,
+                    cursor_col: u32,
+                    last_boundary: *?u32,
+
+                    fn consume(ctx_ptr: *anyopaque, layout_spans: []const utf8.GraphemeSpan) anyerror!void {
+                        const ctx = @as(*@This(), @ptrCast(@alignCast(ctx_ptr)));
+
+                        for (layout_spans) |span| {
+                            if (!isEditorWordBoundarySpan(span)) {
+                                continue;
+                            }
+
+                            const break_width: u32 = span.col_width;
+                            const boundary_col = ctx.cols_before + span.col_start + break_width;
+                            if (boundary_col < ctx.cursor_col) {
+                                ctx.last_boundary.* = boundary_col;
+                            }
+                        }
+                    }
+                };
+
+                var search_state = SearchState{
+                    .cols_before = cols_before,
+                    .cursor_col = cursor.col,
+                    .last_boundary = &last_boundary,
+                };
+
+                self.tb.forEachLayoutSpansForWithScratch(
+                    chunk,
+                    self.tb.getAllocator(),
+                    &layout_scratch,
+                    &search_state,
+                    SearchState.consume,
+                ) catch {
                     cols_before = next_cols;
                     continue;
                 };
-                const free_windowed_spans = chunk.getLayoutCacheMode() == .windowed;
-                defer if (free_windowed_spans) {
-                    stable_allocator.free(@constCast(layout_spans));
-                };
-
-                for (layout_spans) |span| {
-                    if (!isEditorWordBoundarySpan(span)) {
-                        continue;
-                    }
-
-                    const break_width: u32 = span.col_width;
-                    // Use break start + grapheme width to land after the break grapheme.
-                    const boundary_col = cols_before + span.col_start + break_width;
-                    if (boundary_col < cursor.col) {
-                        last_boundary = boundary_col;
-                    }
-                }
 
                 cols_before = next_cols;
                 if (cursor.col <= cols_before) break;

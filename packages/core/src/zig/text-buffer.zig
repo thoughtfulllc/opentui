@@ -27,6 +27,7 @@ pub const Highlight = seg_mod.Highlight;
 pub const StyleSpan = seg_mod.StyleSpan;
 pub const WrapMode = seg_mod.WrapMode;
 pub const ChunkFitResult = seg_mod.ChunkFitResult;
+pub const LayoutSpanScratch = seg_mod.LayoutSpanScratch;
 
 pub const SyntaxStyle = ss.SyntaxStyle;
 
@@ -152,6 +153,50 @@ pub const UnifiedTextBuffer = struct {
         allocator: Allocator,
     ) TextBufferError![]const utf8.GraphemeSpan {
         return chunk.getLayoutSpans(&self.mem_registry, allocator, self.tab_width, self.width_method);
+    }
+
+    pub fn forEachLayoutSpansFor(
+        self: *const Self,
+        chunk: *const TextChunk,
+        allocator: Allocator,
+        ctx: *anyopaque,
+        consumer: seg_mod.TextChunk.SpanConsumer,
+    ) anyerror!void {
+        var scratch = LayoutSpanScratch{};
+        try self.forEachLayoutSpansForWithScratch(chunk, allocator, &scratch, ctx, consumer);
+    }
+
+    pub fn forEachLayoutSpansForWithScratch(
+        self: *const Self,
+        chunk: *const TextChunk,
+        allocator: Allocator,
+        scratch: *LayoutSpanScratch,
+        ctx: *anyopaque,
+        consumer: seg_mod.TextChunk.SpanConsumer,
+    ) anyerror!void {
+        try chunk.forEachLayoutSpans(&self.mem_registry, allocator, self.tab_width, self.width_method, scratch, ctx, consumer);
+    }
+
+    pub fn forEachLayoutSpansForWithScratchCached(
+        self: *const Self,
+        chunk: *const TextChunk,
+        allocator: Allocator,
+        scratch: *LayoutSpanScratch,
+        ctx: *anyopaque,
+        consumer: seg_mod.TextChunk.SpanConsumer,
+    ) anyerror!void {
+        try chunk.forEachLayoutSpansCached(&self.mem_registry, allocator, self.tab_width, self.width_method, scratch, ctx, consumer);
+    }
+
+    pub fn forEachLayoutSpansForWithScratchNoBreaks(
+        self: *const Self,
+        chunk: *const TextChunk,
+        allocator: Allocator,
+        scratch: *LayoutSpanScratch,
+        ctx: *anyopaque,
+        consumer: seg_mod.TextChunk.SpanConsumer,
+    ) anyerror!void {
+        try chunk.forEachLayoutSpansNoBreaks(&self.mem_registry, allocator, self.tab_width, self.width_method, scratch, ctx, consumer);
     }
 
     /// Accessor: walk all lines and segments via callbacks.

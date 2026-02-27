@@ -2666,18 +2666,32 @@ test "TextBufferView truncation - keeps grapheme-aligned byte windows" {
     const vlines = view.getVirtualLines();
     try std.testing.expectEqual(@as(usize, 1), vlines.len);
     try std.testing.expect(vlines[0].is_truncated);
-    try std.testing.expectEqual(@as(usize, 3), vlines[0].chunks.items.len);
+    try std.testing.expect(vlines[0].chunks.items.len >= 2);
 
-    const suffix_chunk = vlines[0].chunks.items[2];
-    const chunk_bytes = suffix_chunk.chunk.getBytes(tb.memRegistry());
-    const suffix_start: usize = @intCast(suffix_chunk.byte_start_in_chunk);
-    const suffix_end: usize = @intCast(suffix_chunk.byte_start_in_chunk + suffix_chunk.byte_len);
-    const suffix_bytes = chunk_bytes[suffix_start..suffix_end];
+    var found_ellipsis = false;
+    var found_suffix = false;
 
-    try std.testing.expect(std.unicode.utf8ValidateSlice(suffix_bytes));
-    try std.testing.expectEqualStrings("FG", suffix_bytes);
-    try std.testing.expectEqual(@as(u32, 7), suffix_chunk.col_start_in_chunk);
-    try std.testing.expectEqual(@as(u32, 2), suffix_chunk.width_cols);
+    for (vlines[0].chunks.items) |chunk_window| {
+        const chunk_bytes = chunk_window.chunk.getBytes(tb.memRegistry());
+        const start_idx: usize = @intCast(chunk_window.byte_start_in_chunk);
+        const end_idx: usize = @intCast(chunk_window.byte_start_in_chunk + chunk_window.byte_len);
+        const bytes = chunk_bytes[start_idx..end_idx];
+
+        if (std.mem.eql(u8, bytes, "...")) {
+            found_ellipsis = true;
+            continue;
+        }
+
+        if (std.mem.eql(u8, bytes, "FG")) {
+            found_suffix = true;
+            try std.testing.expect(std.unicode.utf8ValidateSlice(bytes));
+            try std.testing.expectEqual(@as(u32, 7), chunk_window.col_start_in_chunk);
+            try std.testing.expectEqual(@as(u32, 2), chunk_window.width_cols);
+        }
+    }
+
+    try std.testing.expect(found_ellipsis);
+    try std.testing.expect(found_suffix);
     try std.testing.expectEqual(@as(u32, 7), vlines[0].truncation_suffix_start);
 }
 
@@ -3636,6 +3650,61 @@ test "2 MiB ASCII line info uses windowed layout mode" {
         try std.testing.expect(info.line_start_bytes.len > 0);
         try std.testing.expectEqual(info.line_start_bytes.len, info.line_width_cols.len);
     }
+
+    const first_chunk_opt = getFirstTextChunk(tb);
+    try std.testing.expect(first_chunk_opt != null);
+    const first_chunk = first_chunk_opt.?;
+    try std.testing.expectEqual(seg_mod.LayoutCacheMode.windowed, first_chunk.getLayoutCacheMode());
+}
+
+test "large mixed single-line wrap memory stays bounded across repeated rewraps" {
+    const pool = gp.initGlobalPool(std.testing.allocator);
+    defer gp.deinitGlobalPool();
+    const link_pool = link.initGlobalLinkPool(std.testing.allocator);
+    defer link.deinitGlobalLinkPool();
+
+    seg_mod.setLayoutCacheModeOverrideForTesting(null);
+
+    var tb = try TextBuffer.init(std.testing.allocator, pool, link_pool, .wcwidth);
+    defer tb.deinit();
+
+    var view = try TextBufferView.init(std.testing.allocator, tb);
+    defer view.deinit();
+
+    var text_builder: std.ArrayListUnmanaged(u8) = .{};
+    defer text_builder.deinit(std.testing.allocator);
+
+    const pattern = "alpha 世界 beta 👋🏻 gamma\tdelta ";
+    while (text_builder.items.len + pattern.len <= 1 * 1024 * 1024) {
+        try text_builder.appendSlice(std.testing.allocator, pattern);
+    }
+
+    try tb.setText(text_builder.items);
+    view.setWrapMode(.word);
+    view.setWrapWidth(80);
+
+    _ = view.getCachedLineInfo();
+
+    const baseline_tb = tb.getArenaAllocatedBytes();
+    const baseline_view = view.getArenaAllocatedBytes();
+
+    var iteration: usize = 0;
+    while (iteration < 10) : (iteration += 1) {
+        view.setWrapWidth(if (iteration % 2 == 0) 79 else 81);
+        const info = view.getCachedLineInfo();
+        try std.testing.expect(info.line_start_bytes.len > 0);
+        try std.testing.expectEqual(info.line_start_bytes.len, info.line_width_cols.len);
+    }
+
+    const final_tb = tb.getArenaAllocatedBytes();
+    const final_view = view.getArenaAllocatedBytes();
+
+    const tb_growth = if (final_tb >= baseline_tb) final_tb - baseline_tb else 0;
+    const view_growth = if (final_view >= baseline_view) final_view - baseline_view else 0;
+
+    try std.testing.expect(tb_growth < 4 * 1024 * 1024);
+    try std.testing.expect(view_growth < 4 * 1024 * 1024);
+    try std.testing.expect(final_tb < 64 * 1024 * 1024);
 
     const first_chunk_opt = getFirstTextChunk(tb);
     try std.testing.expect(first_chunk_opt != null);

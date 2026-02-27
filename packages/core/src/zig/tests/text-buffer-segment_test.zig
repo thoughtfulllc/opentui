@@ -395,7 +395,7 @@ test "TextChunk ASCII threshold selects full-cache vs windowed" {
     try testing.expect(small_chunk.layout_cache_valid);
     try testing.expect(small_chunk.layout_spans != null);
 
-    const large_text = try testing.allocator.alloc(u8, 300);
+    const large_text = try testing.allocator.alloc(u8, 1300);
     defer testing.allocator.free(large_text);
     @memset(large_text, 'a');
 

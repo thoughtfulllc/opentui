@@ -163,12 +163,14 @@ pub fn main() !void {
     for (benchmarks) |bench| {
         if (!matchesFilter(bench.name, filter)) continue;
 
-        // Use arena for results only - benchmark modules manage their own temp memory
-        var results_arena = std.heap.ArenaAllocator.init(allocator);
-        defer results_arena.deinit();
+        // Run each benchmark category with a reclaiming allocator scope so
+        // temporary benchmark allocations cannot accumulate across categories.
+        var bench_gpa = std.heap.GeneralPurposeAllocator(.{ .safety = false }){};
+        defer _ = bench_gpa.deinit();
+        const bench_allocator = bench_gpa.allocator();
 
         const start_time = std.time.nanoTimestamp();
-        const results = try bench.run(results_arena.allocator(), show_mem, bench_filter);
+        const results = try bench.run(bench_allocator, show_mem, bench_filter);
         const end_time = std.time.nanoTimestamp();
         const elapsed_ns = end_time - start_time;
 

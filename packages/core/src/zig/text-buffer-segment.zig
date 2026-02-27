@@ -37,12 +37,21 @@ pub const LayoutCacheMode = enum {
     windowed,
 };
 
+pub const LayoutSpanScratch = struct {
+    slots: [LAYOUT_WINDOW_SLOTS][LAYOUT_WINDOW_MAX_SPANS]utf8.GraphemeSpan = undefined,
+    lens: [LAYOUT_WINDOW_SLOTS]usize = [_]usize{0} ** LAYOUT_WINDOW_SLOTS,
+
+    pub fn reset(self: *LayoutSpanScratch) void {
+        self.lens = [_]usize{0} ** LAYOUT_WINDOW_SLOTS;
+    }
+};
+
 pub const LAYOUT_FULL_CACHE_MAX_CHUNK_BYTES: u32 = 8 * 1024;
 pub const LAYOUT_FULL_CACHE_MAX_SPANS: u32 = 2048;
-pub const LAYOUT_ASCII_FULL_CACHE_MAX_CHUNK_BYTES: u32 = 256;
+pub const LAYOUT_ASCII_FULL_CACHE_MAX_CHUNK_BYTES: u32 = 1024;
 
 pub const LAYOUT_WINDOW_BYTES: u32 = 2 * 1024;
-pub const LAYOUT_WINDOW_MAX_SPANS: u32 = 512;
+pub const LAYOUT_WINDOW_MAX_SPANS: u32 = 1024;
 pub const LAYOUT_WINDOW_SLOTS: u8 = 2;
 
 threadlocal var layout_cache_mode_override_for_testing: ?LayoutCacheMode = null;
@@ -69,7 +78,7 @@ pub const TextChunk = struct {
         pub const ASCII_ONLY: u8 = 0b00000001; // Printable ASCII only (32..126).
     };
 
-    const SpanConsumer = *const fn (ctx: *anyopaque, spans: []const utf8.GraphemeSpan) TextBufferError!void;
+    pub const SpanConsumer = *const fn (ctx: *anyopaque, spans: []const utf8.GraphemeSpan) anyerror!void;
 
     pub fn isAsciiOnly(self: *const TextChunk) bool {
         return (self.flags & Flags.ASCII_ONLY) != 0;
@@ -208,156 +217,250 @@ pub const TextChunk = struct {
     fn withLayoutSpans(
         self: *TextChunk,
         mem_registry: *const MemRegistry,
-        allocator: Allocator,
+        cache_allocator: Allocator,
         tabwidth: u8,
         width_method: utf8.WidthMethod,
+        scratch: *LayoutSpanScratch,
         ctx: *anyopaque,
         consumer: SpanConsumer,
-    ) TextBufferError!void {
-        try self.ensureLayoutCacheState(mem_registry, allocator, tabwidth, width_method);
+    ) anyerror!void {
+        _ = cache_allocator;
+
+        if (layout_cache_mode_override_for_testing) |forced_mode| {
+            self.layout_cache_tab_width = tabwidth;
+            self.layout_cache_width_method = width_method;
+            if (forced_mode == .windowed) {
+                self.clearLayoutCache();
+            }
+            self.layout_cache_mode = forced_mode;
+        } else {
+            self.layout_cache_tab_width = tabwidth;
+            self.layout_cache_width_method = width_method;
+
+            if (!self.layout_cache_valid) {
+                const byte_len: u32 = @intCast(self.getBytes(mem_registry).len);
+                if (self.isAsciiOnly()) {
+                    self.layout_cache_mode = if (byte_len <= LAYOUT_ASCII_FULL_CACHE_MAX_CHUNK_BYTES) .full_cache else .windowed;
+                } else {
+                    self.layout_cache_mode = if (byte_len <= LAYOUT_FULL_CACHE_MAX_CHUNK_BYTES) .full_cache else .windowed;
+                }
+            }
+        }
+
+        if (self.hasLayoutCacheFor(tabwidth, width_method)) {
+            const spans = self.layout_spans orelse &[_]utf8.GraphemeSpan{};
+            try consumer(ctx, spans);
+            return;
+        }
+
+        try self.iterateWindowedSpans(mem_registry, tabwidth, width_method, scratch, ctx, consumer);
+    }
+
+    fn withLayoutSpansNoBreaks(
+        self: *TextChunk,
+        mem_registry: *const MemRegistry,
+        cache_allocator: Allocator,
+        tabwidth: u8,
+        width_method: utf8.WidthMethod,
+        scratch: *LayoutSpanScratch,
+        ctx: *anyopaque,
+        consumer: SpanConsumer,
+    ) anyerror!void {
+        _ = cache_allocator;
+
+        if (layout_cache_mode_override_for_testing) |forced_mode| {
+            self.layout_cache_tab_width = tabwidth;
+            self.layout_cache_width_method = width_method;
+            if (forced_mode == .windowed) {
+                self.clearLayoutCache();
+            }
+            self.layout_cache_mode = forced_mode;
+        } else {
+            self.layout_cache_tab_width = tabwidth;
+            self.layout_cache_width_method = width_method;
+
+            if (!self.layout_cache_valid) {
+                const byte_len: u32 = @intCast(self.getBytes(mem_registry).len);
+                if (self.isAsciiOnly()) {
+                    self.layout_cache_mode = if (byte_len <= LAYOUT_ASCII_FULL_CACHE_MAX_CHUNK_BYTES) .full_cache else .windowed;
+                } else {
+                    self.layout_cache_mode = if (byte_len <= LAYOUT_FULL_CACHE_MAX_CHUNK_BYTES) .full_cache else .windowed;
+                }
+            }
+        }
+
+        if (self.hasLayoutCacheFor(tabwidth, width_method)) {
+            const spans = self.layout_spans orelse &[_]utf8.GraphemeSpan{};
+            try consumer(ctx, spans);
+            return;
+        }
+
+        try self.iterateWindowedSpansNoBreaks(mem_registry, tabwidth, width_method, scratch, ctx, consumer);
+    }
+
+    fn withLayoutSpansCached(
+        self: *TextChunk,
+        mem_registry: *const MemRegistry,
+        cache_allocator: Allocator,
+        tabwidth: u8,
+        width_method: utf8.WidthMethod,
+        scratch: *LayoutSpanScratch,
+        ctx: *anyopaque,
+        consumer: SpanConsumer,
+    ) anyerror!void {
+        try self.ensureLayoutCacheState(mem_registry, cache_allocator, tabwidth, width_method);
 
         if (self.layout_cache_mode == .full_cache) {
             const spans = self.layout_spans orelse &[_]utf8.GraphemeSpan{};
-            return consumer(ctx, spans);
+            try consumer(ctx, spans);
+            return;
         }
 
-        return self.iterateWindowedSpans(mem_registry, allocator, tabwidth, width_method, ctx, consumer);
+        try self.iterateWindowedSpans(mem_registry, tabwidth, width_method, scratch, ctx, consumer);
     }
 
     fn iterateWindowedSpans(
         self: *TextChunk,
         mem_registry: *const MemRegistry,
-        allocator: Allocator,
         tabwidth: u8,
         width_method: utf8.WidthMethod,
+        scratch: *LayoutSpanScratch,
         ctx: *anyopaque,
         consumer: SpanConsumer,
-    ) TextBufferError!void {
+    ) anyerror!void {
+        return self.iterateWindowedSpansInternal(mem_registry, tabwidth, width_method, scratch, ctx, consumer, true);
+    }
+
+    fn iterateWindowedSpansNoBreaks(
+        self: *TextChunk,
+        mem_registry: *const MemRegistry,
+        tabwidth: u8,
+        width_method: utf8.WidthMethod,
+        scratch: *LayoutSpanScratch,
+        ctx: *anyopaque,
+        consumer: SpanConsumer,
+    ) anyerror!void {
+        return self.iterateWindowedSpansInternal(mem_registry, tabwidth, width_method, scratch, ctx, consumer, false);
+    }
+
+    fn iterateWindowedSpansInternal(
+        self: *TextChunk,
+        mem_registry: *const MemRegistry,
+        tabwidth: u8,
+        width_method: utf8.WidthMethod,
+        scratch: *LayoutSpanScratch,
+        ctx: *anyopaque,
+        consumer: SpanConsumer,
+        track_breaks: bool,
+    ) anyerror!void {
         const chunk_bytes = self.getBytes(mem_registry);
         if (chunk_bytes.len == 0) {
             return consumer(ctx, &[_]utf8.GraphemeSpan{});
         }
 
-        const slot_count = @as(usize, LAYOUT_WINDOW_SLOTS);
-        var slots: [slot_count]utf8.LayoutScanResult = undefined;
-        for (0..slot_count) |idx| {
-            slots[idx] = utf8.LayoutScanResult.init(allocator);
-        }
-        defer {
-            for (0..slot_count) |idx| {
-                slots[idx].deinit();
-            }
-        }
+        scratch.reset();
 
+        const slot_count: usize = @intCast(LAYOUT_WINDOW_SLOTS);
         var slot_idx: usize = 0;
         var previous_slot_idx: usize = 0;
         var has_previous = false;
-        var window_start: usize = 0;
-        var col_base: u32 = 0;
+        var cursor = utf8.LayoutScanCursor{};
+        const col_limit: u32 = self.width;
 
-        while (window_start < chunk_bytes.len) {
-            const current_slot = &slots[slot_idx];
-            const window_end = try self.scanWindowIntoSlot(chunk_bytes, window_start, tabwidth, width_method, current_slot);
+        if (!track_breaks) {
+            while (true) {
+                const batch = try utf8.scanLayoutNextBatchNoBreaks(
+                    chunk_bytes,
+                    tabwidth,
+                    self.isAsciiOnly(),
+                    width_method,
+                    &cursor,
+                    scratch.slots[0][0..],
+                );
 
-            for (current_slot.spans.items) |*span| {
-                span.byte_start += @intCast(window_start);
-                span.col_start += col_base;
+                var emit_len = batch.spans.len;
+                var reached_col_limit = false;
+                if (cursor.col_offset > col_limit) {
+                    for (batch.spans, 0..) |span, idx| {
+                        const span_end_col = span.col_start + span.col_width;
+                        if (span_end_col > col_limit) {
+                            emit_len = idx;
+                            reached_col_limit = true;
+                            break;
+                        }
+                    }
+                }
+
+                if (emit_len > 0) {
+                    try consumer(ctx, scratch.slots[0][0..emit_len]);
+                }
+
+                if (batch.done or reached_col_limit) {
+                    break;
+                }
+
+                if (batch.spans.len == 0) {
+                    return error.InvalidDimensions;
+                }
             }
-            col_base += current_slot.total_cols;
+
+            return;
+        }
+
+        while (true) {
+            const batch = try utf8.scanLayoutNextBatch(
+                chunk_bytes,
+                tabwidth,
+                self.isAsciiOnly(),
+                width_method,
+                &cursor,
+                scratch.slots[slot_idx][0..],
+            );
+
+            var emit_len = batch.spans.len;
+            var reached_col_limit = false;
+            if (cursor.col_offset > col_limit) {
+                for (batch.spans, 0..) |span, idx| {
+                    const span_end_col = span.col_start + span.col_width;
+                    if (span_end_col > col_limit) {
+                        emit_len = idx;
+                        reached_col_limit = true;
+                        break;
+                    }
+                }
+            }
+
+            scratch.lens[slot_idx] = emit_len;
 
             if (has_previous) {
-                patchWindowBoundaryScriptTransition(chunk_bytes, &slots[previous_slot_idx].spans, current_slot.spans.items);
-                try consumer(ctx, slots[previous_slot_idx].spans.items);
+                const previous_spans = scratch.slots[previous_slot_idx][0..scratch.lens[previous_slot_idx]];
+                const current_spans = scratch.slots[slot_idx][0..scratch.lens[slot_idx]];
+                patchWindowBoundaryScriptTransition(chunk_bytes, previous_spans, current_spans);
+                if (previous_spans.len > 0) {
+                    try consumer(ctx, previous_spans);
+                }
             } else {
                 has_previous = true;
             }
 
             previous_slot_idx = slot_idx;
             slot_idx = (slot_idx + 1) % slot_count;
-            window_start = window_end;
-        }
 
-        if (has_previous) {
-            try consumer(ctx, slots[previous_slot_idx].spans.items);
-        }
-    }
+            if (batch.done or reached_col_limit) {
+                break;
+            }
 
-    fn scanWindowIntoSlot(
-        self: *const TextChunk,
-        chunk_bytes: []const u8,
-        window_start: usize,
-        tabwidth: u8,
-        width_method: utf8.WidthMethod,
-        slot: *utf8.LayoutScanResult,
-    ) TextBufferError!usize {
-        var window_end = self.selectInitialWindowEnd(chunk_bytes, window_start);
-        const max_spans: usize = @intCast(LAYOUT_WINDOW_MAX_SPANS);
-
-        try utf8.scanLayout(chunk_bytes[window_start..window_end], tabwidth, self.isAsciiOnly(), width_method, slot);
-
-        var narrowed_end = window_end;
-        if (slot.spans.items.len > max_spans) {
-            const split_rel: usize = @intCast(slot.spans.items[max_spans].byte_start);
-            narrowed_end = window_start + split_rel;
-        } else if (!self.isAsciiOnly() and window_end < chunk_bytes.len and slot.spans.items.len > 0) {
-            const tail_rel: usize = @intCast(slot.spans.items[slot.spans.items.len - 1].byte_start);
-            const tail_abs = window_start + tail_rel;
-            if (tail_abs > window_start) {
-                narrowed_end = tail_abs;
+            if (batch.spans.len == 0) {
+                return error.InvalidDimensions;
             }
         }
 
-        if (narrowed_end <= window_start) {
-            narrowed_end = advanceOneCodepoint(chunk_bytes, window_start);
+        if (has_previous) {
+            const previous_spans = scratch.slots[previous_slot_idx][0..scratch.lens[previous_slot_idx]];
+            if (previous_spans.len > 0) {
+                try consumer(ctx, previous_spans);
+            }
         }
-        if (narrowed_end >= window_end) {
-            return window_end;
-        }
-
-        window_end = narrowed_end;
-        try utf8.scanLayout(chunk_bytes[window_start..window_end], tabwidth, self.isAsciiOnly(), width_method, slot);
-        return window_end;
-    }
-
-    fn selectInitialWindowEnd(self: *const TextChunk, chunk_bytes: []const u8, window_start: usize) usize {
-        if (self.isAsciiOnly()) {
-            const ascii_window_bytes: usize = @intCast(@min(LAYOUT_WINDOW_BYTES, LAYOUT_WINDOW_MAX_SPANS));
-            return @min(chunk_bytes.len, window_start + ascii_window_bytes);
-        }
-
-        const max_window_bytes: usize = @intCast(LAYOUT_WINDOW_BYTES);
-        const raw_end = @min(chunk_bytes.len, window_start + max_window_bytes);
-        if (raw_end >= chunk_bytes.len) {
-            return chunk_bytes.len;
-        }
-
-        const window_end = alignWindowEndToUtf8Boundary(chunk_bytes, window_start, raw_end);
-        if (window_end <= window_start) {
-            return advanceOneCodepoint(chunk_bytes, window_start);
-        }
-        return window_end;
-    }
-
-    fn alignWindowEndToUtf8Boundary(chunk_bytes: []const u8, window_start: usize, candidate_end: usize) usize {
-        if (candidate_end >= chunk_bytes.len) {
-            return chunk_bytes.len;
-        }
-
-        var end = candidate_end;
-        while (end > window_start and (chunk_bytes[end] & 0xC0) == 0x80) {
-            end -= 1;
-        }
-        return end;
-    }
-
-    fn advanceOneCodepoint(chunk_bytes: []const u8, start: usize) usize {
-        if (start >= chunk_bytes.len) {
-            return chunk_bytes.len;
-        }
-
-        const dec = utf8.decodeUtf8Unchecked(chunk_bytes, start);
-        const cp_len: usize = @max(@as(usize, dec.len), 1);
-        return @min(start + cp_len, chunk_bytes.len);
     }
 
     fn firstCodepointInSpan(chunk_bytes: []const u8, span: utf8.GraphemeSpan) ?u21 {
@@ -381,14 +484,14 @@ pub const TextChunk = struct {
 
     fn patchWindowBoundaryScriptTransition(
         chunk_bytes: []const u8,
-        previous_spans: *std.ArrayListUnmanaged(utf8.GraphemeSpan),
+        previous_spans: []utf8.GraphemeSpan,
         current_spans: []const utf8.GraphemeSpan,
     ) void {
-        if (previous_spans.items.len == 0 or current_spans.len == 0) {
+        if (previous_spans.len == 0 or current_spans.len == 0) {
             return;
         }
 
-        var previous_last = &previous_spans.items[previous_spans.items.len - 1];
+        var previous_last = &previous_spans[previous_spans.len - 1];
         if (previous_last.break_after != .none) {
             return;
         }
@@ -403,6 +506,52 @@ pub const TextChunk = struct {
 
     pub fn getLayoutCacheMode(self: *const TextChunk) LayoutCacheMode {
         return self.layout_cache_mode;
+    }
+
+    /// Streams canonical layout spans to `consumer`.
+    ///
+    /// - full_cache mode: emits the borrowed cached slice once.
+    /// - windowed mode: emits bounded windows in scan order.
+    pub fn forEachLayoutSpans(
+        self: *const TextChunk,
+        mem_registry: *const MemRegistry,
+        allocator: Allocator,
+        tabwidth: u8,
+        width_method: utf8.WidthMethod,
+        scratch: *LayoutSpanScratch,
+        ctx: *anyopaque,
+        consumer: SpanConsumer,
+    ) anyerror!void {
+        const mut_self = @constCast(self);
+        try mut_self.withLayoutSpans(mem_registry, allocator, tabwidth, width_method, scratch, ctx, consumer);
+    }
+
+    pub fn forEachLayoutSpansNoBreaks(
+        self: *const TextChunk,
+        mem_registry: *const MemRegistry,
+        allocator: Allocator,
+        tabwidth: u8,
+        width_method: utf8.WidthMethod,
+        scratch: *LayoutSpanScratch,
+        ctx: *anyopaque,
+        consumer: SpanConsumer,
+    ) anyerror!void {
+        const mut_self = @constCast(self);
+        try mut_self.withLayoutSpansNoBreaks(mem_registry, allocator, tabwidth, width_method, scratch, ctx, consumer);
+    }
+
+    pub fn forEachLayoutSpansCached(
+        self: *const TextChunk,
+        mem_registry: *const MemRegistry,
+        allocator: Allocator,
+        tabwidth: u8,
+        width_method: utf8.WidthMethod,
+        scratch: *LayoutSpanScratch,
+        ctx: *anyopaque,
+        consumer: SpanConsumer,
+    ) anyerror!void {
+        const mut_self = @constCast(self);
+        try mut_self.withLayoutSpansCached(mem_registry, allocator, tabwidth, width_method, scratch, ctx, consumer);
     }
 
     /// Returns canonical layout spans.
@@ -439,7 +588,17 @@ pub const TextChunk = struct {
             .allocator = allocator,
             .spans = &spans,
         };
-        try mut_self.iterateWindowedSpans(mem_registry, allocator, tabwidth, width_method, &ctx, Context.consume);
+        var scratch = LayoutSpanScratch{};
+        mut_self.iterateWindowedSpans(mem_registry, tabwidth, width_method, &scratch, &ctx, Context.consume) catch |err| {
+            return switch (err) {
+                error.OutOfMemory => TextBufferError.OutOfMemory,
+                error.InvalidDimensions => TextBufferError.InvalidDimensions,
+                error.InvalidIndex => TextBufferError.InvalidIndex,
+                error.InvalidId => TextBufferError.InvalidId,
+                error.InvalidMemId => TextBufferError.InvalidMemId,
+                else => TextBufferError.OutOfMemory,
+            };
+        };
 
         return try spans.toOwnedSlice(allocator);
     }
