@@ -722,6 +722,22 @@ link_packages() {
     validate_link_source "$solid_path" "Solid source"
   fi
 
+  step "Cleaning stale Bun cache entries..."
+  # Remove leftover cache entries from previous workspace layouts (wt/yoga,
+  # simonklee/yoga, etc.) that create extra resolution paths and cause
+  # Bun.build() to bundle duplicate module copies.
+  local cache_base="$opencode_root/node_modules/.bun"
+  local stale_dir
+  for stale_dir in "$cache_base"/*wt+yoga* "$cache_base"/*simonklee*; do
+    [[ -e "$stale_dir" ]] || continue
+    if $flag_dry_run; then
+      printf "Would remove stale cache: %s\n" "${stale_dir##*/}" >&2
+    else
+      rm -rf "$stale_dir"
+      info "Removed stale cache: ${stale_dir##*/}"
+    fi
+  done
+
   step "Linking @opentui/core (${link_mode})..."
   link_in_bun_cache "@opentui+core@*" "@opentui/core" "$core_path"
 
@@ -740,6 +756,104 @@ link_packages() {
   link_peer_dep "yoga-layout" "$opentui_root"
   link_peer_dep "web-tree-sitter" "$opentui_root"
   link_peer_dep "solid-js" "$opentui_root"
+
+  # Deduplicate shared dependencies: Bun.build() deduplicates by filesystem
+  # *path*, not file identity.  When @opentui/solid/dist does
+  # `import ... from "solid-js"`, Bun resolves it relative to that file — walking
+  # up into opentui/packages/solid/node_modules/solid-js (a symlink into the
+  # .bun cache).  Meanwhile opencode's own code resolves solid-js through
+  # opencode/node_modules/.bun/solid-js@*/  which link_peer_dep pointed at the
+  # hoisted copy (opentui/node_modules/solid-js).  Same files, different paths →
+  # two bundled copies → broken instanceof, broken Solid context, broken Yoga
+  # Node identity.
+  #
+  # Fix: for each shared dependency, find the canonical source that link_peer_dep
+  # used (hoisted or sub-package) and repoint every other copy in opentui's
+  # packages/*/node_modules/ to that same path.
+  # Repoint ALL opentui workspace symlinks for @opentui/* packages to dist.
+  #
+  # Problem: opentui has workspace symlinks like:
+  #   opentui/node_modules/@opentui/core -> ../../packages/core (source)
+  #   opentui/packages/solid/node_modules/@opentui/core -> ../../../core (source)
+  #
+  # When @opentui/solid/dist imports "@opentui/core", Bun resolves relative to
+  # the file's real location on disk (packages/solid/dist/), walking up to
+  # packages/solid/node_modules/@opentui/core — hitting SOURCE.  This causes
+  # yoga-layout to be bundled twice: once inlined in the dist chunk (correct)
+  # and once from source (which imports yoga as a separate module).
+  #
+  # Fix: find and repoint every @opentui/* workspace symlink that targets a
+  # source directory to its dist directory instead.
+  if [[ "$link_mode" == "dist" ]]; then
+    step "Repointing opentui workspace symlinks to dist..."
+    local ws_link ws_real ws_dist ws_orig ws_count=0
+    while IFS= read -r -d '' ws_link; do
+      [[ -L "$ws_link" ]] || continue
+      ws_orig="$(readlink "$ws_link")"
+      # Resolve to absolute path to find the corresponding dist directory.
+      ws_real="$(readlink -f "$ws_link")"
+      # Skip if already pointing at a dist directory.
+      [[ "$ws_real" != */dist ]] || continue
+      # Only repoint if there is a dist directory to point to.
+      ws_dist="$ws_real/dist"
+      [[ -d "$ws_dist" ]] || continue
+      if $flag_dry_run; then
+        printf "Would repoint workspace %s -> %s (was %s)\n" "$ws_link" "$ws_dist" "$ws_orig" >&2
+      else
+        rm -f "$ws_link"
+        ln -s "$ws_dist" "$ws_link"
+        info "Repointed workspace $(basename "$ws_link") -> dist (was $ws_orig)"
+        # Capture in array for cleanup (eval needed for dynamic function names).
+        local _ws_idx=$ws_count
+        eval "restore_ws_${_ws_idx}() { rm -f '$ws_link'; ln -s '$ws_orig' '$ws_link'; info 'Restored workspace symlink: $ws_link -> $ws_orig'; }"
+        cleanup_register "restore_ws_${_ws_idx}"
+      fi
+      ws_count=$((ws_count + 1))
+    done < <(find "$opentui_root" -maxdepth 5 -path "*/node_modules/@opentui/*" -print0 2>/dev/null |
+      grep -z -v '/\.bun/' | grep -z -v '/dist/')
+  fi
+
+  step "Deduplicating shared dependencies..."
+  local dep_name
+  for dep_name in solid-js yoga-layout web-tree-sitter; do
+    # Determine the canonical source: prefer the hoisted location, fall back to
+    # the first sub-package copy (same logic as link_peer_dep).
+    local canonical=""
+    if [[ -d "$opentui_root/node_modules/$dep_name" ]]; then
+      canonical="$opentui_root/node_modules/$dep_name"
+    else
+      local pkg_dir
+      for pkg_dir in "$opentui_root"/packages/*/node_modules/"$dep_name"; do
+        if [[ -d "$pkg_dir" ]]; then
+          canonical="$pkg_dir"
+          break
+        fi
+      done
+    fi
+
+    if [[ -z "$canonical" ]]; then
+      info "$dep_name: not found in opentui, skipping dedup"
+      continue
+    fi
+
+    local canonical_real
+    canonical_real="$(readlink -f "$canonical")"
+
+    # Repoint every sub-package copy that doesn't already resolve to the
+    # canonical real path.
+    while IFS= read -r -d '' dep_internal; do
+      [[ -L "$dep_internal" ]] || continue
+      # Skip the canonical source itself.
+      [[ "$(readlink -f "$dep_internal")" != "$canonical_real" ]] || continue
+      if $flag_dry_run; then
+        printf "Would repoint %s -> %s\n" "$dep_internal" "$canonical" >&2
+      else
+        rm -f "$dep_internal"
+        ln -s "$canonical" "$dep_internal"
+        info "Repointed $(basename "$(dirname "$(dirname "$dep_internal")")")/$dep_name -> $(basename "$canonical") (dedup)"
+      fi
+    done < <(find "$opentui_root/packages" -maxdepth 3 -path "*/node_modules/$dep_name" -print0 2>/dev/null)
+  done
 }
 
 build_opencode_release() {
