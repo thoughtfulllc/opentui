@@ -108,6 +108,74 @@ describe("TextBufferView", () => {
       expect(lineInfo.lineWidths).toEqual([10, 10, 6])
     })
 
+    it("should return byte offsets for no-wrap multi-byte lines", () => {
+      view.setWrapMode("none")
+      buffer.setStyledText(stringToStyledText("흐름\n도움"))
+
+      const lineInfo = view.lineInfo
+      expect(lineInfo.lineStarts).toEqual([0, 7])
+    })
+
+    it("should return byte line starts for #609 multi-byte wrap vectors", () => {
+      const decoder = new TextDecoder()
+      const encoder = new TextEncoder()
+      const vectors = [
+        { text: "흐름도", width: 4, starts: [0, 6], lines: ["흐름", "도"] },
+        { text: "你好世界", width: 4, starts: [0, 6], lines: ["你好", "世界"] },
+        { text: " 안녕a", width: 5, starts: [0, 7], lines: [" 안녕", "a"] },
+        { text: "🇰🇷🇯🇵🇨🇳", width: 4, starts: [0, 16], lines: ["🇰🇷🇯🇵", "🇨🇳"] },
+        { text: "👋🏻👋🏿hi", width: 4, starts: [0, 8, 16], lines: ["👋🏻", "👋🏿", "hi"] },
+        { text: "1️⃣한글", width: 4, starts: [0, 10], lines: ["1️⃣한", "글"] },
+        { text: "가나다라마바사", width: 6, starts: [0, 9, 18], lines: ["가나다", "라마바", "사"] },
+      ]
+
+      view.setWrapMode("char")
+      for (const vector of vectors) {
+        view.setWrapWidth(vector.width)
+        buffer.setStyledText(stringToStyledText(vector.text))
+
+        const lineInfo = view.lineInfo
+        expect(lineInfo.lineStarts).toEqual(vector.starts)
+
+        const bytes = encoder.encode(vector.text)
+        const actualLines = lineInfo.lineStarts.map((start, idx) => {
+          const end = idx + 1 < lineInfo.lineStarts.length ? lineInfo.lineStarts[idx + 1] : bytes.length
+          return decoder.decode(bytes.slice(start, end))
+        })
+        expect(actualLines).toEqual(vector.lines)
+      }
+    })
+
+    it("should keep byte starts aligned when first grapheme exceeds wrap width", () => {
+      const decoder = new TextDecoder()
+      const encoder = new TextEncoder()
+
+      view.setWrapMode("word")
+      view.setWrapWidth(1)
+      buffer.setStyledText(stringToStyledText("가a"))
+
+      const lineInfo = view.lineInfo
+      expect(lineInfo.lineStarts).toEqual([0, 3])
+      expect(lineInfo.lineWidths).toEqual([2, 1])
+
+      const bytes = encoder.encode("가a")
+      const lines = lineInfo.lineStarts.map((start, idx) => {
+        const end = idx + 1 < lineInfo.lineStarts.length ? lineInfo.lineStarts[idx + 1] : bytes.length
+        return decoder.decode(bytes.slice(start, end))
+      })
+      expect(lines).toEqual(["가", "a"])
+    })
+
+    it("should return byte line starts for multi-byte word wrapping", () => {
+      view.setWrapMode("word")
+      view.setWrapWidth(5)
+      buffer.setStyledText(stringToStyledText("안녕 세상"))
+
+      const lineInfo = view.lineInfo
+      expect(lineInfo.lineStarts).toEqual([0, 7])
+      expect(lineInfo.lineWidths).toEqual([5, 4])
+    })
+
     it("should update lineInfo when wrap width changes", () => {
       const text = "The quick brown fox jumps over the lazy dog"
       const styledText = stringToStyledText(text)
