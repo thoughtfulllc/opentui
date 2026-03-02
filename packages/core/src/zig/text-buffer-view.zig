@@ -1187,7 +1187,13 @@ pub const UnifiedTextBufferView = struct {
                             wrap_idx = saved_wrap_idx;
 
                             var to_add: u32 = 0;
+                            // byte_len_known: when non-null, the byte length for to_add is already known
+                            // from the same findWrapPosByWidth/findPosByWidth call that produced to_add,
+                            // avoiding a redundant re-scan.
+                            var byte_len_known: ?u32 = null;
                             var has_wrap_after: bool = false;
+
+                            const remaining_byte_len: u32 = @as(u32, @intCast(chunk_bytes.len)) - byte_offset;
 
                             if (remaining_in_chunk <= remaining_on_line) {
                                 if (last_wrap_that_fits) |boundary_w| {
@@ -1197,10 +1203,12 @@ pub const UnifiedTextBufferView = struct {
                                         has_wrap_after = true;
                                     } else {
                                         to_add = remaining_in_chunk;
+                                        byte_len_known = remaining_byte_len;
                                         has_wrap_after = true;
                                     }
                                 } else {
                                     to_add = remaining_in_chunk;
+                                    byte_len_known = remaining_byte_len;
                                 }
                             } else if (last_wrap_that_fits) |boundary_w| {
                                 to_add = boundary_w;
@@ -1209,9 +1217,14 @@ pub const UnifiedTextBufferView = struct {
                                 const remaining_bytes = chunk_bytes[byte_offset..];
                                 const wrap_result = utf8.findWrapPosByWidth(remaining_bytes, remaining_on_line, wctx.text_buffer.tabWidth(), is_ascii_only, wctx.text_buffer.widthMethod());
                                 to_add = wrap_result.columns_used;
+                                byte_len_known = wrap_result.byte_offset;
                                 if (to_add == 0) {
                                     const force_result = utf8.findPosByWidth(remaining_bytes, 1, wctx.text_buffer.tabWidth(), is_ascii_only, true, wctx.text_buffer.widthMethod());
                                     to_add = if (force_result.columns_used > 0) force_result.columns_used else 1;
+                                    byte_len_known = if (force_result.byte_offset > 0)
+                                        force_result.byte_offset
+                                    else
+                                        @min(@as(u32, @intCast(remaining_bytes.len)), @as(u32, 1));
                                 }
                             } else if (wctx.last_wrap_chunk_count > 0) {
                                 var accumulated_width: u32 = 0;
@@ -1302,9 +1315,14 @@ pub const UnifiedTextBufferView = struct {
                                 const remaining_bytes = chunk_bytes[byte_offset..];
                                 const wrap_result = utf8.findWrapPosByWidth(remaining_bytes, wctx.wrap_w, wctx.text_buffer.tabWidth(), is_ascii_only, wctx.text_buffer.widthMethod());
                                 to_add = wrap_result.columns_used;
+                                byte_len_known = wrap_result.byte_offset;
                                 if (to_add == 0) {
                                     const force_result = utf8.findPosByWidth(remaining_bytes, 1, wctx.text_buffer.tabWidth(), is_ascii_only, true, wctx.text_buffer.widthMethod());
                                     to_add = if (force_result.columns_used > 0) force_result.columns_used else 1;
+                                    byte_len_known = if (force_result.byte_offset > 0)
+                                        force_result.byte_offset
+                                    else
+                                        @min(@as(u32, @intCast(remaining_bytes.len)), @as(u32, 1));
                                 }
                             }
 
@@ -1313,18 +1331,28 @@ pub const UnifiedTextBufferView = struct {
                                 const offset_before_add = wctx.global_char_offset;
                                 const byte_offset_before_add = wctx.global_byte_offset;
                                 const local_byte_offset_before_add = byte_offset;
-                                const remaining_bytes = chunk_bytes[byte_offset..];
 
-                                var byte_len_to_add = utf8.findWrapPosByWidth(remaining_bytes, to_add, wctx.text_buffer.tabWidth(), is_ascii_only, wctx.text_buffer.widthMethod()).byte_offset;
-                                if (byte_len_to_add == 0 and remaining_bytes.len > 0) {
-                                    const force_result = utf8.findPosByWidth(remaining_bytes, 1, wctx.text_buffer.tabWidth(), is_ascii_only, true, wctx.text_buffer.widthMethod());
-                                    if (force_result.byte_offset > 0) {
-                                        byte_len_to_add = force_result.byte_offset;
-                                        if (force_result.columns_used > to_add) {
-                                            to_add = force_result.columns_used;
+                                var byte_len_to_add: u32 = undefined;
+                                if (byte_len_known) |known| {
+                                    byte_len_to_add = known;
+                                } else if (is_ascii_only) {
+                                    // ASCII: 1 byte per column
+                                    byte_len_to_add = to_add;
+                                } else {
+                                    // to_add came from a wrap boundary (column-based), need byte scan
+                                    const remaining_bytes = chunk_bytes[byte_offset..];
+                                    const result = utf8.findWrapPosByWidth(remaining_bytes, to_add, wctx.text_buffer.tabWidth(), is_ascii_only, wctx.text_buffer.widthMethod());
+                                    byte_len_to_add = result.byte_offset;
+                                    if (byte_len_to_add == 0 and remaining_bytes.len > 0) {
+                                        const force_result = utf8.findPosByWidth(remaining_bytes, 1, wctx.text_buffer.tabWidth(), is_ascii_only, true, wctx.text_buffer.widthMethod());
+                                        if (force_result.byte_offset > 0) {
+                                            byte_len_to_add = force_result.byte_offset;
+                                            if (force_result.columns_used > to_add) {
+                                                to_add = force_result.columns_used;
+                                            }
+                                        } else {
+                                            byte_len_to_add = @min(@as(u32, @intCast(remaining_bytes.len)), @as(u32, 1));
                                         }
-                                    } else {
-                                        byte_len_to_add = @min(@as(u32, @intCast(remaining_bytes.len)), @as(u32, 1));
                                     }
                                 }
 
@@ -1338,15 +1366,24 @@ pub const UnifiedTextBufferView = struct {
                                     else
                                         to_add;
 
-                                    const wrap_remaining_bytes = chunk_bytes[local_byte_offset_before_add..];
-                                    var wrap_byte_len = utf8.findWrapPosByWidth(wrap_remaining_bytes, wrap_pos_in_added, wctx.text_buffer.tabWidth(), is_ascii_only, wctx.text_buffer.widthMethod()).byte_offset;
-                                    if (wrap_byte_len == 0 and wrap_remaining_bytes.len > 0) {
-                                        const force_result = utf8.findPosByWidth(wrap_remaining_bytes, 1, wctx.text_buffer.tabWidth(), is_ascii_only, true, wctx.text_buffer.widthMethod());
-                                        wrap_byte_len = if (force_result.byte_offset > 0)
-                                            force_result.byte_offset
-                                        else
-                                            @min(@as(u32, @intCast(wrap_remaining_bytes.len)), @as(u32, 1));
-                                    }
+                                    // When wrap_pos == to_add, the wrap byte boundary is the same
+                                    // as the chunk byte boundary we just computed — skip re-scan.
+                                    const wrap_byte_len = if (wrap_pos_in_added == to_add)
+                                        byte_len_to_add
+                                    else if (is_ascii_only)
+                                        wrap_pos_in_added
+                                    else blk: {
+                                        const wrap_remaining_bytes = chunk_bytes[local_byte_offset_before_add..];
+                                        var result = utf8.findWrapPosByWidth(wrap_remaining_bytes, wrap_pos_in_added, wctx.text_buffer.tabWidth(), is_ascii_only, wctx.text_buffer.widthMethod());
+                                        if (result.byte_offset == 0 and wrap_remaining_bytes.len > 0) {
+                                            const force_result = utf8.findPosByWidth(wrap_remaining_bytes, 1, wctx.text_buffer.tabWidth(), is_ascii_only, true, wctx.text_buffer.widthMethod());
+                                            result.byte_offset = if (force_result.byte_offset > 0)
+                                                force_result.byte_offset
+                                            else
+                                                @min(@as(u32, @intCast(wrap_remaining_bytes.len)), @as(u32, 1));
+                                        }
+                                        break :blk result.byte_offset;
+                                    };
 
                                     wctx.last_wrap_chunk_count = @intCast(wctx.current_vline.chunks.items.len);
                                     wctx.last_wrap_line_position = position_before_add + wrap_pos_in_added;
