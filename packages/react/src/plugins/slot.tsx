@@ -262,7 +262,7 @@ export function Slot<
         }
       }
 
-      const failure =
+      const failure: PluginErrorEvent =
         isSameFailure && lastFailure
           ? lastFailure
           : {

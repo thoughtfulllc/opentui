@@ -100,7 +100,9 @@ export function Slot<
 
   const entries = createMemo<Array<ResolvedSlotRenderer<JSX.Element, TSlots[K], TContext>>>((previousEntries = []) => {
     version()
-    const resolvedEntries = registry().resolveEntries(local.name)
+    const resolvedEntries = registry().resolveEntries(local.name as K) as Array<
+      ResolvedSlotRenderer<JSX.Element, TSlots[K], TContext>
+    >
     const previousById = new Map(previousEntries.map((entry) => [entry.id, entry]))
 
     return resolvedEntries.map((entry) => {
@@ -170,7 +172,7 @@ export function Slot<
 
     return (
       <ErrorBoundary
-        fallback={(error) => {
+        fallback={(error: unknown) => {
           const failure = registry().reportPluginError({
             pluginId: entry.id,
             slot: slotName(),
@@ -221,7 +223,12 @@ export function Slot<
         }
 
         if (local.mode === "single_winner") {
-          return renderEntry(resolvedEntries[0], local.children as JSX.Element)
+          const winner = resolvedEntries[0]
+          if (!winner) {
+            return local.children
+          }
+
+          return renderEntry(winner, local.children as JSX.Element)
         }
 
         if (local.mode === "replace") {
