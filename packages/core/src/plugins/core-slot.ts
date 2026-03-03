@@ -348,7 +348,10 @@ export class SlotRenderable<
       }
 
       if (!this._activePluginIds.has(entry.id)) {
-        this._callManagedHook(entry.id, state.managedSlot, "onActivate", "setup")
+        const activeState = this._pluginNodes.get(entry.id)
+        if (activeState) {
+          this._callManagedHook(entry.id, activeState.managedSlot, "onActivate", "setup")
+        }
       }
     }
 
