@@ -1,3 +1,5 @@
+import { fileURLToPath } from "node:url"
+
 import { transformAsync } from "@babel/core"
 import { readFile } from "node:fs/promises"
 // @ts-expect-error - Types not important.
@@ -8,29 +10,41 @@ import moduleResolver from "babel-plugin-module-resolver"
 import solid from "babel-preset-solid"
 import { type BunPlugin } from "bun"
 
+const toFilePath = (resolvedPath: string): string => {
+  if (resolvedPath.startsWith("file://")) {
+    return fileURLToPath(resolvedPath)
+  }
+
+  return resolvedPath
+}
+
+const resolvePath = (specifier: string): string => {
+  return toFilePath(import.meta.resolve(specifier))
+}
+
 const solidTransformPlugin: BunPlugin = {
   name: "bun-plugin-solid",
   setup: (build) => {
-    const moduleName = import.meta.resolve("@opentui/solid")
+    const moduleName = resolvePath("@opentui/solid")
     const canonical = [/^@opentui\/solid(?:\/.*)?$/, /^@opentui\/core(?:\/.*)?$/, /^solid-js(?:\/.*)?$/]
 
     for (const filter of canonical) {
       build.onResolve({ filter }, (args) => {
         return {
-          path: import.meta.resolve(args.path),
+          path: resolvePath(args.path),
         }
       })
     }
 
     const resolve = (path: string) => {
       if (path.startsWith("@opentui/solid")) {
-        return import.meta.resolve(path)
+        return resolvePath(path)
       }
       if (path.startsWith("@opentui/core")) {
-        return import.meta.resolve(path)
+        return resolvePath(path)
       }
       if (path === "solid-js" || path.startsWith("solid-js/")) {
-        return import.meta.resolve(path)
+        return resolvePath(path)
       }
       return null
     }
