@@ -94,6 +94,58 @@ describe("renderer stdin routing", () => {
     }
   })
 
+  test("scroll flood with interleaved keys in one chunk keeps keyboard input", async () => {
+    const { renderer, renderOnce } = await createRoutingRenderer()
+    try {
+      const target = new MouseTarget(renderer, {
+        id: "target-scroll-flood",
+        position: "absolute",
+        left: 0,
+        top: 0,
+        width: renderer.width,
+        height: renderer.height,
+      })
+      renderer.root.add(target)
+      await renderOnce()
+
+      const keys: string[] = []
+      let scrollCount = 0
+
+      const keypressesReceived = new Promise<void>((resolve, reject) => {
+        const timeoutId = setTimeout(() => {
+          renderer.keyInput.off("keypress", onKeypress)
+          reject(new Error("Timed out waiting for interleaved keypresses"))
+        }, 500)
+
+        const onKeypress = (event: { name: string }) => {
+          keys.push(event.name)
+          if (keys.length === 2) {
+            clearTimeout(timeoutId)
+            renderer.keyInput.off("keypress", onKeypress)
+            resolve()
+          }
+        }
+
+        renderer.keyInput.on("keypress", onKeypress)
+      })
+
+      target.onMouseScroll = () => {
+        scrollCount++
+      }
+
+      const scrollSequence = "\x1b[<65;10;5M"
+      const floodChunk = `${scrollSequence.repeat(200)}x${scrollSequence.repeat(200)}y`
+
+      renderer.stdin.emit("data", Buffer.from(floodChunk))
+      await keypressesReceived
+
+      expect(keys).toEqual(["x", "y"])
+      expect(scrollCount).toBe(400)
+    } finally {
+      renderer.destroy()
+    }
+  })
+
   test("focus and key mixed in one chunk", async () => {
     const { renderer } = await createRoutingRenderer()
     try {
