@@ -3,7 +3,7 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSyn
 import { dirname, join, resolve } from "path"
 import { fileURLToPath } from "url"
 import process from "process"
-import solidTransformPlugin from "./solid-plugin"
+import { createSolidTransformPlugin } from "./solid-plugin"
 
 interface PackageJson {
   name: string
@@ -74,7 +74,7 @@ const mainBuildResult = await Bun.build({
   target: "bun",
   outdir: join(rootDir, "dist"),
   external: externalDeps,
-  plugins: [solidTransformPlugin],
+  plugins: [createSolidTransformPlugin({ mode: "build" })],
   splitting: true,
 })
 
