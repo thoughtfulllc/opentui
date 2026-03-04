@@ -10,6 +10,13 @@ import { type BunPlugin } from "bun"
 
 type Mode = "runtime" | "build"
 
+// runtime mode is used by @opentui/solid/preload inside apps.
+// It canonicalizes @opentui/* imports so external TSX/plugin modules resolve
+// to the same runtime instance and share RendererContext.
+// build mode is used only when building this package for npm.
+// It avoids runtime canonicalization so dist output keeps normal externals
+// and does not bake resolved paths into the published artifact.
+
 const resolved = (specifier: string): string => {
   return import.meta.resolve(specifier)
 }
@@ -22,6 +29,9 @@ export function createSolidTransformPlugin(input: { mode?: Mode } = {}): BunPlug
     name: "bun-plugin-solid",
     setup: (build) => {
       const moduleName = runtime ? resolved("@opentui/solid") : "@opentui/solid"
+
+      // Runtime transform points JSX factories at the host-resolved module.
+      // Build transform must keep the public package specifier.
 
       if (runtime) {
         const canonical = [/^@opentui\/solid(?:\/.*)?$/, /^@opentui\/core(?:\/.*)?$/]
@@ -63,6 +73,7 @@ export function createSolidTransformPlugin(input: { mode?: Mode } = {}): BunPlug
       build.onLoad({ filter: /\.(js|ts)x$/ }, async (args) => {
         const file = Bun.file(args.path)
         const code = await file.text()
+        // Module resolver rewrite is runtime-only for the same reason.
         const plugins = runtime
           ? [
               [
