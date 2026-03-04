@@ -6,7 +6,11 @@ order: 1
 
 # Plugin slots
 
-Plugin slots are typed extension points. The host application defines named slots, and plugins contribute UI for those slots.
+Most TUI apps start as one codebase. As features and teams grow, you may want extension points without asking users to fork the app.
+
+Plugin slots give you that. The host application defines named places in the layout (for example, a status bar, sidebar, or panel), and plugins contribute UI for those places at runtime.
+
+The host stays in control of layout, rendering mode, and type contracts. Plugins only receive the context and slot props the host intentionally exposes.
 
 This page describes the **shared registry API** that the core, React, and Solid bindings are built on. If you are building an app, start with the page for the binding you use:
 
