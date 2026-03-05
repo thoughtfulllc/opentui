@@ -7,6 +7,7 @@ const link = @import("../link.zig");
 
 const TextBuffer = text_buffer.UnifiedTextBuffer;
 const TextBufferView = text_buffer_view.UnifiedTextBufferView;
+const WidthMethod = @import("../utf8.zig").WidthMethod;
 const RGBA = text_buffer.RGBA;
 
 test "TextBufferView wrapping - no wrap returns same line count" {
@@ -3647,3 +3648,207 @@ test "TextBufferView word wrapping - does not split 'uses' across lines" {
 
     try std.testing.expect(!split_found);
 }
+
+
+fn runVectorScenario(
+    tb: *TextBuffer,
+    view: *TextBufferView,
+    text: []const u8,
+    wrap_mode: text_buffer_view.WrapMode,
+    wrap_width: ?u32,
+    tab_width: u8,
+) !void {
+    tb.setTabWidth(tab_width);
+    view.setWrapMode(wrap_mode);
+    view.setWrapWidth(wrap_width);
+    try tb.setText(text);
+}
+
+fn assertUtf8BoundarySafety(text: []const u8, line_starts: []const u32) !void {
+    if (line_starts.len == 0) return;
+
+    try std.testing.expectEqual(@as(u32, 0), line_starts[0]);
+
+    var i: usize = 0;
+    while (i + 1 < line_starts.len) : (i += 1) {
+        const start: usize = @intCast(line_starts[i]);
+        const end: usize = @intCast(line_starts[i + 1]);
+        try std.testing.expect(end >= start);
+        try std.testing.expect(end <= text.len);
+        try std.testing.expect(std.unicode.utf8ValidateSlice(text[start..end]));
+    }
+}
+
+fn assertMonotonicAndProgress(line_starts: []const u32, line_widths: []const u32) !void {
+    try std.testing.expectEqual(line_starts.len, line_widths.len);
+    if (line_starts.len == 0) return;
+
+    var i: usize = 1;
+    while (i < line_starts.len) : (i += 1) {
+        try std.testing.expect(line_starts[i] >= line_starts[i - 1]);
+        if (line_widths[i - 1] > 0) {
+            try std.testing.expect(line_starts[i] > line_starts[i - 1]);
+        }
+    }
+}
+
+fn assertDeterministicLineInfo(view: *TextBufferView) !void {
+    const first = view.getCachedLineInfo();
+    const second = view.getCachedLineInfo();
+
+    try std.testing.expectEqualSlices(u32, first.line_start_cols, second.line_start_cols);
+    try std.testing.expectEqualSlices(u32, first.line_width_cols, second.line_width_cols);
+    try std.testing.expectEqual(first.line_width_cols_max, second.line_width_cols_max);
+}
+
+fn assertExactVectors(tb: *TextBuffer, view: *TextBufferView) !void {
+    try runVectorScenario(tb, view, "가a", .word, 1, 2);
+    var line_info = view.getCachedLineInfo();
+    try std.testing.expectEqualSlices(u32, &[_]u32{ 0, 3 }, line_info.line_start_cols);
+    try std.testing.expectEqualSlices(u32, &[_]u32{ 2, 1 }, line_info.line_width_cols);
+
+    try runVectorScenario(tb, view, "가나다", .word, 1, 2);
+    line_info = view.getCachedLineInfo();
+    try std.testing.expectEqualSlices(u32, &[_]u32{ 0, 3, 6 }, line_info.line_start_cols);
+    var i: usize = 1;
+    while (i < line_info.line_start_cols.len) : (i += 1) {
+        try std.testing.expect(line_info.line_start_cols[i] > line_info.line_start_cols[i - 1]);
+    }
+
+    try runVectorScenario(tb, view, "👋🏻a", .word, 1, 2);
+    line_info = view.getCachedLineInfo();
+    try std.testing.expectEqualSlices(u32, &[_]u32{ 0, 8 }, line_info.line_start_cols);
+    try std.testing.expectEqualSlices(u32, &[_]u32{ 2, 1 }, line_info.line_width_cols);
+
+    try runVectorScenario(tb, view, "\tA", .word, 1, 2);
+    line_info = view.getCachedLineInfo();
+    try std.testing.expectEqualSlices(u32, &[_]u32{ 0, 1 }, line_info.line_start_cols);
+
+    try runVectorScenario(tb, view, "흐름도", .word, 4, 2);
+    line_info = view.getCachedLineInfo();
+    try std.testing.expectEqualSlices(u32, &[_]u32{ 0, 6 }, line_info.line_start_cols);
+
+    try runVectorScenario(tb, view, "hello world", .word, 5, 2);
+    line_info = view.getCachedLineInfo();
+    try std.testing.expectEqualSlices(u32, &[_]u32{ 0, 6 }, line_info.line_start_cols);
+
+    try runVectorScenario(tb, view, "abcd\tx", .word, 8, 4);
+    line_info = view.getCachedLineInfo();
+    try std.testing.expectEqualSlices(u32, &[_]u32{ 0, 5 }, line_info.line_start_cols);
+
+    try runVectorScenario(tb, view, "ab\r\ncd", .none, null, 2);
+    line_info = view.getCachedLineInfo();
+    try std.testing.expectEqualSlices(u32, &[_]u32{ 0, 4 }, line_info.line_start_cols);
+}
+
+fn nextVectorRandom(state: *u64) u64 {
+    state.* = state.* *% 6364136223846793005 +% 1;
+    return state.*;
+}
+
+fn runFixedSeedCorpus(tb: *TextBuffer, view: *TextBufferView, seed: u64) !void {
+    var state = seed;
+    const tokens = [_][]const u8{ "a", "b", "c", " ", "\t", "가", "나", "다", "👋🏻", "🌟", ".", ",", "/" };
+
+    var builder: std.ArrayListUnmanaged(u8) = .{};
+    defer builder.deinit(std.testing.allocator);
+
+    var case_idx: usize = 0;
+    while (case_idx < 64) : (case_idx += 1) {
+        builder.clearRetainingCapacity();
+
+        const token_count: usize = @intCast((nextVectorRandom(&state) % 24) + 1);
+        var token_idx: usize = 0;
+        while (token_idx < token_count) : (token_idx += 1) {
+            const idx: usize = @intCast(nextVectorRandom(&state) % tokens.len);
+            try builder.appendSlice(std.testing.allocator, tokens[idx]);
+        }
+
+        const wrap_width: u32 = @intCast((nextVectorRandom(&state) % 8) + 1);
+        const tab_width: u8 = switch (nextVectorRandom(&state) % 3) {
+            0 => 2,
+            1 => 4,
+            else => 8,
+        };
+
+        try runVectorScenario(tb, view, builder.items, .word, wrap_width, tab_width);
+        const line_info = view.getCachedLineInfo();
+        try assertUtf8BoundarySafety(builder.items, line_info.line_start_cols);
+        try assertMonotonicAndProgress(line_info.line_start_cols, line_info.line_width_cols);
+        try assertDeterministicLineInfo(view);
+    }
+}
+
+test "Vector gate V1-V8 exact for wcwidth" {
+    const pool = gp.initGlobalPool(std.testing.allocator);
+    defer gp.deinitGlobalPool();
+    const link_pool = link.initGlobalLinkPool(std.testing.allocator);
+    defer link.deinitGlobalLinkPool();
+
+    var tb = try TextBuffer.init(std.testing.allocator, pool, link_pool, .wcwidth);
+    defer tb.deinit();
+
+    var view = try TextBufferView.init(std.testing.allocator, tb);
+    defer view.deinit();
+
+    try assertExactVectors(tb, view);
+}
+
+test "Vector gate V1-V8 exact where behavior is stable for unicode/no_zwj" {
+    const pool = gp.initGlobalPool(std.testing.allocator);
+    defer gp.deinitGlobalPool();
+    const link_pool = link.initGlobalLinkPool(std.testing.allocator);
+    defer link.deinitGlobalLinkPool();
+
+    for ([_]WidthMethod{ .unicode, .no_zwj }) |width_method| {
+        var tb = try TextBuffer.init(std.testing.allocator, pool, link_pool, width_method);
+        defer tb.deinit();
+
+        var view = try TextBufferView.init(std.testing.allocator, tb);
+        defer view.deinit();
+
+        try assertExactVectors(tb, view);
+    }
+}
+
+test "Vector gate V9-V12 invariants for wcwidth/unicode/no_zwj" {
+    const scenarios = [_]struct {
+        text: []const u8,
+        wrap_mode: text_buffer_view.WrapMode,
+        wrap_width: ?u32,
+        tab_width: u8,
+    }{
+        .{ .text = "가a", .wrap_mode = .word, .wrap_width = 1, .tab_width = 2 },
+        .{ .text = "가나다", .wrap_mode = .word, .wrap_width = 1, .tab_width = 2 },
+        .{ .text = "👋🏻a", .wrap_mode = .word, .wrap_width = 1, .tab_width = 2 },
+        .{ .text = "\tA", .wrap_mode = .word, .wrap_width = 1, .tab_width = 2 },
+        .{ .text = "흐름도", .wrap_mode = .word, .wrap_width = 4, .tab_width = 2 },
+        .{ .text = "hello world", .wrap_mode = .word, .wrap_width = 5, .tab_width = 2 },
+        .{ .text = "abcd\tx", .wrap_mode = .word, .wrap_width = 8, .tab_width = 4 },
+        .{ .text = "ab\r\ncd", .wrap_mode = .none, .wrap_width = null, .tab_width = 2 },
+    };
+
+    const pool = gp.initGlobalPool(std.testing.allocator);
+    defer gp.deinitGlobalPool();
+    const link_pool = link.initGlobalLinkPool(std.testing.allocator);
+    defer link.deinitGlobalLinkPool();
+
+    for ([_]WidthMethod{ .wcwidth, .unicode, .no_zwj }) |width_method| {
+        var tb = try TextBuffer.init(std.testing.allocator, pool, link_pool, width_method);
+        defer tb.deinit();
+
+        var view = try TextBufferView.init(std.testing.allocator, tb);
+        defer view.deinit();
+
+        for (scenarios) |scenario| {
+            try runVectorScenario(tb, view, scenario.text, scenario.wrap_mode, scenario.wrap_width, scenario.tab_width);
+            const line_info = view.getCachedLineInfo();
+            try assertUtf8BoundarySafety(scenario.text, line_info.line_start_cols);
+            try assertMonotonicAndProgress(line_info.line_start_cols, line_info.line_width_cols);
+            try assertDeterministicLineInfo(view);
+        }
+
+        try runFixedSeedCorpus(tb, view, 0x17c0ffee);
+    }
+}
+
