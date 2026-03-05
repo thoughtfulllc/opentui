@@ -987,7 +987,42 @@ pub const UnifiedTextBufferView = struct {
                 text_buffer: *UnifiedTextBuffer,
                 allocator: Allocator,
                 output: VirtualLineOutput,
+                line_start_bytes: []const u32 = &[_]u32{},
                 current_vline: ?VirtualLine = null,
+
+                fn buildLineStartByteOffsets(text_buffer_ctx: *UnifiedTextBuffer, allocator_ctx: Allocator) []const u32 {
+                    var line_starts: std.ArrayListUnmanaged(u32) = .{};
+                    line_starts.append(allocator_ctx, 0) catch return &[_]u32{};
+
+                    const byte_size = text_buffer_ctx.getByteSize();
+                    if (byte_size == 0) return line_starts.items;
+
+                    const plain_text = allocator_ctx.alloc(u8, byte_size) catch return line_starts.items;
+                    const written = text_buffer_ctx.getPlainTextIntoBuffer(plain_text);
+
+                    var idx: usize = 0;
+                    while (idx < written) {
+                        const b = plain_text[idx];
+                        if (b == '\n') {
+                            idx += 1;
+                            line_starts.append(allocator_ctx, @intCast(idx)) catch break;
+                            continue;
+                        }
+
+                        if (b == '\r') {
+                            idx += 1;
+                            if (idx < written and plain_text[idx] == '\n') {
+                                idx += 1;
+                            }
+                            line_starts.append(allocator_ctx, @intCast(idx)) catch break;
+                            continue;
+                        }
+
+                        idx += 1;
+                    }
+
+                    return line_starts.items;
+                }
 
                 fn segment_callback(ctx_ptr: *anyopaque, line_idx: u32, chunk: *const TextChunk, _: u32) void {
                     _ = line_idx;
@@ -1022,10 +1057,15 @@ pub const UnifiedTextBufferView = struct {
                     vline.col_offset = line_info.col_offset;
                     vline.source_line = line_info.line_idx;
                     vline.source_col_offset = 0;
-                    const line_start = if (track_byte_starts)
-                        line_start_byte_offset(line_info, &vline)
-                    else
-                        vline.col_offset;
+                    const line_start = if (track_byte_starts) blk: {
+                        if (line_info.width_cols > 0) {
+                            break :blk line_start_byte_offset(line_info, &vline);
+                        }
+                        if (line_info.line_idx < ctx.line_start_bytes.len) {
+                            break :blk ctx.line_start_bytes[line_info.line_idx];
+                        }
+                        break :blk line_start_byte_offset(line_info, &vline);
+                    } else vline.col_offset;
 
                     ctx.output.virtual_lines.append(ctx.allocator, vline) catch {};
                     ctx.output.cached_line_starts.append(ctx.allocator, line_start) catch {};
@@ -1037,10 +1077,16 @@ pub const UnifiedTextBufferView = struct {
                 }
             };
 
+            const line_start_bytes = if (track_byte_starts)
+                Context.buildLineStartByteOffsets(text_buffer, allocator)
+            else
+                &[_]u32{};
+
             var ctx = Context{
                 .text_buffer = text_buffer,
                 .allocator = allocator,
                 .output = output,
+                .line_start_bytes = line_start_bytes,
                 .current_vline = VirtualLine.init(),
             };
 

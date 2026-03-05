@@ -3852,3 +3852,21 @@ test "Vector gate V9-V12 invariants for wcwidth/unicode/no_zwj" {
     }
 }
 
+test "No-wrap empty-line start stays byte-accurate after multibyte" {
+    const pool = gp.initGlobalPool(std.testing.allocator);
+    defer gp.deinitGlobalPool();
+    const link_pool = link.initGlobalLinkPool(std.testing.allocator);
+    defer link.deinitGlobalLinkPool();
+
+    var tb = try TextBuffer.init(std.testing.allocator, pool, link_pool, .wcwidth);
+    defer tb.deinit();
+
+    var view = try TextBufferView.init(std.testing.allocator, tb);
+    defer view.deinit();
+
+    try runVectorScenario(tb, view, "가\n\na", .none, null, 2);
+    const line_info = view.getCachedLineInfo();
+    try std.testing.expectEqualSlices(u32, &[_]u32{ 0, 4, 5 }, line_info.line_start_cols);
+    try std.testing.expectEqualSlices(u32, &[_]u32{ 2, 0, 1 }, line_info.line_width_cols);
+}
+
