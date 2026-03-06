@@ -974,11 +974,18 @@ pub const UnifiedTextBufferView = struct {
 
     /// Builds virtual lines for wrapping, drawing, and measuring.
     ///
+    /// This function is the shared layout policy path for two callers:
+    /// - `updateVirtualLines()` builds persistent line caches for draw and edit.
+    /// - `measureForDimensions()` runs the same wrap logic for deterministic
+    ///   counts, but does not keep byte-start state.
+    ///
     /// `track_byte_starts=true` records UTF-8 byte starts in `cached_line_starts`.
     /// The draw and edit paths need those byte offsets for cursor math and slicing.
     ///
     /// `track_byte_starts=false` records column starts only, and skips most byte
     /// bookkeeping. `measureForDimensions()` uses this mode to avoid extra work.
+    /// In this mode, `cached_line_starts` is scratch-only and never escapes as
+    /// public byte-start data.
     ///
     /// The function appends to `output` arrays. Callers clear those arrays
     /// before calling.
