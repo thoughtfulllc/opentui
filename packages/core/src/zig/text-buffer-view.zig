@@ -1310,6 +1310,20 @@ pub const UnifiedTextBufferView = struct {
                 /// - Advances `line_col_offset` to the next source-column start.
                 /// - Resets `line_position`, and starts a fresh `current_vline`.
                 fn commitVirtualLine(wctx: *@This()) void {
+                    if (track_byte_starts and wctx.line_position > 0 and wctx.current_byte_offset == wctx.line_start_byte_offset) {
+                        // A visual line with width but no byte progress is invalid.
+                        // Drop it and roll back the duplicated column advance.
+                        wctx.global_char_offset -= wctx.line_position;
+                        wctx.line_position = 0;
+                        wctx.current_vline = VirtualLine.init();
+                        wctx.current_vline.col_offset = wctx.global_char_offset;
+
+                        wctx.last_wrap_chunk_count = 0;
+                        wctx.last_wrap_line_position = 0;
+                        wctx.last_wrap_global_offset = 0;
+                        wctx.last_wrap_byte_offset = 0;
+                        return;
+                    }
                     wctx.current_vline.width_cols = wctx.line_position;
                     wctx.current_vline.source_line = wctx.line_idx;
                     wctx.current_vline.source_col_offset = wctx.line_col_offset;
@@ -1486,7 +1500,10 @@ pub const UnifiedTextBufferView = struct {
                                         to_add = boundary_w;
                                         has_wrap_after = true;
                                         if (last_wrap_byte_after_fit) |byte_after| {
-                                            to_add_byte_advance = byte_after - byte_offset;
+                                            to_add_byte_advance = if (byte_after > byte_offset)
+                                                byte_after - byte_offset
+                                            else
+                                                null;
                                         }
                                     } else {
                                         to_add = remaining_in_chunk;
@@ -1503,7 +1520,10 @@ pub const UnifiedTextBufferView = struct {
                                 to_add = boundary_w;
                                 has_wrap_after = true;
                                 if (last_wrap_byte_after_fit) |byte_after| {
-                                    to_add_byte_advance = byte_after - byte_offset;
+                                    to_add_byte_advance = if (byte_after > byte_offset)
+                                        byte_after - byte_offset
+                                    else
+                                        null;
                                 }
                             } else if (wctx.line_position == 0) {
                                 // No boundary fits, and we are at the start of a
@@ -1567,32 +1587,58 @@ pub const UnifiedTextBufferView = struct {
                                     continue;
                                 }
 
-                                // Recompute the width that stays on this line, then
-                                // move the suffix chunks onto the next visual line.
+                                if (chunk.byte_start + byte_offset <= wctx.last_wrap_byte_offset) {
+                                    // No bytes were consumed past the saved wrap
+                                    // boundary. Commit at the boundary and retry
+                                    // without carrying column-only suffix chunks.
+                                    wctx.line_position = wctx.last_wrap_line_position;
+                                    wctx.global_char_offset = wctx.last_wrap_global_offset;
+                                    wctx.current_byte_offset = wctx.last_wrap_byte_offset;
+                                    wctx.current_vline.chunks.items.len = @intCast(wctx.last_wrap_chunk_count);
+
+                                    commitVirtualLine(wctx);
+                                    wctx.skip_leading_whitespace_after_wrap = true;
+                                    continue;
+                                }
+
+                                // Recompute the retained prefix at the saved wrap
+                                // boundary, then move suffix chunks to the next
+                                // visual line without underflowing chunk widths.
+                                const original_wrap_chunk_count: usize = @intCast(wctx.last_wrap_chunk_count);
+                                var retained_chunk_count: usize = original_wrap_chunk_count;
+
                                 var accumulated_width: u32 = 0;
-                                for (wctx.current_vline.chunks.items[0..wctx.last_wrap_chunk_count]) |vchunk| {
+                                for (wctx.current_vline.chunks.items[0..original_wrap_chunk_count]) |vchunk| {
                                     accumulated_width += vchunk.width;
                                 }
 
-                                const chunks_after_wrap = wctx.current_vline.chunks.items[wctx.last_wrap_chunk_count..];
-                                var chunks_to_move_count = chunks_after_wrap.len;
                                 var split_chunk: ?VirtualChunk = null;
-
                                 if (accumulated_width > wctx.last_wrap_line_position) {
-                                    const last_chunk_idx = wctx.last_wrap_chunk_count - 1;
-                                    const last_chunk = wctx.current_vline.chunks.items[last_chunk_idx];
-                                    const overhang = accumulated_width - wctx.last_wrap_line_position;
+                                    var overhang = accumulated_width - wctx.last_wrap_line_position;
 
-                                    split_chunk = VirtualChunk{
-                                        .grapheme_start = last_chunk.grapheme_start + last_chunk.width - overhang,
-                                        .width = overhang,
-                                        .chunk = last_chunk.chunk,
-                                    };
+                                    while (overhang > 0 and retained_chunk_count > 0) {
+                                        const tail_idx = retained_chunk_count - 1;
+                                        const tail_chunk = wctx.current_vline.chunks.items[tail_idx];
 
-                                    wctx.current_vline.chunks.items[last_chunk_idx].width -= overhang;
-
-                                    chunks_to_move_count += 1;
+                                        if (overhang < tail_chunk.width) {
+                                            split_chunk = VirtualChunk{
+                                                .grapheme_start = tail_chunk.grapheme_start + tail_chunk.width - overhang,
+                                                .width = overhang,
+                                                .chunk = tail_chunk.chunk,
+                                            };
+                                            wctx.current_vline.chunks.items[tail_idx].width -= overhang;
+                                            overhang = 0;
+                                        } else {
+                                            overhang -= tail_chunk.width;
+                                            retained_chunk_count -= 1;
+                                        }
+                                    }
                                 }
+
+                                const moved_prefix_chunks = wctx.current_vline.chunks.items[retained_chunk_count..original_wrap_chunk_count];
+                                const chunks_after_wrap = wctx.current_vline.chunks.items[original_wrap_chunk_count..];
+                                var chunks_to_move_count = moved_prefix_chunks.len + chunks_after_wrap.len;
+                                if (split_chunk != null) chunks_to_move_count += 1;
 
                                 // Copy the suffix chunks before commit, then move
                                 // them onto the next visual line. If allocation
@@ -1606,25 +1652,44 @@ pub const UnifiedTextBufferView = struct {
                                         saved_idx += 1;
                                     }
 
-                                    @memcpy(saved_chunks[saved_idx..], chunks_after_wrap);
+                                    if (moved_prefix_chunks.len > 0) {
+                                        @memcpy(saved_chunks[saved_idx .. saved_idx + moved_prefix_chunks.len], moved_prefix_chunks);
+                                        saved_idx += moved_prefix_chunks.len;
+                                    }
+
+                                    if (chunks_after_wrap.len > 0) {
+                                        @memcpy(saved_chunks[saved_idx .. saved_idx + chunks_after_wrap.len], chunks_after_wrap);
+                                    }
 
                                     wctx.line_position = wctx.last_wrap_line_position;
                                     wctx.global_char_offset = wctx.last_wrap_global_offset;
                                     if (track_byte_starts) {
                                         wctx.current_byte_offset = wctx.last_wrap_byte_offset;
                                     }
-                                    wctx.current_vline.chunks.items.len = wctx.last_wrap_chunk_count;
+                                    wctx.current_vline.chunks.items.len = retained_chunk_count;
 
                                     commitVirtualLine(wctx);
                                     wctx.skip_leading_whitespace_after_wrap = true;
 
+                                    var appended_width: u32 = 0;
                                     for (saved_chunks) |vchunk| {
                                         wctx.current_vline.chunks.append(wctx.allocator, vchunk) catch {};
                                         wctx.global_char_offset += vchunk.width;
                                         wctx.line_position += vchunk.width;
+                                        appended_width += vchunk.width;
                                     }
                                     if (track_byte_starts) {
                                         wctx.current_byte_offset = chunk.byte_start + byte_offset;
+
+                                        if (appended_width > 0 and wctx.current_byte_offset == wctx.line_start_byte_offset) {
+                                            // These carried chunks add display
+                                            // width without advancing bytes. Drop
+                                            // them so byte-start progression stays
+                                            // strict for non-empty lines.
+                                            wctx.current_vline.chunks.items.len = 0;
+                                            wctx.global_char_offset -= appended_width;
+                                            wctx.line_position -= appended_width;
+                                        }
                                     }
                                 } else |_| {
                                     commitVirtualLine(wctx);
@@ -1865,6 +1930,15 @@ pub const UnifiedTextBufferView = struct {
 
                 fn line_end_callback(ctx_ptr: *anyopaque, line_info: iter_mod.LineInfo) void {
                     const wctx = @as(*@This(), @ptrCast(@alignCast(ctx_ptr)));
+
+                    if (track_byte_starts and wctx.line_position > 0 and wctx.current_byte_offset == wctx.line_start_byte_offset) {
+                        // Same safeguard as commitVirtualLine(): do not emit
+                        // non-empty visual lines that did not consume bytes.
+                        wctx.global_char_offset -= wctx.line_position;
+                        wctx.line_position = 0;
+                        wctx.current_vline = VirtualLine.init();
+                        wctx.current_vline.col_offset = wctx.global_char_offset;
+                    }
 
                     // Measure mode does not store chunks. Use width state so
                     // non-empty measured lines still commit correctly.

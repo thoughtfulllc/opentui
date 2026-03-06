@@ -3870,3 +3870,20 @@ test "No-wrap empty-line start stays byte-accurate after multibyte" {
     try std.testing.expectEqualSlices(u32, &[_]u32{ 2, 0, 1 }, line_info.line_width_cols);
 }
 
+test "Word-wrap does not emit non-empty line with identical next start" {
+    const pool = gp.initGlobalPool(std.testing.allocator);
+    defer gp.deinitGlobalPool();
+    const link_pool = link.initGlobalLinkPool(std.testing.allocator);
+    defer link.deinitGlobalLinkPool();
+
+    var tb = try TextBuffer.init(std.testing.allocator, pool, link_pool, .wcwidth);
+    defer tb.deinit();
+
+    var view = try TextBufferView.init(std.testing.allocator, tb);
+    defer view.deinit();
+
+    try runVectorScenario(tb, view, "나,다.c/가🌟🌟c/나👋🏻/🌟가다,/.다", .word, 3, 4);
+    const line_info = view.getCachedLineInfo();
+    try assertUtf8BoundarySafety("나,다.c/가🌟🌟c/나👋🏻/🌟가다,/.다", line_info.line_start_cols);
+    try assertMonotonicAndProgress(line_info.line_start_cols, line_info.line_width_cols);
+}

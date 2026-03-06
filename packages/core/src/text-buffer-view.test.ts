@@ -873,6 +873,12 @@ describe("TextBufferView", () => {
         { text: "hello world", wrapMode: "word", wrapWidth: 5, tabWidth: 2 },
         { text: "abcd\tx", wrapMode: "word", wrapWidth: 8, tabWidth: 4 },
         { text: "ab\r\ncd", wrapMode: "none", wrapWidth: null, tabWidth: 2 },
+        {
+          text: "나,다.c/가🌟🌟c/나👋🏻/🌟가다,/.다",
+          wrapMode: "word",
+          wrapWidth: 3,
+          tabWidth: 4,
+        },
       ]
 
       const corpus = createFixedSeedCorpus(0x17c0ffee, 64)
