@@ -108,6 +108,45 @@ describe("TextBufferView", () => {
       expect(lineInfo.lineWidthCols).toEqual([10, 10, 6])
     })
 
+    it("should return byte starts for no-wrap multi-byte lines (#609)", () => {
+      view.setWrapMode("none")
+      buffer.setStyledText(stringToStyledText("흐름\n도움"))
+
+      const lineInfo = view.lineInfo
+      // Rope offsets: "흐름" (0-5) + newline (6) + "도움" starts at 7
+      expect(lineInfo.lineStartCols).toEqual([0, 7])
+    })
+
+    it("should keep #609 multi-byte wrap vectors byte-accurate", () => {
+      const decoder = new TextDecoder()
+      const encoder = new TextEncoder()
+      const vectors = [
+        { text: "흐름도", width: 4, starts: [0, 6], lines: ["흐름", "도"] },
+        { text: "你好世界", width: 4, starts: [0, 6], lines: ["你好", "世界"] },
+        { text: " 안녕a", width: 5, starts: [0, 7], lines: [" 안녕", "a"] },
+        { text: "🇰🇷🇯🇵🇨🇳", width: 4, starts: [0, 16], lines: ["🇰🇷🇯🇵", "🇨🇳"] },
+        { text: "👋🏻👋🏿hi", width: 4, starts: [0, 8, 16], lines: ["👋🏻", "👋🏿", "hi"] },
+        { text: "1️⃣한글", width: 4, starts: [0, 10], lines: ["1️⃣한", "글"] },
+        { text: "가나다라마바사", width: 6, starts: [0, 9, 18], lines: ["가나다", "라마바", "사"] },
+      ]
+
+      view.setWrapMode("char")
+      for (const vector of vectors) {
+        view.setWrapWidth(vector.width)
+        buffer.setStyledText(stringToStyledText(vector.text))
+
+        const lineInfo = view.lineInfo
+        expect(lineInfo.lineStartCols).toEqual(vector.starts)
+
+        const bytes = encoder.encode(vector.text)
+        const actualLines = lineInfo.lineStartCols.map((start, idx) => {
+          const end = idx + 1 < lineInfo.lineStartCols.length ? lineInfo.lineStartCols[idx + 1] : bytes.length
+          return decoder.decode(bytes.slice(start, end))
+        })
+        expect(actualLines).toEqual(vector.lines)
+      }
+    })
+
     it("should update lineInfo when wrap width changes", () => {
       const text = "The quick brown fox jumps over the lazy dog"
       const styledText = stringToStyledText(text)

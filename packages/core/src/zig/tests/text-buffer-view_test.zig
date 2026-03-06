@@ -3852,6 +3852,70 @@ test "Vector gate V9-V12 invariants for wcwidth/unicode/no_zwj" {
     }
 }
 
+test "Issue #609 no-wrap keeps byte starts for multi-byte lines" {
+    const pool = gp.initGlobalPool(std.testing.allocator);
+    defer gp.deinitGlobalPool();
+    const link_pool = link.initGlobalLinkPool(std.testing.allocator);
+    defer link.deinitGlobalLinkPool();
+
+    var tb = try TextBuffer.init(std.testing.allocator, pool, link_pool, .wcwidth);
+    defer tb.deinit();
+
+    var view = try TextBufferView.init(std.testing.allocator, tb);
+    defer view.deinit();
+
+    try runVectorScenario(tb, view, "흐름\n도움", .none, null, 2);
+    const line_info = view.getCachedLineInfo();
+    try std.testing.expectEqualSlices(u32, &[_]u32{ 0, 7 }, line_info.line_start_cols);
+}
+
+test "Issue #609 wrap vectors keep byte starts and UTF-8 slices aligned" {
+    const pool = gp.initGlobalPool(std.testing.allocator);
+    defer gp.deinitGlobalPool();
+    const link_pool = link.initGlobalLinkPool(std.testing.allocator);
+    defer link.deinitGlobalLinkPool();
+
+    var tb = try TextBuffer.init(std.testing.allocator, pool, link_pool, .wcwidth);
+    defer tb.deinit();
+
+    var view = try TextBufferView.init(std.testing.allocator, tb);
+    defer view.deinit();
+
+    const Vector = struct {
+        text: []const u8,
+        width: u32,
+        starts: []const u32,
+        lines: []const []const u8,
+    };
+
+    const vectors = [_]Vector{
+        .{ .text = "흐름도", .width = 4, .starts = &[_]u32{ 0, 6 }, .lines = &[_][]const u8{ "흐름", "도" } },
+        .{ .text = "你好世界", .width = 4, .starts = &[_]u32{ 0, 6 }, .lines = &[_][]const u8{ "你好", "世界" } },
+        .{ .text = " 안녕a", .width = 5, .starts = &[_]u32{ 0, 7 }, .lines = &[_][]const u8{ " 안녕", "a" } },
+        .{ .text = "🇰🇷🇯🇵🇨🇳", .width = 4, .starts = &[_]u32{ 0, 16 }, .lines = &[_][]const u8{ "🇰🇷🇯🇵", "🇨🇳" } },
+        .{ .text = "👋🏻👋🏿hi", .width = 4, .starts = &[_]u32{ 0, 8, 16 }, .lines = &[_][]const u8{ "👋🏻", "👋🏿", "hi" } },
+        .{ .text = "1️⃣한글", .width = 4, .starts = &[_]u32{ 0, 10 }, .lines = &[_][]const u8{ "1️⃣한", "글" } },
+        .{ .text = "가나다라마바사", .width = 6, .starts = &[_]u32{ 0, 9, 18 }, .lines = &[_][]const u8{ "가나다", "라마바", "사" } },
+    };
+
+    try runVectorScenario(tb, view, "", .char, 4, 2);
+    for (vectors) |vector| {
+        try runVectorScenario(tb, view, vector.text, .char, vector.width, 2);
+        const line_info = view.getCachedLineInfo();
+        try std.testing.expectEqualSlices(u32, vector.starts, line_info.line_start_cols);
+        try std.testing.expectEqual(vector.lines.len, line_info.line_start_cols.len);
+
+        for (vector.lines, 0..) |expected_line, idx| {
+            const start: usize = @intCast(line_info.line_start_cols[idx]);
+            const end: usize = if (idx + 1 < line_info.line_start_cols.len)
+                @intCast(line_info.line_start_cols[idx + 1])
+            else
+                vector.text.len;
+            try std.testing.expectEqualStrings(expected_line, vector.text[start..end]);
+        }
+    }
+}
+
 test "No-wrap empty-line start stays byte-accurate after multibyte" {
     const pool = gp.initGlobalPool(std.testing.allocator);
     defer gp.deinitGlobalPool();
