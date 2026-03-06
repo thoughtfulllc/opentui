@@ -287,7 +287,7 @@ exports[`Textarea Layout Tests Text Component Comparison should render text with
 │                                                │
 │   This is a very long prompt that will wrap    │
 │ > across multiple lines in the text component. │
-│    It should maintain proper layout with the   │
+│   It should maintain proper layout with the    │
 │   indicator on the left.                       │
 │                                                │
 │openai gpt-4                                    │
