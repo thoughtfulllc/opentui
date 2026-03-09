@@ -92,9 +92,19 @@ export type KeyHandlerEventMap = {
   paste: [PasteEvent]
 }
 
+export interface KeyHandlerOptions {
+  treatRawBackspaceAsCtrlBackspace?: boolean | (() => boolean)
+}
+
 export class KeyHandler extends EventEmitter<KeyHandlerEventMap> {
+  constructor(private readonly options: KeyHandlerOptions = {}) {
+    super()
+  }
+
   public processParsedKey(parsedKey: ParsedKey): boolean {
     try {
+      parsedKey = this.normalizeParsedKey(parsedKey)
+
       switch (parsedKey.eventType) {
         case "press":
           this.emit("keypress", new KeyEvent(parsedKey))
@@ -112,6 +122,27 @@ export class KeyHandler extends EventEmitter<KeyHandlerEventMap> {
     }
 
     return true
+  }
+
+  private normalizeParsedKey(parsedKey: ParsedKey): ParsedKey {
+    if (
+      parsedKey.raw === "\b" &&
+      parsedKey.name === "backspace" &&
+      !parsedKey.ctrl &&
+      this.shouldTreatRawBackspaceAsCtrlBackspace()
+    ) {
+      return {
+        ...parsedKey,
+        ctrl: true,
+      }
+    }
+
+    return parsedKey
+  }
+
+  private shouldTreatRawBackspaceAsCtrlBackspace(): boolean {
+    const value = this.options.treatRawBackspaceAsCtrlBackspace
+    return typeof value === "function" ? value() : !!value
   }
 
   public processPaste(data: string): void {

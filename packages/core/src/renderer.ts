@@ -615,7 +615,9 @@ export class CliRenderer extends EventEmitter implements RenderContext {
 
     const kittyConfig = config.useKittyKeyboard ?? {}
     const useKittyForParsing = kittyConfig !== null
-    this._keyHandler = new InternalKeyHandler()
+    this._keyHandler = new InternalKeyHandler({
+      treatRawBackspaceAsCtrlBackspace: () => this.isWindowsTerminalSession(),
+    })
     this._keyHandler.on("keypress", (event) => {
       if (this.exitOnCtrlC && event.name === "c" && event.ctrl) {
         process.nextTick(() => {
@@ -1212,6 +1214,15 @@ export class CliRenderer extends EventEmitter implements RenderContext {
         this.dispatchSequenceHandlers(event.sequence)
         return
     }
+  }
+
+  private isWindowsTerminalSession(): boolean {
+    if (process.env.WT_SESSION) {
+      return true
+    }
+
+    const terminalName = this._capabilities?.terminal?.name?.toLowerCase()
+    return terminalName === "windows terminal" || terminalName === "windows_terminal"
   }
 
   private handleStdinParserFailure(error: unknown): void {

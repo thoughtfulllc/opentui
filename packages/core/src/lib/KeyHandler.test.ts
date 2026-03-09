@@ -1,12 +1,12 @@
 import { test, expect } from "bun:test"
-import { InternalKeyHandler, KeyEvent } from "./KeyHandler.js"
+import { InternalKeyHandler, KeyEvent, type KeyHandlerOptions } from "./KeyHandler.js"
 import { type ParseKeypressOptions, parseKeypress } from "./parse.keypress.js"
 import { createTestRenderer } from "../testing/test-renderer.js"
 
 const { renderer, mockInput } = await createTestRenderer({})
 
-function createKeyHandler(): InternalKeyHandler {
-  return new InternalKeyHandler()
+function createKeyHandler(options: KeyHandlerOptions = {}): InternalKeyHandler {
+  return new InternalKeyHandler(options)
 }
 
 function dispatchInput(handler: InternalKeyHandler, data: string, options: ParseKeypressOptions = {}): boolean {
@@ -37,6 +37,29 @@ test("KeyHandler - parsed input emits keypress events", () => {
     number: false,
     sequence: "a",
     raw: "a",
+    eventType: "press",
+  })
+})
+
+test("KeyHandler - can normalize raw backspace to ctrl+backspace", () => {
+  const handler = createKeyHandler({ treatRawBackspaceAsCtrlBackspace: () => true })
+
+  let receivedKey: KeyEvent | undefined
+  handler.on("keypress", (key: KeyEvent) => {
+    receivedKey = key
+  })
+
+  dispatchInput(handler, "\b")
+
+  expect(receivedKey).toMatchObject({
+    name: "backspace",
+    ctrl: true,
+    meta: false,
+    shift: false,
+    option: false,
+    number: false,
+    sequence: "\b",
+    raw: "\b",
     eventType: "press",
   })
 })
