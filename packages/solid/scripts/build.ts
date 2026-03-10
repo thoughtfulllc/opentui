@@ -87,6 +87,23 @@ console.log("Generating TypeScript declarations...")
 
 const tsconfigBuildPath = join(rootDir, "tsconfig.build.json")
 
+const coreRootDir = resolve(rootDir, "../core")
+const corePackageJsonPath = join(coreRootDir, "package.json")
+
+if (existsSync(corePackageJsonPath)) {
+  console.log("Ensuring @opentui/core declarations are up to date...")
+
+  const coreBuildResult: SpawnSyncReturns<Buffer> = spawnSync("bun", ["run", "build:lib"], {
+    cwd: coreRootDir,
+    stdio: "inherit",
+  })
+
+  if (coreBuildResult.status !== 0) {
+    console.error("Error: Failed to build @opentui/core declarations required by @opentui/solid")
+    process.exit(1)
+  }
+}
+
 const tscResult: SpawnSyncReturns<Buffer> = spawnSync("bunx", ["tsc", "-p", tsconfigBuildPath], {
   cwd: rootDir,
   stdio: "inherit",

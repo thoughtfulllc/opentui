@@ -7,7 +7,7 @@ import {
   useKeyboard,
   useRenderer,
 } from "@opentui/solid"
-import { createEffect, createMemo, createSignal, onCleanup, onMount, type JSX } from "solid-js"
+import { createEffect, createMemo, createSignal, on, onCleanup, onMount, Show, type JSX } from "solid-js"
 
 type DemoSlots = {
   statusbar: { label: string }
@@ -163,24 +163,35 @@ export default function PluginSlotsDemo() {
   })
   onCleanup(unsubscribePluginErrors)
 
-  createEffect(() => {
-    refreshNonce()
-    const unregisterCallbacks: Array<() => void> = []
+  createEffect(
+    on(
+      [refreshNonce, clockEnabled, activityEnabled, clockCrashEnabled, activityCrashEnabled],
+      ([
+        _currentRefreshNonce,
+        currentClockEnabled,
+        currentActivityEnabled,
+        currentClockCrashEnabled,
+        currentActivityCrashEnabled,
+      ]) => {
+        const unregisterCallbacks: Array<() => void> = []
 
-    if (clockEnabled()) {
-      unregisterCallbacks.push(registry.register(createClockPlugin(clockCrashEnabled())))
-    }
+        if (currentClockEnabled) {
+          unregisterCallbacks.push(registry.register(createClockPlugin(currentClockCrashEnabled)))
+        }
 
-    if (activityEnabled()) {
-      unregisterCallbacks.push(registry.register(createActivityPlugin(activityCrashEnabled())))
-    }
+        if (currentActivityEnabled) {
+          unregisterCallbacks.push(registry.register(createActivityPlugin(currentActivityCrashEnabled)))
+        }
 
-    onCleanup(() => {
-      for (const unregister of unregisterCallbacks.reverse()) {
-        unregister()
-      }
-    })
-  })
+        onCleanup(() => {
+          for (const unregister of unregisterCallbacks.reverse()) {
+            unregister()
+          }
+        })
+      },
+      { defer: false },
+    ),
+  )
 
   useKeyboard((key) => {
     switch (key.name) {
@@ -244,24 +255,34 @@ export default function PluginSlotsDemo() {
   })
 
   const renderStatusbarSlot = () => {
+    const mode = statusbarMode()
+
     if (showPlaceholder()) {
       return (
-        <AppSlot
-          registry={registry}
-          name="statusbar"
-          label={DEMO_STATUS_LABEL}
-          mode={statusbarMode()}
-          pluginFailurePlaceholder={pluginFailurePlaceholder}
-        >
-          <text fg="#94a3b8">Fallback statusbar content</text>
-        </AppSlot>
+        <Show when={mode} keyed>
+          {(currentMode) => (
+            <AppSlot
+              registry={registry}
+              name="statusbar"
+              label={DEMO_STATUS_LABEL}
+              mode={currentMode}
+              pluginFailurePlaceholder={pluginFailurePlaceholder}
+            >
+              <text fg="#94a3b8">Fallback statusbar content</text>
+            </AppSlot>
+          )}
+        </Show>
       )
     }
 
     return (
-      <AppSlot registry={registry} name="statusbar" label={DEMO_STATUS_LABEL} mode={statusbarMode()}>
-        <text fg="#94a3b8">Fallback statusbar content</text>
-      </AppSlot>
+      <Show when={mode} keyed>
+        {(currentMode) => (
+          <AppSlot registry={registry} name="statusbar" label={DEMO_STATUS_LABEL} mode={currentMode}>
+            <text fg="#94a3b8">Fallback statusbar content</text>
+          </AppSlot>
+        )}
+      </Show>
     )
   }
 
