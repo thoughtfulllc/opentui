@@ -29,6 +29,9 @@
     "./bun-plugin": {
       "import": "./scripts/solid-plugin.ts"
     },
+    "./runtime-plugin-support": {
+      "import": "./scripts/runtime-plugin-support.ts"
+    },
     "./jsx-runtime": "./jsx-runtime.d.ts",
     "./jsx-dev-runtime": "./jsx-runtime.d.ts"
   },
