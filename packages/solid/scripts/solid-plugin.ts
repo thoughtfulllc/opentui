@@ -10,17 +10,22 @@ import { type BunPlugin } from "bun"
 
 type Mode = "runtime" | "build"
 
+type RuntimeModuleExports = Record<string, unknown>
+type RuntimeModuleLoader = () => RuntimeModuleExports | Promise<RuntimeModuleExports>
+
 type RuntimeModuleMap = {
-  solid?: Record<string, unknown>
-  core?: Record<string, unknown>
-  solidJs?: Record<string, unknown>
-  solidJsStore?: Record<string, unknown>
+  solid?: RuntimeModuleExports
+  core?: RuntimeModuleExports
+  solidJs?: RuntimeModuleExports
+  solidJsStore?: RuntimeModuleExports
+  additional?: Record<string, RuntimeModuleExports | RuntimeModuleLoader>
 }
 
 const SOLID_RUNTIME_MODULE = "opentui:solid-runtime"
 const CORE_RUNTIME_MODULE = "opentui:core-runtime"
 const SOLID_JS_RUNTIME_MODULE = "opentui:solid-js-runtime"
 const SOLID_JS_STORE_RUNTIME_MODULE = "opentui:solid-js-store-runtime"
+const RUNTIME_MODULE_PREFIX = "opentui:runtime-module:"
 
 // runtime mode is used by @opentui/solid/preload inside apps.
 // It canonicalizes @opentui/* imports so external TSX/plugin modules resolve
@@ -31,6 +36,24 @@ const SOLID_JS_STORE_RUNTIME_MODULE = "opentui:solid-js-store-runtime"
 
 const resolved = (specifier: string): string => {
   return import.meta.resolve(specifier)
+}
+
+const escapeRegExp = (value: string): string => {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+}
+
+const runtimeModuleIdForSpecifier = (specifier: string): string => {
+  return `${RUNTIME_MODULE_PREFIX}${encodeURIComponent(specifier)}`
+}
+
+const resolveRuntimeModuleExports = async (
+  moduleEntry: RuntimeModuleExports | RuntimeModuleLoader,
+): Promise<RuntimeModuleExports> => {
+  if (typeof moduleEntry === "function") {
+    return await moduleEntry()
+  }
+
+  return moduleEntry
 }
 
 export function createSolidTransformPlugin(input: { mode?: Mode; runtimeModules?: RuntimeModuleMap } = {}): BunPlugin {
@@ -70,10 +93,23 @@ export function createSolidTransformPlugin(input: { mode?: Mode; runtimeModules?
           }))
         }
 
-        build.onResolve({ filter: /^@opentui\/solid(?:\/.*)?$/ }, () => ({ path: SOLID_RUNTIME_MODULE }))
+        if (runtimeModules?.additional) {
+          for (const [specifier, moduleEntry] of Object.entries(runtimeModules.additional)) {
+            const moduleId = runtimeModuleIdForSpecifier(specifier)
+
+            build.module(moduleId, async () => ({
+              exports: await resolveRuntimeModuleExports(moduleEntry),
+              loader: "object",
+            }))
+
+            build.onResolve({ filter: new RegExp(`^${escapeRegExp(specifier)}$`) }, () => ({ path: moduleId }))
+          }
+        }
+
+        build.onResolve({ filter: /^@opentui\/solid$/ }, () => ({ path: SOLID_RUNTIME_MODULE }))
 
         if (runtimeModules?.core) {
-          build.onResolve({ filter: /^@opentui\/core(?:\/.*)?$/ }, () => ({ path: CORE_RUNTIME_MODULE }))
+          build.onResolve({ filter: /^@opentui\/core$/ }, () => ({ path: CORE_RUNTIME_MODULE }))
         }
 
         if (runtimeModules?.solidJs) {
@@ -81,7 +117,7 @@ export function createSolidTransformPlugin(input: { mode?: Mode; runtimeModules?
         }
 
         if (runtimeModules?.solidJsStore) {
-          build.onResolve({ filter: /^solid-js\/store(?:\/.*)?$/ }, () => ({ path: SOLID_JS_STORE_RUNTIME_MODULE }))
+          build.onResolve({ filter: /^solid-js\/store$/ }, () => ({ path: SOLID_JS_STORE_RUNTIME_MODULE }))
         }
       } else if (runtime) {
         const canonical = [/^@opentui\/solid(?:\/.*)?$/, /^@opentui\/core(?:\/.*)?$/]
@@ -99,11 +135,11 @@ export function createSolidTransformPlugin(input: { mode?: Mode; runtimeModules?
         if (!runtime) return null
 
         if (injectedSolidRuntime) {
-          if (path.startsWith("@opentui/solid")) {
+          if (path === "@opentui/solid") {
             return SOLID_RUNTIME_MODULE
           }
 
-          if (path.startsWith("@opentui/core") && runtimeModules?.core) {
+          if (path === "@opentui/core" && runtimeModules?.core) {
             return CORE_RUNTIME_MODULE
           }
 
@@ -111,8 +147,12 @@ export function createSolidTransformPlugin(input: { mode?: Mode; runtimeModules?
             return SOLID_JS_RUNTIME_MODULE
           }
 
-          if ((path === "solid-js/store" || path.startsWith("solid-js/store/")) && runtimeModules?.solidJsStore) {
+          if (path === "solid-js/store" && runtimeModules?.solidJsStore) {
             return SOLID_JS_STORE_RUNTIME_MODULE
+          }
+
+          if (runtimeModules?.additional?.[path]) {
+            return runtimeModuleIdForSpecifier(path)
           }
 
           return null

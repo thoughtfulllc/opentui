@@ -18,17 +18,21 @@ export function ensureRuntimePluginSupport(): boolean {
     return false
   }
 
-  registerBunPlugin(
-    createSolidTransformPlugin({
-      mode: "runtime",
-      runtimeModules: {
-        solid: solidRuntime as Record<string, unknown>,
-        core: coreRuntime as Record<string, unknown>,
-        solidJs: solidJsRuntime as Record<string, unknown>,
-        solidJsStore: solidJsStoreRuntime as Record<string, unknown>,
+  const pluginOptions = {
+    mode: "runtime" as const,
+    runtimeModules: {
+      solid: solidRuntime as Record<string, unknown>,
+      core: coreRuntime as Record<string, unknown>,
+      solidJs: solidJsRuntime as Record<string, unknown>,
+      solidJsStore: solidJsStoreRuntime as Record<string, unknown>,
+      additional: {
+        "@opentui/core/3d": async () => (await import("@opentui/core/3d")) as Record<string, unknown>,
+        "@opentui/core/testing": async () => (await import("@opentui/core/testing")) as Record<string, unknown>,
       },
-    }),
-  )
+    },
+  }
+
+  registerBunPlugin(createSolidTransformPlugin(pluginOptions as Parameters<typeof createSolidTransformPlugin>[0]))
 
   state[runtimePluginSupportInstalledKey] = true
   return true
