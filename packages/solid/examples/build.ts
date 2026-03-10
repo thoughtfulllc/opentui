@@ -93,6 +93,7 @@ let failCount = 0
 
 for (const { platform, arch } of targets) {
   const exeName = platform === "windows" ? "opentui-solid-examples.exe" : "opentui-solid-examples"
+  const nullConfigPath = platform === "windows" ? "NUL" : "/dev/null"
   const outfile = join(distDir, `${platform}-${arch}`, exeName)
 
   mkdirSync(dirname(outfile), { recursive: true })
@@ -108,7 +109,12 @@ for (const { platform, arch } of targets) {
       compile: {
         target: `bun-${platform}-${arch}` as any,
         outfile,
-        execArgv: [`--user-agent=opentui-solid-examples/${version}`, `--env-file=""`, `--`],
+        execArgv: [
+          `--user-agent=opentui-solid-examples/${version}`,
+          `--config=${nullConfigPath}`,
+          `--env-file=""`,
+          `--`,
+        ],
         windows: {},
       },
     })
