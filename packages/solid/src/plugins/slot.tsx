@@ -117,6 +117,7 @@ export function Slot<
 
   const entryIds = createMemo(() => entries().map((entry) => entry.id))
   const entriesById = createMemo(() => new Map(entries().map((entry) => [entry.id, entry])))
+  const fallbackChildren = children(() => local.children)
 
   const slotName = () => String(local.name)
 
@@ -208,7 +209,7 @@ export function Slot<
 
   const appendView = (
     <>
-      {local.children}
+      {fallbackChildren() as JSX.Element}
       <For each={entryIds()}>{(entryId) => <AppendEntry entryId={entryId} />}</For>
     </>
   )
@@ -217,28 +218,30 @@ export function Slot<
     <>
       {(() => {
         const resolvedEntries = entries()
+        const mode = local.mode ?? "append"
+        const fallback = fallbackChildren() as JSX.Element
 
         if (resolvedEntries.length === 0) {
-          return local.children
+          return fallback
         }
 
-        if (local.mode === "single_winner") {
+        if (mode === "single_winner") {
           const winner = resolvedEntries[0]
           if (!winner) {
-            return local.children
+            return fallback
           }
 
-          return renderEntry(winner, local.children as JSX.Element)
+          return renderEntry(winner, fallback)
         }
 
-        if (local.mode === "replace") {
+        if (mode === "replace") {
           const renderedEntries = resolvedEntries.map((entry) => renderEntry(entry))
           const hasPluginOutput = renderedEntries.some(
             (entry) => entry !== null && entry !== undefined && entry !== false,
           )
 
           if (!hasPluginOutput) {
-            return local.children as JSX.Element
+            return fallback
           }
 
           return <>{renderedEntries}</>
