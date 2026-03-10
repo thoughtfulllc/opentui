@@ -133,6 +133,13 @@ if (existsSync(join(rootDir, "scripts", "preload.ts"))) {
   copyFileSync(join(rootDir, "scripts", "preload.ts"), join(distDir, "scripts", "preload.ts"))
 }
 
+if (existsSync(join(rootDir, "scripts", "runtime-plugin-support.ts"))) {
+  copyFileSync(
+    join(rootDir, "scripts", "runtime-plugin-support.ts"),
+    join(distDir, "scripts", "runtime-plugin-support.ts"),
+  )
+}
+
 const exports = {
   ".": {
     types: "./index.d.ts",
@@ -145,6 +152,10 @@ const exports = {
   "./bun-plugin": {
     types: "./scripts/solid-plugin.d.ts",
     import: "./scripts/solid-plugin.ts",
+  },
+  "./runtime-plugin-support": {
+    types: "./scripts/runtime-plugin-support.d.ts",
+    import: "./scripts/runtime-plugin-support.ts",
   },
   "./jsx-runtime": "./jsx-runtime.d.ts",
   "./jsx-dev-runtime": "./jsx-runtime.d.ts",
