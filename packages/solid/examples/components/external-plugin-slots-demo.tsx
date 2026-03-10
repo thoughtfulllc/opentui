@@ -1,9 +1,100 @@
-import { Slot, createSolidSlotRegistry, type SlotMode, useKeyboard, useRenderer } from "@opentui/solid"
+import { existsSync } from "node:fs"
+import { dirname, isAbsolute, join, resolve } from "node:path"
+import process from "node:process"
+import { fileURLToPath, pathToFileURL } from "node:url"
+import "@opentui/solid/runtime-plugin-support"
+import {
+  Slot,
+  createSolidSlotRegistry,
+  type SlotMode,
+  type SolidPlugin,
+  useKeyboard,
+  useRenderer,
+} from "@opentui/solid"
 import { createEffect, createMemo, createSignal, on, onCleanup, onMount, Show } from "solid-js"
-import { loadExternalPlugin, type ExternalPluginContext, type ExternalPluginSlots } from "../.plugin/index.tsx"
 
 const STATUSBAR_LABEL = "host-status"
 const SIDEBAR_SECTION = "external-plugins"
+const DEFAULT_PLUGIN_ENTRY = ".plugin/index.tsx"
+const EXTERNAL_PLUGIN_PATH_ENV = "OPENTUI_SOLID_EXTERNAL_PLUGIN_PATH"
+
+const moduleDir = dirname(fileURLToPath(import.meta.url))
+
+type ExternalPluginSlots = {
+  statusbar: { label: string }
+  sidebar: { section: string }
+}
+
+type ExternalPluginContext = {
+  appName: string
+  version: string
+}
+
+type ExternalPluginModule = {
+  loadExternalPlugin(): SolidPlugin<ExternalPluginSlots, ExternalPluginContext>
+}
+
+function normalizePath(input: string): string {
+  if (input.startsWith("file://")) {
+    return fileURLToPath(input)
+  }
+
+  if (isAbsolute(input)) {
+    return input
+  }
+
+  return resolve(process.cwd(), input)
+}
+
+function resolveExternalPluginCandidates(): string[] {
+  const paths = new Set<string>()
+  const envPath = process.env[EXTERNAL_PLUGIN_PATH_ENV]
+
+  if (envPath && envPath.trim().length > 0) {
+    paths.add(normalizePath(envPath.trim()))
+  }
+
+  paths.add(resolve(process.cwd(), "packages", "solid", "examples", DEFAULT_PLUGIN_ENTRY))
+  paths.add(resolve(dirname(process.execPath), "..", "..", DEFAULT_PLUGIN_ENTRY))
+  paths.add(resolve(moduleDir, "..", DEFAULT_PLUGIN_ENTRY))
+  paths.add(join(dirname(process.execPath), DEFAULT_PLUGIN_ENTRY))
+  paths.add(resolve(dirname(process.execPath), "..", DEFAULT_PLUGIN_ENTRY))
+  paths.add(resolve(process.cwd(), DEFAULT_PLUGIN_ENTRY))
+
+  return [...paths]
+}
+
+function resolveExternalPluginPath(): string {
+  const candidates = resolveExternalPluginCandidates()
+
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) {
+      return candidate
+    }
+  }
+
+  throw new Error(`Unable to locate external plugin. Checked: ${candidates.join(", ")}`)
+}
+
+async function loadExternalPluginFromDisk(
+  nonce: number,
+): Promise<{ path: string; plugin: SolidPlugin<ExternalPluginSlots, ExternalPluginContext> }> {
+  const path = resolveExternalPluginPath()
+  const url = pathToFileURL(path)
+  url.searchParams.set("reload", `${nonce}`)
+  url.searchParams.set("ts", `${Date.now()}`)
+
+  const externalModule = (await import(url.href)) as Partial<ExternalPluginModule>
+
+  if (typeof externalModule.loadExternalPlugin !== "function") {
+    throw new Error("External plugin module does not export loadExternalPlugin()")
+  }
+
+  return {
+    path,
+    plugin: externalModule.loadExternalPlugin(),
+  }
+}
 
 const hostContext: ExternalPluginContext = {
   appName: "solid-external-plugin-demo",
@@ -30,21 +121,63 @@ export default function ExternalPluginSlotsDemo() {
   const [statusbarMode, setStatusbarMode] = createSignal<SlotMode>("append")
   const [pluginEnabled, setPluginEnabled] = createSignal(true)
   const [reloadNonce, setReloadNonce] = createSignal(0)
+  const [loadedPluginPath, setLoadedPluginPath] = createSignal("(not loaded yet)")
+  const [lastPluginId, setLastPluginId] = createSignal("(none)")
+  const [lastLoadError, setLastLoadError] = createSignal<string | null>(null)
 
   onMount(() => {
     renderer.setBackgroundColor("#000000")
   })
 
+  const unsubscribePluginErrors = registry.onPluginError((event) => {
+    setLastLoadError(`${event.phase}: ${event.error.message}`)
+  })
+  onCleanup(unsubscribePluginErrors)
+
   createEffect(
     on(
       [pluginEnabled, reloadNonce],
-      ([currentPluginEnabled]) => {
+      ([currentPluginEnabled, currentReloadNonce]) => {
+        let cleanedUp = false
+        let unregisterPlugin: (() => void) | null = null
+
         if (!currentPluginEnabled) {
+          setLastPluginId("(disabled)")
+          setLastLoadError(null)
           return
         }
 
-        const unregister = registry.register(loadExternalPlugin())
-        onCleanup(unregister)
+        setLastLoadError(null)
+
+        void (async () => {
+          try {
+            const { path, plugin } = await loadExternalPluginFromDisk(currentReloadNonce)
+            if (cleanedUp) {
+              return
+            }
+
+            const unregister = registry.register(plugin)
+            unregisterPlugin = () => {
+              unregister()
+            }
+
+            setLoadedPluginPath(path)
+            setLastPluginId(plugin.id)
+            setLastLoadError(null)
+          } catch (error) {
+            const message = error instanceof Error ? `${error.name}: ${error.message}` : String(error)
+            setLastPluginId("(load failed)")
+            setLastLoadError(message)
+          }
+        })()
+
+        onCleanup(() => {
+          cleanedUp = true
+          if (unregisterPlugin) {
+            unregisterPlugin()
+            unregisterPlugin = null
+          }
+        })
       },
       { defer: false },
     ),
@@ -74,10 +207,14 @@ export default function ExternalPluginSlotsDemo() {
     return [
       "Solid External Plugin Slot Demo",
       "",
-      "External plugin entry: .plugin/index.tsx",
+      `External plugin env override: ${EXTERNAL_PLUGIN_PATH_ENV}`,
+      `External plugin resolved path: ${loadedPluginPath()}`,
+      `Last loaded plugin id: ${lastPluginId()}`,
+      `Last plugin load error: ${lastLoadError() ?? "(none)"}`,
+      "",
       `Plugin enabled: ${pluginEnabled() ? "ON" : "OFF"} (press p)`,
       `Statusbar mode: ${statusbarMode().toUpperCase()} (press m to cycle)`,
-      "Press r to re-register the external plugin.",
+      "Press r to reload external plugin from disk and re-register.",
       "",
       `Statusbar slot label: ${STATUSBAR_LABEL}`,
       `Sidebar slot section: ${SIDEBAR_SECTION}`,

@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 
-import { chmodSync, mkdirSync } from "node:fs"
+import { chmodSync, cpSync, existsSync, mkdirSync, rmSync } from "node:fs"
 import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import process from "node:process"
@@ -51,6 +51,7 @@ const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
 const packageRoot = resolve(__dirname, "..")
 const distDir = join(__dirname, "dist")
+const externalPluginSourceDir = join(__dirname, ".plugin")
 
 const packageJson = JSON.parse(await Bun.file(join(packageRoot, "package.json")).text()) as { version?: string }
 const version = packageJson.version ?? "0.0.0"
@@ -79,10 +80,26 @@ const workspaceAliasPlugin: BunPlugin = {
         path: join(packageRoot, "..", "core", "src", "testing.ts"),
       }
     })
+
+    build.onResolve({ filter: /^@opentui\/solid\/runtime-plugin-support$/ }, () => {
+      return {
+        path: join(packageRoot, "scripts", "runtime-plugin-support.ts"),
+      }
+    })
   },
 }
 
 mkdirSync(distDir, { recursive: true })
+
+function syncExternalPluginFiles(targetDir: string): void {
+  if (!existsSync(externalPluginSourceDir)) {
+    return
+  }
+
+  const pluginOutDir = join(targetDir, ".plugin")
+  rmSync(pluginOutDir, { recursive: true, force: true })
+  cpSync(externalPluginSourceDir, pluginOutDir, { recursive: true })
+}
 
 console.log(`Building Solid examples executable${buildAll ? "s" : ""}...`)
 console.log(`Output directory: ${distDir}`)
@@ -142,6 +159,8 @@ for (const { platform, arch } of targets) {
     if (platform !== "windows") {
       chmodSync(outfile, 0o755)
     }
+
+    syncExternalPluginFiles(dirname(outfile))
 
     console.log(`  ✅ Successfully built: ${outfile}`)
     successCount++
