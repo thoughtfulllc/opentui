@@ -145,7 +145,7 @@ export function Slot<
     entry: ResolvedSlotRenderer<JSX.Element, TSlots[K], TContext>,
     fallbackOnError?: JSX.Element,
   ): JSX.Element => {
-    const fallbackValue = fallbackOnError ?? (null as unknown as JSX.Element)
+    const fallbackValue = fallbackOnError ?? null
     let initialRender: JSX.Element
 
     try {
@@ -198,7 +198,7 @@ export function Slot<
         {(() => {
           const resolvedEntry = entry()
           if (!resolvedEntry) {
-            return null as unknown as JSX.Element
+            return null
           }
 
           return renderEntry(resolvedEntry)
@@ -209,7 +209,7 @@ export function Slot<
 
   const appendView = (
     <>
-      {fallbackChildren() as JSX.Element}
+      {fallbackChildren()}
       <For each={entryIds()}>{(entryId) => <AppendEntry entryId={entryId} />}</For>
     </>
   )
@@ -219,7 +219,7 @@ export function Slot<
       {(() => {
         const resolvedEntries = entries()
         const mode = local.mode ?? "append"
-        const fallback = fallbackChildren() as JSX.Element
+        const fallback = fallbackChildren()
 
         if (resolvedEntries.length === 0) {
           return fallback
