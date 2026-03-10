@@ -50,8 +50,9 @@ export function createSolidTransformPlugin(input: { mode?: Mode; runtimeModules?
       // Runtime transform points JSX factories at the host-resolved module.
       // Build transform must keep the public package specifier.
 
-      if (runtime && injectedSolidRuntime) {
-        build.module(SOLID_RUNTIME_MODULE, () => ({ exports: runtimeModules.solid ?? {}, loader: "object" }))
+      if (runtime && runtimeModules?.solid) {
+        const solidModuleExports = runtimeModules.solid
+        build.module(SOLID_RUNTIME_MODULE, () => ({ exports: solidModuleExports, loader: "object" }))
 
         if (runtimeModules?.core) {
           build.module(CORE_RUNTIME_MODULE, () => ({ exports: runtimeModules.core ?? {}, loader: "object" }))
