@@ -21,6 +21,12 @@ type RuntimeModuleMap = {
   additional?: Record<string, RuntimeModuleExports | RuntimeModuleLoader>
 }
 
+type RuntimeModuleBinding = {
+  specifier: string
+  moduleId: string
+  moduleExports?: RuntimeModuleExports
+}
+
 const SOLID_RUNTIME_MODULE = "opentui:solid-runtime"
 const CORE_RUNTIME_MODULE = "opentui:core-runtime"
 const SOLID_JS_RUNTIME_MODULE = "opentui:solid-js-runtime"
@@ -42,6 +48,12 @@ const escapeRegExp = (value: string): string => {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
 }
 
+const exactSpecifierFilter = (specifier: string): RegExp => {
+  return new RegExp(`^${escapeRegExp(specifier)}$`)
+}
+
+const CANONICAL_RUNTIME_FILTERS = [/^@opentui\/solid(?:\/.*)?$/, /^@opentui\/core(?:\/.*)?$/]
+
 const runtimeModuleIdForSpecifier = (specifier: string): string => {
   return `${RUNTIME_MODULE_PREFIX}${encodeURIComponent(specifier)}`
 }
@@ -60,7 +72,33 @@ export function createSolidTransformPlugin(input: { mode?: Mode; runtimeModules?
   const mode = input.mode ?? "runtime"
   const runtime = mode === "runtime"
   const runtimeModules = input.runtimeModules
-  const injectedSolidRuntime = runtime && Boolean(runtimeModules?.solid)
+  const injectedRuntimeModules = runtime && runtimeModules?.solid ? runtimeModules : null
+  const injectedSolidRuntime = Boolean(injectedRuntimeModules)
+
+  const runtimeModuleBindings: RuntimeModuleBinding[] = injectedRuntimeModules
+    ? [
+        {
+          specifier: "@opentui/solid",
+          moduleId: SOLID_RUNTIME_MODULE,
+          moduleExports: injectedRuntimeModules.solid,
+        },
+        {
+          specifier: "@opentui/core",
+          moduleId: CORE_RUNTIME_MODULE,
+          moduleExports: injectedRuntimeModules.core,
+        },
+        {
+          specifier: "solid-js",
+          moduleId: SOLID_JS_RUNTIME_MODULE,
+          moduleExports: injectedRuntimeModules.solidJs,
+        },
+        {
+          specifier: "solid-js/store",
+          moduleId: SOLID_JS_STORE_RUNTIME_MODULE,
+          moduleExports: injectedRuntimeModules.solidJsStore,
+        },
+      ]
+    : []
 
   return {
     name: "bun-plugin-solid",
@@ -74,55 +112,29 @@ export function createSolidTransformPlugin(input: { mode?: Mode; runtimeModules?
       // Runtime transform points JSX factories at the host-resolved module.
       // Build transform must keep the public package specifier.
 
-      if (runtime && runtimeModules?.solid) {
-        const solidModuleExports = runtimeModules.solid
-        build.module(SOLID_RUNTIME_MODULE, () => ({ exports: solidModuleExports, loader: "object" }))
+      if (injectedRuntimeModules) {
+        for (const runtimeModule of runtimeModuleBindings) {
+          const moduleExports = runtimeModule.moduleExports
+          if (!moduleExports) continue
 
-        if (runtimeModules?.core) {
-          build.module(CORE_RUNTIME_MODULE, () => ({ exports: runtimeModules.core ?? {}, loader: "object" }))
-        }
-
-        if (runtimeModules?.solidJs) {
-          build.module(SOLID_JS_RUNTIME_MODULE, () => ({ exports: runtimeModules.solidJs ?? {}, loader: "object" }))
-        }
-
-        if (runtimeModules?.solidJsStore) {
-          build.module(SOLID_JS_STORE_RUNTIME_MODULE, () => ({
-            exports: runtimeModules.solidJsStore ?? {},
-            loader: "object",
+          build.module(runtimeModule.moduleId, () => ({ exports: moduleExports, loader: "object" }))
+          build.onResolve({ filter: exactSpecifierFilter(runtimeModule.specifier) }, () => ({
+            path: runtimeModule.moduleId,
           }))
         }
 
-        if (runtimeModules?.additional) {
-          for (const [specifier, moduleEntry] of Object.entries(runtimeModules.additional)) {
-            const moduleId = runtimeModuleIdForSpecifier(specifier)
+        for (const [specifier, moduleEntry] of Object.entries(injectedRuntimeModules.additional ?? {})) {
+          const moduleId = runtimeModuleIdForSpecifier(specifier)
 
-            build.module(moduleId, async () => ({
-              exports: await resolveRuntimeModuleExports(moduleEntry),
-              loader: "object",
-            }))
+          build.module(moduleId, async () => ({
+            exports: await resolveRuntimeModuleExports(moduleEntry),
+            loader: "object",
+          }))
 
-            build.onResolve({ filter: new RegExp(`^${escapeRegExp(specifier)}$`) }, () => ({ path: moduleId }))
-          }
-        }
-
-        build.onResolve({ filter: /^@opentui\/solid$/ }, () => ({ path: SOLID_RUNTIME_MODULE }))
-
-        if (runtimeModules?.core) {
-          build.onResolve({ filter: /^@opentui\/core$/ }, () => ({ path: CORE_RUNTIME_MODULE }))
-        }
-
-        if (runtimeModules?.solidJs) {
-          build.onResolve({ filter: /^solid-js$/ }, () => ({ path: SOLID_JS_RUNTIME_MODULE }))
-        }
-
-        if (runtimeModules?.solidJsStore) {
-          build.onResolve({ filter: /^solid-js\/store$/ }, () => ({ path: SOLID_JS_STORE_RUNTIME_MODULE }))
+          build.onResolve({ filter: exactSpecifierFilter(specifier) }, () => ({ path: moduleId }))
         }
       } else if (runtime) {
-        const canonical = [/^@opentui\/solid(?:\/.*)?$/, /^@opentui\/core(?:\/.*)?$/]
-
-        for (const filter of canonical) {
+        for (const filter of CANONICAL_RUNTIME_FILTERS) {
           build.onResolve({ filter }, (args) => {
             return {
               path: resolved(args.path),
@@ -135,23 +147,14 @@ export function createSolidTransformPlugin(input: { mode?: Mode; runtimeModules?
         if (!runtime) return null
 
         if (injectedSolidRuntime) {
-          if (path === "@opentui/solid") {
-            return SOLID_RUNTIME_MODULE
+          for (const runtimeModule of runtimeModuleBindings) {
+            if (!runtimeModule.moduleExports) continue
+            if (path === runtimeModule.specifier) {
+              return runtimeModule.moduleId
+            }
           }
 
-          if (path === "@opentui/core" && runtimeModules?.core) {
-            return CORE_RUNTIME_MODULE
-          }
-
-          if (path === "solid-js" && runtimeModules?.solidJs) {
-            return SOLID_JS_RUNTIME_MODULE
-          }
-
-          if (path === "solid-js/store" && runtimeModules?.solidJsStore) {
-            return SOLID_JS_STORE_RUNTIME_MODULE
-          }
-
-          if (runtimeModules?.additional?.[path]) {
+          if (injectedRuntimeModules?.additional?.[path]) {
             return runtimeModuleIdForSpecifier(path)
           }
 
