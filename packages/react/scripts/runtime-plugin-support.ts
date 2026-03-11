@@ -14,6 +14,8 @@ type RuntimePluginSupportState = typeof globalThis & {
 
 const additionalRuntimeModules: Record<string, RuntimeModuleEntry> = {
   "@opentui/react": opentuiReactRuntime as Record<string, unknown>,
+  "@opentui/react/jsx-runtime": reactJsxRuntime as Record<string, unknown>,
+  "@opentui/react/jsx-dev-runtime": reactJsxDevRuntime as Record<string, unknown>,
   react: reactRuntime as Record<string, unknown>,
   "react/jsx-runtime": reactJsxRuntime as Record<string, unknown>,
   "react/jsx-dev-runtime": reactJsxDevRuntime as Record<string, unknown>,
