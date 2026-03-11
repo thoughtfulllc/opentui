@@ -122,7 +122,7 @@ for (const { platform, arch } of targets) {
       entrypoints: [join(__dirname, "index.tsx")],
       tsconfig: join(__dirname, "tsconfig.json"),
       sourcemap: "external",
-      plugins: [workspaceAliasPlugin, createSolidTransformPlugin({ mode: "build" })],
+      plugins: [workspaceAliasPlugin, createSolidTransformPlugin()],
       compile: {
         target: `bun-${platform}-${arch}` as any,
         outfile,

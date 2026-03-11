@@ -74,7 +74,7 @@ const mainBuildResult = await Bun.build({
   target: "bun",
   outdir: join(rootDir, "dist"),
   external: externalDeps,
-  plugins: [createSolidTransformPlugin({ mode: "build" })],
+  plugins: [createSolidTransformPlugin()],
   splitting: true,
 })
 

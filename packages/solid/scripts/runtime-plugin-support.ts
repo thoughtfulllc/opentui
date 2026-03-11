@@ -1,5 +1,6 @@
 import { plugin as registerBunPlugin } from "bun"
 import * as coreRuntime from "@opentui/core"
+import { createRuntimePlugin, runtimeModuleIdForSpecifier, type RuntimeModuleEntry } from "@opentui/core/runtime-plugin"
 import * as solidJsRuntime from "solid-js"
 import * as solidJsStoreRuntime from "solid-js/store"
 import * as solidRuntime from "../index"
@@ -11,6 +12,24 @@ type RuntimePluginSupportState = typeof globalThis & {
   [runtimePluginSupportInstalledKey]?: boolean
 }
 
+const additionalRuntimeModules: Record<string, RuntimeModuleEntry> = {
+  "@opentui/solid": solidRuntime as Record<string, unknown>,
+  "solid-js": solidJsRuntime as Record<string, unknown>,
+  "solid-js/store": solidJsStoreRuntime as Record<string, unknown>,
+  "@opentui/core/3d": async () => (await import("@opentui/core/3d")) as Record<string, unknown>,
+  "@opentui/core/testing": async () => (await import("@opentui/core/testing")) as Record<string, unknown>,
+}
+
+const runtimeResolvedSpecifiers = new Set<string>(["@opentui/core", ...Object.keys(additionalRuntimeModules)])
+
+const resolveRuntimeSpecifier = (specifier: string): string | null => {
+  if (!runtimeResolvedSpecifiers.has(specifier)) {
+    return null
+  }
+
+  return runtimeModuleIdForSpecifier(specifier)
+}
+
 export function ensureRuntimePluginSupport(): boolean {
   const state = globalThis as RuntimePluginSupportState
 
@@ -18,21 +37,21 @@ export function ensureRuntimePluginSupport(): boolean {
     return false
   }
 
-  const pluginOptions = {
-    mode: "runtime" as const,
-    runtimeModules: {
-      solid: solidRuntime as Record<string, unknown>,
-      core: coreRuntime as Record<string, unknown>,
-      solidJs: solidJsRuntime as Record<string, unknown>,
-      solidJsStore: solidJsStoreRuntime as Record<string, unknown>,
-      additional: {
-        "@opentui/core/3d": async () => (await import("@opentui/core/3d")) as Record<string, unknown>,
-        "@opentui/core/testing": async () => (await import("@opentui/core/testing")) as Record<string, unknown>,
+  registerBunPlugin(
+    createSolidTransformPlugin({
+      moduleName: runtimeModuleIdForSpecifier("@opentui/solid"),
+      resolvePath(specifier) {
+        return resolveRuntimeSpecifier(specifier)
       },
-    },
-  }
+    }),
+  )
 
-  registerBunPlugin(createSolidTransformPlugin(pluginOptions as Parameters<typeof createSolidTransformPlugin>[0]))
+  registerBunPlugin(
+    createRuntimePlugin({
+      core: coreRuntime as Record<string, unknown>,
+      additional: additionalRuntimeModules,
+    }),
+  )
 
   state[runtimePluginSupportInstalledKey] = true
   return true

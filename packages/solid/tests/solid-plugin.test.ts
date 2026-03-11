@@ -1,16 +1,14 @@
 import { describe, expect, it } from "bun:test"
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { runtimeModuleIdForSpecifier } from "@opentui/core/runtime-plugin"
 import { createSolidTransformPlugin } from "../scripts/solid-plugin"
 
-type ResolveResult = { path: string; namespace?: string } | void
-type ResolveCallback = (args: { path: string; importer: string }) => ResolveResult | Promise<ResolveResult>
-type LoadCallback = (args: { path: string }) => unknown | Promise<unknown>
+type ResolveCallback = (args: { path: string; importer: string }) => unknown | Promise<unknown>
+type LoadResult = { contents: string; loader: string } | void
+type LoadCallback = (args: { path: string }) => LoadResult | Promise<LoadResult>
 type ModuleCallback = () => unknown | Promise<unknown>
-
-type ResolveHandler = {
-  filter: RegExp
-  callback: ResolveCallback
-}
 
 type LoadHandler = {
   filter: RegExp
@@ -25,17 +23,17 @@ type MockBuild = {
 
 const createMockBuild = (): {
   build: MockBuild
-  resolveHandlers: ResolveHandler[]
+  resolveFilters: RegExp[]
   loadHandlers: LoadHandler[]
   modules: Map<string, ModuleCallback>
 } => {
-  const resolveHandlers: ResolveHandler[] = []
+  const resolveFilters: RegExp[] = []
   const loadHandlers: LoadHandler[] = []
   const modules = new Map<string, ModuleCallback>()
 
   const build: MockBuild = {
-    onResolve(args, callback) {
-      resolveHandlers.push({ filter: args.filter, callback })
+    onResolve(args) {
+      resolveFilters.push(args.filter)
     },
     onLoad(args, callback) {
       loadHandlers.push({ filter: args.filter, callback })
@@ -45,17 +43,14 @@ const createMockBuild = (): {
     },
   }
 
-  return { build, resolveHandlers, loadHandlers, modules }
+  return { build, resolveFilters, loadHandlers, modules }
 }
 
-const resolveSpecifier = async (handlers: ResolveHandler[], specifier: string): Promise<ResolveResult> => {
+const runLoad = async (handlers: LoadHandler[], path: string): Promise<LoadResult> => {
   for (const handler of handlers) {
-    if (!handler.filter.test(specifier)) continue
+    if (!handler.filter.test(path)) continue
 
-    const result = await handler.callback({
-      path: specifier,
-      importer: import.meta.path,
-    })
+    const result = await handler.callback({ path })
 
     if (result) {
       return result
@@ -65,155 +60,105 @@ const resolveSpecifier = async (handlers: ResolveHandler[], specifier: string): 
   return undefined
 }
 
+const createTempTsxFile = (source: string): { path: string; dispose: () => void } => {
+  const tempRoot = mkdtempSync(join(tmpdir(), "solid-plugin-test-"))
+  const path = join(tempRoot, "fixture.tsx")
+  writeFileSync(path, source)
+
+  return {
+    path,
+    dispose: () => {
+      rmSync(tempRoot, { recursive: true, force: true })
+    },
+  }
+}
+
 describe("solid transform plugin", () => {
-  it("canonicalizes @opentui imports in runtime mode", async () => {
-    const { build, resolveHandlers } = createMockBuild()
-    createSolidTransformPlugin({ mode: "runtime" }).setup(build as any)
+  it("does not register runtime module resolvers by default", () => {
+    const { build, resolveFilters, modules } = createMockBuild()
+    createSolidTransformPlugin().setup(build as any)
 
-    const solid = await resolveSpecifier(resolveHandlers, "@opentui/solid/runtime-plugin-support")
-    const core = await resolveSpecifier(resolveHandlers, "@opentui/core/testing")
-
-    expect(solid).toEqual({ path: import.meta.resolve("@opentui/solid/runtime-plugin-support") })
-    expect(core).toEqual({ path: import.meta.resolve("@opentui/core/testing") })
-  })
-
-  it("does not register runtime canonical resolvers in build mode", async () => {
-    const { build, resolveHandlers } = createMockBuild()
-    createSolidTransformPlugin({ mode: "build" }).setup(build as any)
-
-    const solid = await resolveSpecifier(resolveHandlers, "@opentui/solid/runtime-plugin-support")
-    const core = await resolveSpecifier(resolveHandlers, "@opentui/core/testing")
-
-    expect(solid).toBeUndefined()
-    expect(core).toBeUndefined()
-  })
-
-  it("registers runtime modules and resolves additional specifiers", async () => {
-    const { build, resolveHandlers, modules } = createMockBuild()
-
-    createSolidTransformPlugin({
-      mode: "runtime",
-      runtimeModules: {
-        solid: { marker: "solid" },
-        core: { marker: "core" },
-        additional: {
-          "fixture-sync": { value: "sync-value" },
-          "@fixture/async-module": async () => ({ value: "async-value" }),
-        },
-      },
-    }).setup(build as any)
-
-    const solidResolution = await resolveSpecifier(resolveHandlers, "@opentui/solid")
-    const coreResolution = await resolveSpecifier(resolveHandlers, "@opentui/core")
-    const syncResolution = await resolveSpecifier(resolveHandlers, "fixture-sync")
-    const asyncResolution = await resolveSpecifier(resolveHandlers, "@fixture/async-module")
-
-    expect(solidResolution).toBeDefined()
-    expect(coreResolution).toBeDefined()
-    expect(syncResolution).toBeDefined()
-    expect(asyncResolution).toBeDefined()
-
-    if (!solidResolution || !coreResolution || !syncResolution || !asyncResolution) {
-      throw new Error("Expected all runtime module resolutions to be defined")
-    }
-
-    const solidModule = modules.get(solidResolution.path)
-    const coreModule = modules.get(coreResolution.path)
-    const syncModule = modules.get(syncResolution.path)
-    const asyncModule = modules.get(asyncResolution.path)
-
-    expect(solidModule).toBeDefined()
-    expect(coreModule).toBeDefined()
-    expect(syncModule).toBeDefined()
-    expect(asyncModule).toBeDefined()
-
-    if (!solidModule || !coreModule || !syncModule || !asyncModule) {
-      throw new Error("Expected all runtime module factories to be registered")
-    }
-
-    expect(await solidModule()).toEqual({ exports: { marker: "solid" }, loader: "object" })
-    expect(await coreModule()).toEqual({ exports: { marker: "core" }, loader: "object" })
-    expect(await syncModule()).toEqual({ exports: { value: "sync-value" }, loader: "object" })
-    expect(await asyncModule()).toEqual({ exports: { value: "async-value" }, loader: "object" })
-  })
-
-  it("registers solid-js runtime modules when provided", async () => {
-    const { build, resolveHandlers, modules } = createMockBuild()
-
-    createSolidTransformPlugin({
-      mode: "runtime",
-      runtimeModules: {
-        solid: { marker: "solid" },
-        solidJs: { marker: "solid-js" },
-        solidJsStore: { marker: "solid-js-store" },
-      },
-    }).setup(build as any)
-
-    const solidJsResolution = await resolveSpecifier(resolveHandlers, "solid-js")
-    const solidJsStoreResolution = await resolveSpecifier(resolveHandlers, "solid-js/store")
-    const coreResolution = await resolveSpecifier(resolveHandlers, "@opentui/core")
-
-    expect(solidJsResolution).toBeDefined()
-    expect(solidJsStoreResolution).toBeDefined()
-    expect(coreResolution).toBeUndefined()
-
-    if (!solidJsResolution || !solidJsStoreResolution) {
-      throw new Error("Expected solid-js runtime resolutions to be defined")
-    }
-
-    const solidJsModule = modules.get(solidJsResolution.path)
-    const solidJsStoreModule = modules.get(solidJsStoreResolution.path)
-
-    expect(solidJsModule).toBeDefined()
-    expect(solidJsStoreModule).toBeDefined()
-
-    if (!solidJsModule || !solidJsStoreModule) {
-      throw new Error("Expected solid-js runtime module factories to be registered")
-    }
-
-    expect(await solidJsModule()).toEqual({ exports: { marker: "solid-js" }, loader: "object" })
-    expect(await solidJsStoreModule()).toEqual({ exports: { marker: "solid-js-store" }, loader: "object" })
-  })
-
-  it("escapes additional resolver filters for exact specifier matches", async () => {
-    const { build, resolveHandlers } = createMockBuild()
-
-    createSolidTransformPlugin({
-      mode: "runtime",
-      runtimeModules: {
-        solid: { marker: "solid" },
-        additional: {
-          "fixture.with.dot": { value: "dot-value" },
-        },
-      },
-    }).setup(build as any)
-
-    const exactMatch = await resolveSpecifier(resolveHandlers, "fixture.with.dot")
-    const nonMatch = await resolveSpecifier(resolveHandlers, "fixtureXwithXdot")
-
-    expect(exactMatch).toBeDefined()
-    expect(nonMatch).toBeUndefined()
-  })
-
-  it("falls back to canonical runtime resolution when runtimeModules.solid is missing", async () => {
-    const { build, resolveHandlers, modules } = createMockBuild()
-
-    createSolidTransformPlugin({
-      mode: "runtime",
-      runtimeModules: {
-        core: { marker: "core" },
-      },
-    }).setup(build as any)
-
-    const solid = await resolveSpecifier(resolveHandlers, "@opentui/solid/runtime-plugin-support")
-    const core = await resolveSpecifier(resolveHandlers, "@opentui/core/testing")
-
-    expect(solid).toEqual({ path: import.meta.resolve("@opentui/solid/runtime-plugin-support") })
-    expect(core).toEqual({ path: import.meta.resolve("@opentui/core/testing") })
+    expect(resolveFilters).toHaveLength(0)
     expect(modules.size).toBe(0)
   })
 
-  it("resolves runtime additional modules end-to-end in a subprocess", () => {
+  it("uses @opentui/solid as the default JSX runtime module", async () => {
+    const tempFile = createTempTsxFile(
+      ['import { value } from "fixture-sync"', "const node = <text>{value}</text>", "export { node }"].join("\n"),
+    )
+
+    try {
+      const { build, loadHandlers } = createMockBuild()
+      createSolidTransformPlugin().setup(build as any)
+
+      const transformed = await runLoad(loadHandlers, tempFile.path)
+
+      expect(transformed).toBeDefined()
+
+      if (!transformed) {
+        throw new Error("Expected transformed output")
+      }
+
+      expect(transformed.loader).toBe("js")
+      expect(transformed.contents).toContain("@opentui/solid")
+      expect(transformed.contents).toContain("fixture-sync")
+      expect(transformed.contents).not.toContain("react/jsx-runtime")
+    } finally {
+      tempFile.dispose()
+    }
+  })
+
+  it("applies custom module resolver rewrites when configured", async () => {
+    const runtimeSolidModule = runtimeModuleIdForSpecifier("@opentui/solid")
+    const runtimeCoreModule = runtimeModuleIdForSpecifier("@opentui/core")
+    const runtimeFixtureModule = runtimeModuleIdForSpecifier("fixture-sync")
+
+    const tempFile = createTempTsxFile(
+      [
+        'import { engine } from "@opentui/core"',
+        'import { value } from "fixture-sync"',
+        "const node = <text>{engine ? value : value}</text>",
+        "export { node }",
+      ].join("\n"),
+    )
+
+    try {
+      const { build, loadHandlers } = createMockBuild()
+
+      createSolidTransformPlugin({
+        moduleName: runtimeSolidModule,
+        resolvePath(specifier) {
+          if (specifier === "@opentui/core") {
+            return runtimeCoreModule
+          }
+
+          if (specifier === "fixture-sync") {
+            return runtimeFixtureModule
+          }
+
+          return null
+        },
+      }).setup(build as any)
+
+      const transformed = await runLoad(loadHandlers, tempFile.path)
+
+      expect(transformed).toBeDefined()
+
+      if (!transformed) {
+        throw new Error("Expected transformed output")
+      }
+
+      expect(transformed.contents).toContain(runtimeSolidModule)
+      expect(transformed.contents).toContain(runtimeCoreModule)
+      expect(transformed.contents).toContain(runtimeFixtureModule)
+      expect(transformed.contents).not.toContain('from "@opentui/core"')
+      expect(transformed.contents).not.toContain('from "fixture-sync"')
+    } finally {
+      tempFile.dispose()
+    }
+  })
+
+  it("transforms runtime-resolved modules end-to-end in a subprocess", () => {
     const fixturePath = join(import.meta.dir, "solid-plugin.fixture.ts")
     const result = Bun.spawnSync([process.execPath, fixturePath], {
       cwd: join(import.meta.dir, ".."),
@@ -234,6 +179,6 @@ describe("solid transform plugin", () => {
     }
 
     expect(result.exitCode).toBe(0)
-    expect(stdout).toContain("sync=sync-value;async=async-value")
+    expect(stdout).toContain("sync=sync-value;async=async-value;jsx=true")
   })
 })
