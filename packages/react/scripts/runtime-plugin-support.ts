@@ -17,8 +17,6 @@ const additionalRuntimeModules: Record<string, RuntimeModuleEntry> = {
   react: reactRuntime as Record<string, unknown>,
   "react/jsx-runtime": reactJsxRuntime as Record<string, unknown>,
   "react/jsx-dev-runtime": reactJsxDevRuntime as Record<string, unknown>,
-  "@opentui/core/3d": async () => (await import("@opentui/core/3d")) as Record<string, unknown>,
-  "@opentui/core/testing": async () => (await import("@opentui/core/testing")) as Record<string, unknown>,
 }
 
 export function ensureRuntimePluginSupport(): boolean {

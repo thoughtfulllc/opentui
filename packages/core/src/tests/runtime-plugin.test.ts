@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test"
 import { join } from "node:path"
-import * as coreRuntime from "./index"
-import { createRuntimePlugin, runtimeModuleIdForSpecifier } from "./runtime-plugin"
+import * as coreRuntime from "../index"
+import { createRuntimePlugin, runtimeModuleIdForSpecifier } from "../runtime-plugin"
 
 type ResolveResult = { path: string; namespace?: string } | void
 type ResolveCallback = (args: { path: string; importer: string }) => ResolveResult | Promise<ResolveResult>
@@ -60,32 +60,46 @@ const resolveSpecifier = async (handlers: ResolveHandler[], specifier: string): 
 }
 
 describe("runtime plugin", () => {
-  it("registers @opentui/core runtime module by default", async () => {
+  it("registers core runtime modules by default", async () => {
     const { build, resolveHandlers, modules } = createMockBuild()
     createRuntimePlugin().setup(build as any)
 
     const coreResolution = await resolveSpecifier(resolveHandlers, "@opentui/core")
+    const core3dResolution = await resolveSpecifier(resolveHandlers, "@opentui/core/3d")
+    const coreTestingResolution = await resolveSpecifier(resolveHandlers, "@opentui/core/testing")
 
-    expect(coreResolution).toEqual({
-      path: runtimeModuleIdForSpecifier("@opentui/core"),
-    })
+    expect(coreResolution).toEqual({ path: runtimeModuleIdForSpecifier("@opentui/core") })
+    expect(core3dResolution).toEqual({ path: runtimeModuleIdForSpecifier("@opentui/core/3d") })
+    expect(coreTestingResolution).toEqual({ path: runtimeModuleIdForSpecifier("@opentui/core/testing") })
 
-    if (!coreResolution) {
-      throw new Error("Expected @opentui/core runtime resolution")
+    if (!coreResolution || !core3dResolution || !coreTestingResolution) {
+      throw new Error("Expected core runtime module resolutions")
     }
 
     const coreModuleFactory = modules.get(coreResolution.path)
+    const core3dModuleFactory = modules.get(core3dResolution.path)
+    const coreTestingModuleFactory = modules.get(coreTestingResolution.path)
 
     expect(coreModuleFactory).toBeDefined()
+    expect(core3dModuleFactory).toBeDefined()
+    expect(coreTestingModuleFactory).toBeDefined()
 
-    if (!coreModuleFactory) {
-      throw new Error("Expected @opentui/core runtime module factory")
+    if (!coreModuleFactory || !core3dModuleFactory || !coreTestingModuleFactory) {
+      throw new Error("Expected core runtime module factories")
     }
 
     expect(await coreModuleFactory()).toEqual({
       exports: coreRuntime as Record<string, unknown>,
       loader: "object",
     })
+
+    const coreTestingModule = (await coreTestingModuleFactory()) as {
+      exports: Record<string, unknown>
+      loader: string
+    }
+
+    expect(coreTestingModule.loader).toBe("object")
+    expect(typeof coreTestingModule.exports.createTestRenderer).toBe("function")
   })
 
   it("registers additional runtime modules with sync and async loaders", async () => {
@@ -153,7 +167,7 @@ describe("runtime plugin", () => {
   it("resolves runtime modules end-to-end in a subprocess", () => {
     const fixturePath = join(import.meta.dir, "runtime-plugin.fixture.ts")
     const result = Bun.spawnSync([process.execPath, fixturePath], {
-      cwd: join(import.meta.dir, ".."),
+      cwd: join(import.meta.dir, "..", ".."),
       stdout: "pipe",
       stderr: "pipe",
       env: process.env,
@@ -171,6 +185,6 @@ describe("runtime plugin", () => {
     }
 
     expect(result.exitCode).toBe(0)
-    expect(stdout).toContain("core=core-value;sync=sync-value;async=async-value")
+    expect(stdout).toContain("core=core-value;coreTesting=true;sync=sync-value;async=async-value")
   })
 })

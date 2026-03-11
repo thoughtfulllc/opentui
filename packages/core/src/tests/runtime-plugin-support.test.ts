@@ -5,7 +5,7 @@ describe("runtime plugin support", () => {
   it("installs exactly once via drop-in module", () => {
     const fixturePath = join(import.meta.dir, "runtime-plugin-support.fixture.ts")
     const result = Bun.spawnSync([process.execPath, fixturePath], {
-      cwd: join(import.meta.dir, ".."),
+      cwd: join(import.meta.dir, "..", ".."),
       stdout: "pipe",
       stderr: "pipe",
       env: process.env,
