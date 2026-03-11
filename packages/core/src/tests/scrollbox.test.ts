@@ -309,9 +309,8 @@ describe("ScrollBoxRenderable - Mouse interaction", () => {
 
     for (let i = 0; i < 5; i++) {
       await mockMouse.scroll(25, 10, "down")
-      await new Promise((resolve) => setTimeout(resolve, 10))
+      await renderOnce()
     }
-    await renderOnce()
     const rapidScrollDistance = scrollBox.scrollTop
 
     expect(rapidScrollDistance).toBeGreaterThan(slowScrollDistance * 3)
@@ -328,12 +327,10 @@ describe("ScrollBoxRenderable - Mouse interaction", () => {
     testRenderer.root.add(slowdownBox)
     await renderOnce()
 
-    // Do multiple scrolls with delay to ensure they're treated as slow scrolls
+    // ConstantScrollAccel ignores timing, so no delay needed
     for (let i = 0; i < 5; i++) {
       await mockMouse.scroll(25, 10, "down")
       await renderOnce()
-      // Add delay to prevent acceleration from kicking in
-      await new Promise((resolve) => setTimeout(resolve, 200))
     }
     const slowdownDistance = slowdownBox.scrollTop
 
@@ -358,11 +355,10 @@ describe("ScrollBoxRenderable - Mouse interaction", () => {
     testRenderer.root.add(linearBox)
     await renderOnce()
 
+    // LinearScrollAccel ignores timing, so no delay needed
     for (let i = 0; i < 5; i++) {
       await mockMouse.scroll(25, 10, "down")
       await renderOnce()
-      // Add delay to prevent acceleration from kicking in
-      await new Promise((resolve) => setTimeout(resolve, 200))
     }
     const linearDistance = linearBox.scrollTop
 
@@ -495,6 +491,7 @@ world
 \`\`\`
 `
 
+    const codes: CodeRenderable[] = []
     for (let i = 0; i < 100; i++) {
       const wrapper = new BoxRenderable(testRenderer, {
         marginTop: 2,
@@ -507,6 +504,7 @@ world
         drawUnstyledText: false,
         treeSitterClient: mockTreeSitterClient,
       })
+      codes.push(code)
       wrapper.add(code)
       scrollBox.add(wrapper)
     }
@@ -514,15 +512,14 @@ world
     await renderOnce()
 
     mockTreeSitterClient.resolveAllHighlightOnce()
-    await new Promise((resolve) => setTimeout(resolve, 10))
-
+    await Promise.all(codes.map((c) => c.highlightingDone))
     await renderOnce()
 
     scrollBox.scrollTo(scrollBox.scrollHeight)
     await renderOnce()
 
     mockTreeSitterClient.resolveAllHighlightOnce()
-    await new Promise((resolve) => setTimeout(resolve, 10))
+    await Promise.all(codes.map((c) => c.highlightingDone))
     await renderOnce()
 
     const frameAfterScroll = captureCharFrame()
@@ -608,7 +605,7 @@ world
     await testRenderer.idle()
 
     mockTreeSitterClient.resolveAllHighlightOnce()
-    await new Promise((resolve) => setTimeout(resolve, 1))
+    await Promise.resolve()
 
     await testRenderer.idle()
 
@@ -659,6 +656,7 @@ world
 
     await renderOnce()
 
+    const codes: CodeRenderable[] = []
     for (let i = 0; i < 50; i++) {
       const wrapper = new BoxRenderable(testRenderer, {
         marginTop: 1,
@@ -671,6 +669,7 @@ world
         drawUnstyledText: false,
         treeSitterClient: mockTreeSitterClient,
       })
+      codes.push(code)
       wrapper.add(code)
       scrollBox.add(wrapper)
     }
@@ -678,15 +677,14 @@ world
     await renderOnce()
 
     mockTreeSitterClient.resolveAllHighlightOnce()
-    await new Promise((resolve) => setTimeout(resolve, 10))
-
+    await Promise.all(codes.map((c) => c.highlightingDone))
     await renderOnce()
 
     scrollBox.scrollTo(scrollBox.scrollHeight)
     await renderOnce()
 
     mockTreeSitterClient.resolveAllHighlightOnce()
-    await new Promise((resolve) => setTimeout(resolve, 10))
+    await Promise.all(codes.map((c) => c.highlightingDone))
     await renderOnce()
 
     const frame = captureCharFrame()
@@ -728,6 +726,7 @@ world
 
     await renderOnce()
 
+    const codes: CodeRenderable[] = []
     for (let i = 0; i < 50; i++) {
       const wrapper = new BoxRenderable(testRenderer, { id: `wrapper-${i}` })
       wrapper.marginTop = 1
@@ -743,15 +742,14 @@ world
       wrapper.add(code)
       code.content = `Item ${i}`
       code.filetype = "markdown"
+      codes.push(code)
 
       scrollBox.add(wrapper)
     }
 
-    await Bun.sleep(20)
-
+    await renderOnce()
     mockTreeSitterClient.resolveAllHighlightOnce()
-    await Bun.sleep(20)
-
+    await Promise.all(codes.map((c) => c.highlightingDone))
     await renderOnce()
 
     scrollBox.scrollTo(scrollBox.scrollHeight)
@@ -822,8 +820,8 @@ world
 
   test("stays scrolled to bottom with growing code renderables in sticky scroll mode", async () => {
     const syntaxStyle = SyntaxStyle.fromTheme([])
-    // Use auto-resolving mock client to avoid timing issues with stale highlight detection
-    const autoResolvingClient = new MockTreeSitterClient({ autoResolveTimeout: 1 })
+    // Use manual-resolving mock client for deterministic behavior
+    const autoResolvingClient = new MockTreeSitterClient()
     autoResolvingClient.setMockResult({ highlights: [] })
 
     const parent = new BoxRenderable(testRenderer, {
@@ -864,8 +862,10 @@ world
     wrapper1.add(code1)
     scrollBox.add(wrapper1)
 
-    await Bun.sleep(10)
-    await testRenderer.idle()
+    await renderOnce()
+    autoResolvingClient.resolveAllHighlightOnce()
+    await code1.highlightingDone
+    await renderOnce()
 
     scrollPositions.push(scrollBox.scrollTop)
     maxScrollPositions.push(Math.max(0, scrollBox.scrollHeight - scrollBox.viewport.height))
@@ -879,8 +879,10 @@ function test() {
 }
 console.log(test())`
 
-    await Bun.sleep(10)
-    await testRenderer.idle()
+    await renderOnce()
+    autoResolvingClient.resolveAllHighlightOnce()
+    await code1.highlightingDone
+    await renderOnce()
 
     scrollPositions.push(scrollBox.scrollTop)
     maxScrollPositions.push(Math.max(0, scrollBox.scrollHeight - scrollBox.viewport.height))
@@ -900,8 +902,10 @@ console.log(test())`
     wrapper2.add(code2)
     scrollBox.add(wrapper2)
 
-    await Bun.sleep(10)
-    await testRenderer.idle()
+    await renderOnce()
+    autoResolvingClient.resolveAllHighlightOnce()
+    await code2.highlightingDone
+    await renderOnce()
 
     scrollPositions.push(scrollBox.scrollTop)
     maxScrollPositions.push(Math.max(0, scrollBox.scrollHeight - scrollBox.viewport.height))
@@ -917,8 +921,10 @@ function multiply(a, b) {
 const result = multiply(x, y)
 console.log('Result:', result)`
 
-    await Bun.sleep(10)
-    await testRenderer.idle()
+    await renderOnce()
+    autoResolvingClient.resolveAllHighlightOnce()
+    await code2.highlightingDone
+    await renderOnce()
 
     scrollPositions.push(scrollBox.scrollTop)
     maxScrollPositions.push(Math.max(0, scrollBox.scrollHeight - scrollBox.viewport.height))
@@ -938,8 +944,10 @@ console.log('Result:', result)`
     wrapper3.add(code3)
     scrollBox.add(wrapper3)
 
-    await Bun.sleep(10)
-    await testRenderer.idle()
+    await renderOnce()
+    autoResolvingClient.resolveAllHighlightOnce()
+    await code3.highlightingDone
+    await renderOnce()
 
     scrollPositions.push(scrollBox.scrollTop)
     maxScrollPositions.push(Math.max(0, scrollBox.scrollHeight - scrollBox.viewport.height))
@@ -971,8 +979,10 @@ console.log(processor.process())
 console.log(processor.filter(x => x > 2))
 console.log(processor.reduce((acc, val) => acc + val, 0))`
 
-    await Bun.sleep(10)
-    await testRenderer.idle()
+    await renderOnce()
+    autoResolvingClient.resolveAllHighlightOnce()
+    await code3.highlightingDone
+    await renderOnce()
 
     scrollPositions.push(scrollBox.scrollTop)
     maxScrollPositions.push(Math.max(0, scrollBox.scrollHeight - scrollBox.viewport.height))
@@ -1068,7 +1078,7 @@ console.log(processor.reduce((acc, val) => acc + val, 0))`
     await renderOnce()
 
     mockTreeSitterClient.resolveAllHighlightOnce()
-    await new Promise((resolve) => setTimeout(resolve, 10))
+    await codeRenderable.highlightingDone
     await renderOnce()
 
     // Capture initial frame (should show top lines)
@@ -1124,8 +1134,9 @@ console.log(processor.reduce((acc, val) => acc + val, 0))`
 
       scrollBox.add(code)
 
+      await renderOnce()
       mockTreeSitterClient.resolveAllHighlightOnce()
-      await new Promise((resolve) => setTimeout(resolve, 1))
+      await code.highlightingDone
       await renderOnce()
 
       const maxScroll = Math.max(0, scrollBox.scrollHeight - scrollBox.viewport.height)
