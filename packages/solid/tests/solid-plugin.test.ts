@@ -137,6 +137,82 @@ describe("solid transform plugin", () => {
     expect(await asyncModule()).toEqual({ exports: { value: "async-value" }, loader: "object" })
   })
 
+  it("registers solid-js runtime modules when provided", async () => {
+    const { build, resolveHandlers, modules } = createMockBuild()
+
+    createSolidTransformPlugin({
+      mode: "runtime",
+      runtimeModules: {
+        solid: { marker: "solid" },
+        solidJs: { marker: "solid-js" },
+        solidJsStore: { marker: "solid-js-store" },
+      },
+    }).setup(build as any)
+
+    const solidJsResolution = await resolveSpecifier(resolveHandlers, "solid-js")
+    const solidJsStoreResolution = await resolveSpecifier(resolveHandlers, "solid-js/store")
+    const coreResolution = await resolveSpecifier(resolveHandlers, "@opentui/core")
+
+    expect(solidJsResolution).toBeDefined()
+    expect(solidJsStoreResolution).toBeDefined()
+    expect(coreResolution).toBeUndefined()
+
+    if (!solidJsResolution || !solidJsStoreResolution) {
+      throw new Error("Expected solid-js runtime resolutions to be defined")
+    }
+
+    const solidJsModule = modules.get(solidJsResolution.path)
+    const solidJsStoreModule = modules.get(solidJsStoreResolution.path)
+
+    expect(solidJsModule).toBeDefined()
+    expect(solidJsStoreModule).toBeDefined()
+
+    if (!solidJsModule || !solidJsStoreModule) {
+      throw new Error("Expected solid-js runtime module factories to be registered")
+    }
+
+    expect(await solidJsModule()).toEqual({ exports: { marker: "solid-js" }, loader: "object" })
+    expect(await solidJsStoreModule()).toEqual({ exports: { marker: "solid-js-store" }, loader: "object" })
+  })
+
+  it("escapes additional resolver filters for exact specifier matches", async () => {
+    const { build, resolveHandlers } = createMockBuild()
+
+    createSolidTransformPlugin({
+      mode: "runtime",
+      runtimeModules: {
+        solid: { marker: "solid" },
+        additional: {
+          "fixture.with.dot": { value: "dot-value" },
+        },
+      },
+    }).setup(build as any)
+
+    const exactMatch = await resolveSpecifier(resolveHandlers, "fixture.with.dot")
+    const nonMatch = await resolveSpecifier(resolveHandlers, "fixtureXwithXdot")
+
+    expect(exactMatch).toBeDefined()
+    expect(nonMatch).toBeUndefined()
+  })
+
+  it("falls back to canonical runtime resolution when runtimeModules.solid is missing", async () => {
+    const { build, resolveHandlers, modules } = createMockBuild()
+
+    createSolidTransformPlugin({
+      mode: "runtime",
+      runtimeModules: {
+        core: { marker: "core" },
+      },
+    }).setup(build as any)
+
+    const solid = await resolveSpecifier(resolveHandlers, "@opentui/solid/runtime-plugin-support")
+    const core = await resolveSpecifier(resolveHandlers, "@opentui/core/testing")
+
+    expect(solid).toEqual({ path: import.meta.resolve("@opentui/solid/runtime-plugin-support") })
+    expect(core).toEqual({ path: import.meta.resolve("@opentui/core/testing") })
+    expect(modules.size).toBe(0)
+  })
+
   it("resolves runtime additional modules end-to-end in a subprocess", () => {
     const fixturePath = join(import.meta.dir, "solid-plugin.fixture.ts")
     const result = Bun.spawnSync([process.execPath, fixturePath], {
