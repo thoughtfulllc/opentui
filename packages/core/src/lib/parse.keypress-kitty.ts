@@ -25,6 +25,9 @@ const kittyKeyMap: Record<number, string> = {
   57355: "pagedown",
   57356: "home",
   57357: "end",
+  57358: "capslock",
+  57359: "scrolllock",
+  57360: "numlock",
 
   // Function keys
   57364: "f1",
