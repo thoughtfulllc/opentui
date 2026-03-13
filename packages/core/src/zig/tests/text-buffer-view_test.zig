@@ -708,7 +708,6 @@ test "TextBufferView word wrapping - CJK boundary width" {
     try std.testing.expectEqual(@as(u32, 2), vlines[1].width_cols);
 }
 
-
 test "TextBufferView word wrapping - compare char vs word mode" {
     const pool = gp.initGlobalPool(std.testing.allocator);
     defer gp.deinitGlobalPool();
@@ -862,6 +861,53 @@ test "TextBufferView word wrapping - fragmented rope with word boundary" {
     try std.testing.expectEqual(@as(u32, 14), vlines[0].width_cols);
 
     try std.testing.expectEqual(@as(u32, 6), vlines[1].width_cols);
+}
+
+test "TextBufferView word wrapping - fragmented rope preserves wrapped text" {
+    const pool = gp.initGlobalPool(std.testing.allocator);
+    defer gp.deinitGlobalPool();
+    const link_pool = link.initGlobalLinkPool(std.testing.allocator);
+    defer link.deinitGlobalLinkPool();
+
+    var tb = try TextBuffer.init(std.testing.allocator, pool, link_pool, .wcwidth);
+    defer tb.deinit();
+
+    var view = try TextBufferView.init(std.testing.allocator, tb);
+    defer view.deinit();
+
+    const text = "hello my good friend";
+    const mem_id = try tb.registerMemBuffer(text, false);
+
+    const seg_mod = @import("../text-buffer-segment.zig");
+    const Segment = seg_mod.Segment;
+
+    const chunk1 = tb.createChunk(mem_id, 0, 14); // "hello my good "
+    const chunk2 = tb.createChunk(mem_id, 14, 15); // "f"
+    const chunk3 = tb.createChunk(mem_id, 15, 20); // "riend"
+
+    var segments: std.ArrayListUnmanaged(Segment) = .{};
+    defer segments.deinit(std.testing.allocator);
+
+    try segments.append(std.testing.allocator, Segment{ .linestart = {} });
+    try segments.append(std.testing.allocator, Segment{ .text = chunk1 });
+    try segments.append(std.testing.allocator, Segment{ .text = chunk2 });
+    try segments.append(std.testing.allocator, Segment{ .text = chunk3 });
+
+    try tb.rope().setSegments(segments.items);
+
+    view.virtual_lines_dirty = true;
+    view.setWrapMode(.word);
+    view.setWrapWidth(18);
+
+    const vlines = view.getVirtualLines();
+    try std.testing.expectEqual(@as(usize, 2), vlines.len);
+
+    var line_buf: [32]u8 = undefined;
+    const line0_len = tb.getTextRange(vlines[0].col_offset, vlines[0].col_offset + vlines[0].width_cols, &line_buf);
+    try std.testing.expectEqualStrings("hello my good ", line_buf[0..line0_len]);
+
+    const line1_len = tb.getTextRange(vlines[1].col_offset, vlines[1].col_offset + vlines[1].width_cols, &line_buf);
+    try std.testing.expectEqualStrings("friend", line_buf[0..line1_len]);
 }
 
 test "TextBufferView wrapping - very narrow width (1 char)" {
