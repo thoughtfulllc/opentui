@@ -14,7 +14,6 @@ const TextSelection = tb.TextSelection;
 pub const WrapMode = tb.WrapMode;
 const TextChunk = seg_mod.TextChunk;
 const StyleSpan = tb.StyleSpan;
-const GraphemeInfo = seg_mod.GraphemeInfo;
 
 pub const TextBufferViewError = error{
     OutOfMemory,
@@ -268,49 +267,6 @@ pub const UnifiedTextBufferView = struct {
             self.virtual_lines_dirty = true;
             self.truncation_applied = false;
         }
-    }
-
-    fn calculateChunkFitWord(self: *const Self, chunk: *const TextChunk, char_offset_in_chunk: u32, max_width: u32) tb.ChunkFitResult {
-        if (max_width == 0) return .{ .char_count = 0, .width = 0 };
-
-        const total_width = @as(u32, chunk.width) - char_offset_in_chunk;
-        if (total_width == 0) return .{ .char_count = 0, .width = 0 };
-        if (total_width <= max_width) return .{ .char_count = total_width, .width = total_width };
-
-        const wrap_offsets = self.text_buffer.getWrapOffsetsFor(chunk) catch {
-            const fit_width = @min(max_width, total_width);
-            return .{ .char_count = fit_width, .width = fit_width };
-        };
-
-        var last_boundary: ?u32 = null;
-        var first_boundary: ?u32 = null;
-
-        for (wrap_offsets) |wrap_break| {
-            const offset = @as(u32, wrap_break.char_offset);
-            if (offset < char_offset_in_chunk) continue;
-
-            const local_offset = offset - char_offset_in_chunk;
-            if (local_offset >= total_width) break;
-
-            const width_to_boundary = local_offset + 1;
-            if (first_boundary == null) first_boundary = width_to_boundary;
-
-            if (width_to_boundary <= max_width) {
-                last_boundary = width_to_boundary;
-            } else break;
-        }
-
-        if (last_boundary) |width| return .{ .char_count = width, .width = width };
-
-        const line_width = self.wrap_width orelse max_width;
-        const needs_force_break = (first_boundary orelse total_width) > line_width;
-
-        if (needs_force_break) {
-            const fit_width = @min(max_width, total_width);
-            return .{ .char_count = fit_width, .width = fit_width };
-        }
-
-        return .{ .char_count = 0, .width = 0 };
     }
 
     pub fn updateVirtualLines(self: *Self) void {
@@ -1090,14 +1046,12 @@ pub const UnifiedTextBufferView = struct {
 
                     if (wctx.wrap_mode == .word) {
                         const chunk_bytes = chunk.getBytes(wctx.text_buffer.memRegistry());
-                        const wrap_offsets = wctx.text_buffer.getWrapOffsetsFor(chunk) catch &[_]utf8.WrapBreak{};
+                        const layout_info = wctx.text_buffer.getLayoutInfoFor(chunk) catch seg_mod.ChunkLayoutInfo{
+                            .graphemes = &[_]seg_mod.GraphemeInfo{},
+                            .wrap_breaks = &[_]utf8.LayoutWrapBreak{},
+                        };
+                        const wrap_offsets = layout_info.wrap_breaks;
                         const is_ascii_only = (chunk.flags & TextChunk.Flags.ASCII_ONLY) != 0;
-                        const graphemes: []const GraphemeInfo = if (is_ascii_only)
-                            &[_]GraphemeInfo{}
-                        else
-                            chunk.getGraphemes(wctx.text_buffer.memRegistry(), wctx.text_buffer.getAllocator(), wctx.text_buffer.tabWidth(), wctx.text_buffer.widthMethod()) catch &[_]GraphemeInfo{};
-                        var grapheme_idx: usize = 0;
-                        var col_delta: i64 = 0;
 
                         // char_offset tracks COLUMN position within the chunk (not grapheme count)
                         // chunk.width is also in columns. The loop processes the chunk column by column.
@@ -1113,18 +1067,12 @@ pub const UnifiedTextBufferView = struct {
                             var saved_wrap_idx = wrap_idx;
                             while (wrap_idx < wrap_offsets.len) : (wrap_idx += 1) {
                                 const wrap_break = wrap_offsets[wrap_idx];
+                                const break_col_end = @as(u32, wrap_break.col_end);
 
-                                const break_info = iter_mod.charOffsetToColumn(wrap_break.char_offset, graphemes, &grapheme_idx, &col_delta);
-                                const break_col = break_info.col;
+                                // Skip breaks that end at or before our current display-column position.
+                                if (break_col_end <= char_offset) continue;
 
-                                // Skip breaks that are before our current column position in the chunk
-                                if (break_col < char_offset) continue;
-
-                                // width_to_boundary: columns needed to reach and include this break
-                                // break_col is the column where the break character starts (relative to chunk)
-                                // char_offset is our current column position (relative to chunk)
-                                // To include the break character, we need: break_col - char_offset + width
-                                const width_to_boundary = break_col - char_offset + break_info.width;
+                                const width_to_boundary = break_col_end - char_offset;
                                 if (width_to_boundary > remaining_on_line or width_to_boundary > remaining_in_chunk) {
                                     break;
                                 }

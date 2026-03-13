@@ -1270,6 +1270,34 @@ test "wrap breaks: emoji and CJK mixed offsets" {
     try testing.expectEqual(@as(u16, 29), space_after_hello.?.char_offset);
 }
 
+test "wrap breaks: direct column metadata for wide grapheme delimiter" {
+    const input = "AB🌟 CD";
+
+    var result = utf8.WrapBreakResult.init(testing.allocator);
+    defer result.deinit();
+    try utf8.findWrapBreaksWithTabWidth(input, 2, &result, .unicode);
+
+    try testing.expectEqual(@as(usize, 1), result.breaks.items.len);
+    try testing.expectEqual(@as(u32, 6), result.breaks.items[0].byte_offset);
+    try testing.expectEqual(@as(u32, 3), result.breaks.items[0].char_offset);
+    try testing.expectEqual(@as(u32, 4), @as(u32, result.breaks.items[0].col_offset));
+    try testing.expectEqual(@as(u32, 5), @as(u32, result.breaks.items[0].col_end));
+}
+
+test "wrap breaks: direct column metadata for tab delimiter" {
+    const input = "AB\tCD";
+
+    var result = utf8.WrapBreakResult.init(testing.allocator);
+    defer result.deinit();
+    try utf8.findWrapBreaksWithTabWidth(input, 2, &result, .unicode);
+
+    try testing.expectEqual(@as(usize, 1), result.breaks.items.len);
+    try testing.expectEqual(@as(u32, 2), result.breaks.items[0].byte_offset);
+    try testing.expectEqual(@as(u32, 2), result.breaks.items[0].char_offset);
+    try testing.expectEqual(@as(u32, 2), @as(u32, result.breaks.items[0].col_offset));
+    try testing.expectEqual(@as(u32, 4), @as(u32, result.breaks.items[0].col_end));
+}
+
 // ============================================================================
 // WRAP BY WIDTH TESTS
 // ============================================================================

@@ -33,6 +33,7 @@ pub const ChunkFitResult = struct {
 };
 
 pub const GraphemeInfo = utf8.GraphemeInfo;
+pub const ChunkLayoutInfo = utf8.ChunkLayoutInfo;
 
 /// A chunk represents a contiguous sequence of UTF-8 bytes from a specific memory buffer
 pub const TextChunk = struct {
@@ -41,8 +42,8 @@ pub const TextChunk = struct {
     byte_end: u32,
     width: u16,
     flags: u8 = 0,
-    graphemes: ?[]GraphemeInfo = null,
-    wrap_offsets: ?[]utf8.WrapBreak = null,
+    graphemes: ?[]const GraphemeInfo = null,
+    wrap_breaks: ?[]const utf8.LayoutWrapBreak = null,
 
     pub const Flags = struct {
         pub const ASCII_ONLY: u8 = 0b00000001; // Printable ASCII only (32..126).
@@ -87,7 +88,7 @@ pub const TextChunk = struct {
         }
 
         if (self.isAsciiOnly()) {
-            const empty_slice = try allocator.alloc(GraphemeInfo, 0);
+            const empty_slice = &[_]GraphemeInfo{};
             mut_self.graphemes = empty_slice;
             return empty_slice;
         }
@@ -106,31 +107,52 @@ pub const TextChunk = struct {
         return graphemes;
     }
 
-    /// Lazily compute and cache wrap offsets for this chunk
-    /// Returns a slice that is valid until the buffer is reset
-    pub fn getWrapOffsets(
+    /// Lazily compute grapheme and wrap metadata together for wrap-sensitive paths.
+    /// Returns slices that are valid until the buffer is reset.
+    pub fn getLayoutInfo(
         self: *const TextChunk,
         mem_registry: *const MemRegistry,
         allocator: Allocator,
+        tabwidth: u8,
         width_method: utf8.WidthMethod,
-    ) TextBufferError![]const utf8.WrapBreak {
+    ) TextBufferError!ChunkLayoutInfo {
         const mut_self = @constCast(self);
-        if (self.wrap_offsets) |cached| {
-            return cached;
+        if (self.wrap_breaks) |cached_wrap_breaks| {
+            return .{
+                .graphemes = self.graphemes orelse &[_]GraphemeInfo{},
+                .wrap_breaks = cached_wrap_breaks,
+            };
         }
 
         const chunk_bytes = self.getBytes(mem_registry);
-        var wrap_result = utf8.WrapBreakResult.init(allocator);
-        errdefer wrap_result.deinit();
+        var grapheme_list: std.ArrayListUnmanaged(GraphemeInfo) = .{};
+        errdefer grapheme_list.deinit(allocator);
 
-        try utf8.findWrapBreaks(chunk_bytes, &wrap_result, width_method);
+        var wrap_list: std.ArrayListUnmanaged(utf8.LayoutWrapBreak) = .{};
+        errdefer wrap_list.deinit(allocator);
 
-        // TODO: Do not cache for chunks < 64 bytes, as it does not profit from the cache
-        // Use toOwnedSlice to transfer ownership without copying
-        const wrap_offsets = try wrap_result.breaks.toOwnedSlice(allocator);
-        mut_self.wrap_offsets = wrap_offsets;
+        try utf8.findChunkLayoutInfo(chunk_bytes, tabwidth, self.isAsciiOnly(), width_method, allocator, &grapheme_list, &wrap_list);
 
-        return wrap_offsets;
+        const has_graphemes = grapheme_list.items.len > 0;
+        const graphemes = if (has_graphemes)
+            try grapheme_list.toOwnedSlice(allocator)
+        else
+            &[_]GraphemeInfo{};
+        errdefer if (has_graphemes) allocator.free(graphemes);
+
+        const has_wrap_breaks = wrap_list.items.len > 0;
+        const wrap_breaks = if (has_wrap_breaks)
+            try wrap_list.toOwnedSlice(allocator)
+        else
+            &[_]utf8.LayoutWrapBreak{};
+
+        mut_self.graphemes = graphemes;
+        mut_self.wrap_breaks = wrap_breaks;
+
+        return .{
+            .graphemes = graphemes,
+            .wrap_breaks = wrap_breaks,
+        };
     }
 };
 
@@ -303,7 +325,7 @@ pub const Segment = union(enum) {
                 .width = left_chunk.width + right_chunk.width,
                 .flags = left_chunk.flags,
                 .graphemes = null,
-                .wrap_offsets = null,
+                .wrap_breaks = null,
             },
         };
     }

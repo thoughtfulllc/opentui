@@ -1,10 +1,13 @@
 const std = @import("std");
 const testing = std.testing;
+const mem_registry_mod = @import("../mem-registry.zig");
 const seg_mod = @import("../text-buffer-segment.zig");
+const utf8 = @import("../utf8.zig");
 
 const Segment = seg_mod.Segment;
 const UnifiedRope = seg_mod.UnifiedRope;
 const TextChunk = seg_mod.TextChunk;
+const MemRegistry = mem_registry_mod.MemRegistry;
 
 test "Segment.measure - text chunk" {
     const chunk = TextChunk{
@@ -317,4 +320,35 @@ test "combineMetrics helper function" {
     try testing.expectEqual(@as(u32, 15), combined.total_width);
     try testing.expectEqual(@as(u32, 10), combined.max_line_width);
     try testing.expect(combined.ascii_only);
+}
+
+test "TextChunk.getLayoutInfo caches graphemes and wrap breaks together" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var registry = MemRegistry.init(testing.allocator);
+    defer registry.deinit();
+
+    const text = "AB🌟 CD";
+    const mem_id = try registry.register(text, false);
+
+    var chunk = TextChunk{
+        .mem_id = mem_id,
+        .byte_start = 0,
+        .byte_end = @intCast(text.len),
+        .width = @intCast(utf8.calculateTextWidth(text, 2, false, .unicode)),
+    };
+
+    const layout = try chunk.getLayoutInfo(&registry, allocator, 2, .unicode);
+    try testing.expectEqual(@as(usize, 1), layout.graphemes.len);
+    try testing.expectEqual(@as(usize, 1), layout.wrap_breaks.len);
+    try testing.expectEqual(@as(u32, 4), @as(u32, layout.wrap_breaks[0].col_offset));
+    try testing.expectEqual(@as(u32, 5), @as(u32, layout.wrap_breaks[0].col_end));
+
+    const graphemes = try chunk.getGraphemes(&registry, allocator, 2, .unicode);
+    try testing.expectEqual(@intFromPtr(layout.graphemes.ptr), @intFromPtr(graphemes.ptr));
+
+    const layout_again = try chunk.getLayoutInfo(&registry, allocator, 2, .unicode);
+    try testing.expectEqual(@intFromPtr(layout.wrap_breaks.ptr), @intFromPtr(layout_again.wrap_breaks.ptr));
 }

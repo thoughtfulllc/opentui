@@ -147,8 +147,8 @@ pub const UnifiedTextBuffer = struct {
         return iter_mod.getPrevGraphemeWidth(@constCast(&self._rope), &self.mem_registry, row, col, self.tab_width, self.width_method);
     }
 
-    pub fn getWrapOffsetsFor(self: *const Self, chunk: *const TextChunk) TextBufferError![]const utf8.WrapBreak {
-        return chunk.getWrapOffsets(&self.mem_registry, self.allocator, self.width_method);
+    pub fn getLayoutInfoFor(self: *const Self, chunk: *const TextChunk) TextBufferError!seg_mod.ChunkLayoutInfo {
+        return chunk.getLayoutInfo(&self.mem_registry, self.allocator, self.tab_width, self.width_method);
     }
 
     /// Accessor: walk all lines and segments via callbacks.

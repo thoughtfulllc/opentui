@@ -669,33 +669,23 @@ pub const EditBuffer = struct {
 
                 // Check this chunk if cursor is within it OR if we've already passed the cursor
                 if (cursor.col < next_cols or passed_cursor) {
-                    const wrap_offsets = self.tb.getWrapOffsetsFor(chunk) catch {
+                    const wrap_offsets = (self.tb.getLayoutInfoFor(chunk) catch {
                         cols_before = next_cols;
                         passed_cursor = true;
                         continue;
-                    };
-                    const is_ascii_only = (chunk.flags & TextChunk.Flags.ASCII_ONLY) != 0;
-                    const graphemes: []const seg_mod.GraphemeInfo = if (is_ascii_only)
-                        &[_]seg_mod.GraphemeInfo{}
-                    else
-                        chunk.getGraphemes(self.tb.memRegistry(), self.tb.getAllocator(), self.tb.tabWidth(), self.tb.widthMethod()) catch &[_]seg_mod.GraphemeInfo{};
-                    var grapheme_idx: usize = 0;
-                    var col_delta: i64 = 0;
+                    }).wrap_breaks;
 
                     // For chunks containing or after the cursor, find the first break after cursor position
                     const local_cursor_col = if (cursor.col > cols_before) cursor.col - cols_before else 0;
 
                     for (wrap_offsets) |wrap_break| {
-                        const break_info = iter_mod.charOffsetToColumn(wrap_break.char_offset, graphemes, &grapheme_idx, &col_delta);
-                        const break_col = break_info.col;
+                        const break_col = @as(u32, wrap_break.col_offset);
+                        const target_col = cols_before + @as(u32, wrap_break.col_end);
 
                         // If we've passed the cursor chunk, any break is valid
                         // If we're in the cursor chunk, break must be after cursor position
                         if (passed_cursor or break_col > local_cursor_col) {
-                            // break_col points at the break grapheme start.
-                            // Adding width moves the cursor to the boundary after it.
-                            const target_col = cols_before + break_col + break_info.width;
-                            if (target_col <= line_width) {
+                            if (target_col > cursor.col and target_col <= line_width) {
                                 const offset = iter_mod.coordsToOffset(self.tb.rope(), cursor.row, target_col) orelse cursor.offset;
                                 return .{ .row = cursor.row, .col = target_col, .desired_col = target_col, .offset = offset };
                             }
@@ -710,8 +700,7 @@ pub const EditBuffer = struct {
                             if (break_byte_offset < chunk_bytes.len) {
                                 const break_cp = utf8.decodeUtf8Unchecked(chunk_bytes, break_byte_offset).cp;
                                 if (utf8.isWordCodepoint(break_cp)) {
-                                    const target_col = cols_before + break_col + break_info.width;
-                                    if (target_col <= line_width) {
+                                    if (target_col > cursor.col and target_col <= line_width) {
                                         const offset = iter_mod.coordsToOffset(self.tb.rope(), cursor.row, target_col) orelse cursor.offset;
                                         return .{ .row = cursor.row, .col = target_col, .desired_col = target_col, .offset = offset };
                                     }
@@ -753,23 +742,13 @@ pub const EditBuffer = struct {
             if (seg.asText()) |chunk| {
                 const next_cols = cols_before + chunk.width;
 
-                const wrap_offsets = self.tb.getWrapOffsetsFor(chunk) catch {
+                const wrap_offsets = (self.tb.getLayoutInfoFor(chunk) catch {
                     cols_before = next_cols;
                     continue;
-                };
-                const is_ascii_only = (chunk.flags & TextChunk.Flags.ASCII_ONLY) != 0;
-                const graphemes: []const seg_mod.GraphemeInfo = if (is_ascii_only)
-                    &[_]seg_mod.GraphemeInfo{}
-                else
-                    chunk.getGraphemes(self.tb.memRegistry(), self.tb.getAllocator(), self.tb.tabWidth(), self.tb.widthMethod()) catch &[_]seg_mod.GraphemeInfo{};
-                var grapheme_idx: usize = 0;
-                var col_delta: i64 = 0;
+                }).wrap_breaks;
 
                 for (wrap_offsets) |wrap_break| {
-                    const break_info = iter_mod.charOffsetToColumn(wrap_break.char_offset, graphemes, &grapheme_idx, &col_delta);
-                    // break_info follows the same convention as getNextWordBoundary:
-                    // use break start + grapheme width to land after the break grapheme.
-                    const boundary_col = cols_before + break_info.col + break_info.width;
+                    const boundary_col = cols_before + @as(u32, wrap_break.col_end);
                     if (boundary_col < cursor.col) {
                         last_boundary = boundary_col;
                     }
