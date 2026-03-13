@@ -1050,6 +1050,27 @@ test "layout wrap breaks: direct metadata for tab delimiter" {
     try testing.expectEqual(@as(u32, 3), result.items[0].byteEnd());
 }
 
+test "layout wrap breaks: col_offset beyond u16 max is truncated" {
+    // For ASCII text, byte_offset == col_offset. Place a space at column 65536
+    // which exceeds u16 max (65535). The correct col_offset should be 65536.
+    const prefix_len: usize = 65536;
+    const buf = try testing.allocator.alloc(u8, prefix_len + 2);
+    defer testing.allocator.free(buf);
+    @memset(buf[0..prefix_len], 'A');
+    buf[prefix_len] = ' ';
+    buf[prefix_len + 1] = 'B';
+
+    var result: std.ArrayListUnmanaged(utf8.LayoutWrapBreak) = .{};
+    defer result.deinit(testing.allocator);
+    try utf8.findChunkLayoutInfo(buf, 4, true, .unicode, testing.allocator, &result);
+
+    try testing.expectEqual(@as(usize, 1), result.items.len);
+    try testing.expectEqual(@as(u32, prefix_len), result.items[0].byte_offset);
+    // col_offset should match byte_offset for ASCII. Currently truncated to u16 max.
+    try testing.expectEqual(@as(u32, 65536), @as(u32, result.items[0].col_offset));
+    try testing.expectEqual(@as(u32, 65537), result.items[0].colEnd());
+}
+
 // ============================================================================
 // WRAP BY WIDTH TESTS
 // ============================================================================

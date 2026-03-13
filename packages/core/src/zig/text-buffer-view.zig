@@ -950,25 +950,7 @@ pub const UnifiedTextBufferView = struct {
 
                 const chunk_bytes = piece.chunk.getBytes(ctx.text_buffer.memRegistry());
                 const is_ascii_only = (piece.chunk.flags & TextChunk.Flags.ASCII_ONLY) != 0;
-
-                const slice_start = utf8.findPosByWidth(
-                    chunk_bytes,
-                    piece.grapheme_start,
-                    ctx.text_buffer.tabWidth(),
-                    is_ascii_only,
-                    false,
-                    ctx.text_buffer.widthMethod(),
-                );
-                const slice_end = utf8.findPosByWidth(
-                    chunk_bytes,
-                    piece.grapheme_start + piece.width,
-                    ctx.text_buffer.tabWidth(),
-                    is_ascii_only,
-                    false,
-                    ctx.text_buffer.widthMethod(),
-                );
-
-                const slice_bytes = chunk_bytes[slice_start.byte_offset..slice_end.byte_offset];
+                const slice_bytes = chunk_bytes[piece.byte_start..piece.byte_end];
                 const fit = utf8.findWrapPosByWidth(
                     slice_bytes,
                     max_width,

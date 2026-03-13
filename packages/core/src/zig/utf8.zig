@@ -101,12 +101,12 @@ pub const TabStopResult = struct {
 
 pub const LayoutWrapBreak = struct {
     byte_offset: u32,
-    col_offset: u16,
+    col_offset: u32,
     byte_len: u8,
     width: u8,
 
     pub fn colEnd(self: @This()) u32 {
-        return @as(u32, self.col_offset) + @as(u32, self.width);
+        return self.col_offset + @as(u32, self.width);
     }
 
     pub fn byteEnd(self: @This()) u32 {
@@ -1408,7 +1408,7 @@ inline fn appendLayoutWrapBreak(
     if (wrap_breaks) |list| {
         try list.append(allocator, .{
             .byte_offset = byte_offset,
-            .col_offset = @intCast(@min(col_offset, std.math.maxInt(u16))),
+            .col_offset = col_offset,
             .byte_len = @intCast(@min(byte_len, std.math.maxInt(u8))),
             .width = @intCast(@min(width, std.math.maxInt(u8))),
         });

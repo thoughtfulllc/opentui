@@ -679,7 +679,7 @@ pub const EditBuffer = struct {
                     const local_cursor_col = if (cursor.col > cols_before) cursor.col - cols_before else 0;
 
                     for (wrap_offsets) |wrap_break| {
-                        const break_col = @as(u32, wrap_break.col_offset);
+                        const break_col = wrap_break.col_offset;
                         const target_col = cols_before + wrap_break.colEnd();
 
                         // If we've passed the cursor chunk, any break is valid
