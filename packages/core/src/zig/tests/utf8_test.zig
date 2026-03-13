@@ -1,5 +1,6 @@
 const std = @import("std");
 const testing = std.testing;
+const uucode = @import("uucode");
 const utf8 = @import("../utf8.zig");
 
 // ============================================================================
@@ -682,28 +683,86 @@ const LayoutWrapBreakTestCase = struct {
     expected: []const usize,
 };
 
+const LayoutWrapBreakCompat = struct {
+    byte_offset: u32,
+    char_offset: u32,
+};
+
 const layout_wrap_break_golden_tests = [_]LayoutWrapBreakTestCase{
     .{ .name = "empty string", .input = "", .expected = &[_]usize{} },
     .{ .name = "no breaks", .input = "abcdef", .expected = &[_]usize{} },
     .{ .name = "single space", .input = "a b", .expected = &[_]usize{1} },
     .{ .name = "multiple spaces", .input = "a b c", .expected = &[_]usize{ 1, 3 } },
     .{ .name = "tab character", .input = "a\tb", .expected = &[_]usize{1} },
+    .{ .name = "newline", .input = "a\nb", .expected = &[_]usize{} },
+    .{ .name = "carriage return", .input = "a\rb", .expected = &[_]usize{} },
     .{ .name = "dash", .input = "pre-post", .expected = &[_]usize{3} },
     .{ .name = "forward slash", .input = "path/to/file", .expected = &[_]usize{ 4, 7 } },
-    .{ .name = "punctuation", .input = "Hello, world!", .expected = &[_]usize{ 5, 6, 12 } },
+    .{ .name = "backslash", .input = "path\\to\\file", .expected = &[_]usize{ 4, 7 } },
+    .{ .name = "punctuation", .input = "Hello, world! How are you? Fine.", .expected = &[_]usize{ 5, 6, 12, 13, 17, 21, 25, 26, 31 } },
+    .{ .name = "brackets", .input = "(a)[b]{c}", .expected = &[_]usize{ 0, 2, 3, 5, 6, 8 } },
+    .{ .name = "mixed breaks", .input = "Hello, world! -path/file.", .expected = &[_]usize{ 5, 6, 12, 13, 14, 19, 24 } },
+    .{ .name = "consecutive spaces", .input = "a  b", .expected = &[_]usize{ 1, 2 } },
+    .{ .name = "only spaces", .input = "   ", .expected = &[_]usize{ 0, 1, 2 } },
+    .{ .name = "all break types", .input = " \t-/\\.,:;!?()[]{}", .expected = &[_]usize{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16 } },
     .{ .name = "nbsp", .input = "a\u{00A0}b", .expected = &[_]usize{1} },
+    .{ .name = "em space", .input = "a\u{2003}b", .expected = &[_]usize{1} },
+    .{ .name = "ideo space", .input = "a\u{3000}b", .expected = &[_]usize{1} },
+    .{ .name = "soft hyphen", .input = "pre\u{00AD}post", .expected = &[_]usize{3} },
+    .{ .name = "unicode hyphen", .input = "pre\u{2010}post", .expected = &[_]usize{3} },
     .{ .name = "zero width space", .input = "a\u{200B}b", .expected = &[_]usize{1} },
 };
 
-fn testLayoutWrapBreaks(test_case: LayoutWrapBreakTestCase, allocator: std.mem.Allocator) !void {
-    var result: std.ArrayListUnmanaged(utf8.LayoutWrapBreak) = .{};
-    defer result.deinit(allocator);
+fn compatUnicodeGraphemeBreak(prev_cp: ?u21, curr_cp: u21, break_state: *uucode.grapheme.BreakState) bool {
+    if (prev_cp == null) return true;
+    if (curr_cp == 0xFFFD or curr_cp > 0x10FFFF) return true;
+    if (prev_cp.? == 0xFFFD or prev_cp.? > 0x10FFFF) return true;
+    return uucode.grapheme.isBreak(prev_cp.?, curr_cp, break_state);
+}
 
-    try utf8.findChunkLayoutInfo(test_case.input, 4, utf8.isAsciiOnly(test_case.input), .unicode, allocator, &result);
+fn compatCharOffsetForByte(input: []const u8, byte_offset: u32) u32 {
+    var pos: usize = 0;
+    var grapheme_count: u32 = 0;
+    var prev_cp: ?u21 = null;
+    var break_state: uucode.grapheme.BreakState = .default;
+
+    while (pos < byte_offset and pos < input.len) {
+        const dec = utf8.decodeUtf8Unchecked(input, pos);
+        const curr_cp = dec.cp;
+        if (compatUnicodeGraphemeBreak(prev_cp, curr_cp, &break_state)) {
+            grapheme_count += 1;
+        }
+        prev_cp = curr_cp;
+        pos += dec.len;
+    }
+
+    return grapheme_count;
+}
+
+fn collectLayoutWrapBreaks(input: []const u8, tab_width: u8, allocator: std.mem.Allocator) !std.ArrayListUnmanaged(utf8.LayoutWrapBreak) {
+    var result: std.ArrayListUnmanaged(utf8.LayoutWrapBreak) = .{};
+    try utf8.findChunkLayoutInfo(input, tab_width, utf8.isAsciiOnly(input), .unicode, allocator, &result);
+    return result;
+}
+
+fn testLayoutWrapBreaks(test_case: LayoutWrapBreakTestCase, allocator: std.mem.Allocator) !void {
+    var result = try collectLayoutWrapBreaks(test_case.input, 4, allocator);
+    defer result.deinit(allocator);
 
     try testing.expectEqual(test_case.expected.len, result.items.len);
     for (test_case.expected, 0..) |exp, i| {
         try testing.expectEqual(exp, result.items[i].byte_offset);
+    }
+}
+
+fn testLayoutWrapBreakCompat(input: []const u8, allocator: std.mem.Allocator, expected: []const LayoutWrapBreakCompat) !void {
+    var result = try collectLayoutWrapBreaks(input, 4, allocator);
+    defer result.deinit(allocator);
+
+    try testing.expectEqual(expected.len, result.items.len);
+    for (expected, 0..) |exp, i| {
+        try testing.expectEqual(exp.byte_offset, result.items[i].byte_offset);
+        try testing.expectEqual(exp.char_offset, compatCharOffsetForByte(input, result.items[i].byte_offset));
     }
 }
 
@@ -722,10 +781,61 @@ test "layout wrap breaks: space at SIMD16 edge (15)" {
     try testLayoutWrapBreaks(.{ .name = "space@15", .input = &buf, .expected = &[_]usize{15} }, testing.allocator);
 }
 
+test "layout wrap breaks: unicode NBSP at SIMD16 edge (15)" {
+    var buf: [32]u8 = undefined;
+    @memset(&buf, 'x');
+    buf[15] = 0xC2;
+    buf[16] = 0xA0;
+
+    try testLayoutWrapBreaks(.{ .name = "nbsp@15", .input = &buf, .expected = &[_]usize{15} }, testing.allocator);
+}
+
+test "layout wrap breaks: multiple breaks around SIMD16 boundary" {
+    var buf: [32]u8 = undefined;
+    @memset(&buf, 'x');
+    buf[14] = ' ';
+    buf[15] = '-';
+    buf[16] = '/';
+    buf[17] = '.';
+
+    try testLayoutWrapBreaks(.{ .name = "multi@boundary", .input = &buf, .expected = &[_]usize{ 14, 15, 16, 17 } }, testing.allocator);
+}
+
+test "layout wrap breaks: multibyte adjacent to space" {
+    try testLayoutWrapBreaks(.{ .name = "é space", .input = "é test", .expected = &[_]usize{2} }, testing.allocator);
+}
+
+test "layout wrap breaks: multibyte adjacent to dash" {
+    try testLayoutWrapBreaks(.{ .name = "漢-", .input = "漢-test", .expected = &[_]usize{3} }, testing.allocator);
+}
+
 test "layout wrap breaks: script transitions around multibyte text" {
     try testLayoutWrapBreaks(.{ .name = "Test世界Test", .input = "Test世界Test", .expected = &[_]usize{ 3, 7 } }, testing.allocator);
     try testLayoutWrapBreaks(.{ .name = "日本語abc", .input = "日本語abc", .expected = &[_]usize{6} }, testing.allocator);
     try testLayoutWrapBreaks(.{ .name = "abc日本語", .input = "abc日本語", .expected = &[_]usize{2} }, testing.allocator);
+}
+
+test "layout wrap breaks: multibyte at SIMD boundary with script transitions" {
+    var buf: [32]u8 = undefined;
+    @memset(&buf, 0);
+    const text = "Test世界Test";
+    @memcpy(buf[0..text.len], text);
+    try testLayoutWrapBreaks(.{ .name = "unicode@boundary", .input = buf[0..text.len], .expected = &[_]usize{ 3, 7 } }, testing.allocator);
+}
+
+test "layout wrap breaks: realistic text" {
+    const sample_text =
+        "The quick brown fox jumps over the lazy dog.\n" ++
+        "Lorem ipsum dolor sit amet, consectetur adipiscing elit.\n" ++
+        "File paths: /usr/local/bin and C:\\Windows\\System32\n" ++
+        "Punctuation test: Hello, world! How are you? I'm fine.\n" ++
+        "Brackets test: (parentheses) [square] {curly}\n" ++
+        "Dashes test: pre-dash post-dash multi-word-expression\n" ++
+        "Mixed: Hello, /path/to-file.txt [done]!\n";
+
+    var result = try collectLayoutWrapBreaks(sample_text, 4, testing.allocator);
+    defer result.deinit(testing.allocator);
+    try testing.expect(result.items.len > 0);
 }
 
 test "layout wrap breaks: random small buffers" {
@@ -769,6 +879,26 @@ test "layout wrap breaks: large buffer and >64KB offsets" {
     try testing.expectEqual(@as(u32, 70_000), result.items[0].byte_offset);
 }
 
+test "layout wrap breaks: large buffer" {
+    const size = 10000;
+    const buf = try testing.allocator.alloc(u8, size);
+    defer testing.allocator.free(buf);
+
+    for (buf, 0..) |*b, idx| {
+        if (idx % 50 == 0) {
+            b.* = ' ';
+        } else if (idx % 75 == 0) {
+            b.* = '-';
+        } else {
+            b.* = 'a' + @as(u8, @intCast(idx % 26));
+        }
+    }
+
+    var result = try collectLayoutWrapBreaks(buf, 4, testing.allocator);
+    defer result.deinit(testing.allocator);
+    try testing.expect(result.items.len > 0);
+}
+
 test "layout wrap breaks: result reuse and empty input" {
     var result: std.ArrayListUnmanaged(utf8.LayoutWrapBreak) = .{};
     defer result.deinit(testing.allocator);
@@ -778,6 +908,116 @@ test "layout wrap breaks: result reuse and empty input" {
 
     try utf8.findChunkLayoutInfo("", 4, false, .unicode, testing.allocator, &result);
     try testing.expectEqual(@as(usize, 0), result.items.len);
+}
+
+test "layout wrap breaks: exactly 16 bytes" {
+    var result = try collectLayoutWrapBreaks("0123456789abcdef", 4, testing.allocator);
+    defer result.deinit(testing.allocator);
+    try testing.expectEqual(@as(usize, 0), result.items.len);
+}
+
+test "layout wrap breaks: 17 bytes with break at 16" {
+    var result = try collectLayoutWrapBreaks("0123456789abcde x", 4, testing.allocator);
+    defer result.deinit(testing.allocator);
+    try testing.expectEqual(@as(usize, 1), result.items.len);
+    try testing.expectEqual(@as(u32, 15), result.items[0].byte_offset);
+}
+
+test "layout wrap breaks: grapheme compatibility - emoji with ZWJ" {
+    try testLayoutWrapBreakCompat("ab 👩‍🚀 cd", testing.allocator, &[_]LayoutWrapBreakCompat{
+        .{ .byte_offset = 2, .char_offset = 2 },
+        .{ .byte_offset = 14, .char_offset = 4 },
+    });
+}
+
+test "layout wrap breaks: grapheme compatibility - emoji with skin tone" {
+    try testLayoutWrapBreakCompat("hi 👋🏿 bye", testing.allocator, &[_]LayoutWrapBreakCompat{
+        .{ .byte_offset = 2, .char_offset = 2 },
+        .{ .byte_offset = 11, .char_offset = 4 },
+    });
+}
+
+test "layout wrap breaks: grapheme compatibility - emoji with VS16 selector" {
+    try testLayoutWrapBreakCompat("I ❤️ U", testing.allocator, &[_]LayoutWrapBreakCompat{
+        .{ .byte_offset = 1, .char_offset = 1 },
+        .{ .byte_offset = 8, .char_offset = 3 },
+    });
+}
+
+test "layout wrap breaks: grapheme compatibility - combining diacritic" {
+    try testLayoutWrapBreakCompat("cafe\u{0301} time", testing.allocator, &[_]LayoutWrapBreakCompat{
+        .{ .byte_offset = 6, .char_offset = 4 },
+    });
+}
+
+test "layout wrap breaks: grapheme compatibility - flag emoji" {
+    try testLayoutWrapBreakCompat("USA🇺🇸 flag", testing.allocator, &[_]LayoutWrapBreakCompat{
+        .{ .byte_offset = 11, .char_offset = 4 },
+    });
+}
+
+test "layout wrap breaks: grapheme compatibility - mixed graphemes and ASCII" {
+    try testLayoutWrapBreakCompat("Hello 👋🏿 world 🇺🇸 test", testing.allocator, &[_]LayoutWrapBreakCompat{
+        .{ .byte_offset = 5, .char_offset = 5 },
+        .{ .byte_offset = 14, .char_offset = 7 },
+        .{ .byte_offset = 20, .char_offset = 13 },
+        .{ .byte_offset = 29, .char_offset = 15 },
+    });
+}
+
+test "layout wrap breaks: grapheme compatibility - CJK characters keep break offsets" {
+    try testLayoutWrapBreakCompat("Hello 世界 test", testing.allocator, &[_]LayoutWrapBreakCompat{
+        .{ .byte_offset = 5, .char_offset = 5 },
+        .{ .byte_offset = 12, .char_offset = 8 },
+    });
+}
+
+test "layout wrap breaks: grapheme compatibility - CJK punctuation before ASCII" {
+    try testLayoutWrapBreakCompat("日本語。abc", testing.allocator, &[_]LayoutWrapBreakCompat{
+        .{ .byte_offset = 9, .char_offset = 3 },
+    });
+}
+
+test "layout wrap breaks: grapheme compatibility - CJK to ASCII transition" {
+    try testLayoutWrapBreakCompat("日本語abc", testing.allocator, &[_]LayoutWrapBreakCompat{
+        .{ .byte_offset = 6, .char_offset = 2 },
+    });
+}
+
+test "layout wrap breaks: grapheme compatibility - ASCII to CJK transition" {
+    try testLayoutWrapBreakCompat("abc日本語", testing.allocator, &[_]LayoutWrapBreakCompat{
+        .{ .byte_offset = 2, .char_offset = 2 },
+    });
+}
+
+test "layout wrap breaks: grapheme compatibility - compat ideograph to ASCII transition" {
+    try testLayoutWrapBreakCompat("丽abc", testing.allocator, &[_]LayoutWrapBreakCompat{
+        .{ .byte_offset = 0, .char_offset = 0 },
+    });
+}
+
+test "layout wrap breaks: grapheme compatibility - extension I ideograph to ASCII transition" {
+    try testLayoutWrapBreakCompat("𮯰abc", testing.allocator, &[_]LayoutWrapBreakCompat{
+        .{ .byte_offset = 0, .char_offset = 0 },
+    });
+}
+
+test "layout wrap breaks: grapheme compatibility - emoji and CJK mixed offsets" {
+    const input = "🌟 Unicode test: こんにちは世界 Hello World";
+    var result = try collectLayoutWrapBreaks(input, 4, testing.allocator);
+    defer result.deinit(testing.allocator);
+
+    var space_before_hello: ?utf8.LayoutWrapBreak = null;
+    var space_after_hello: ?utf8.LayoutWrapBreak = null;
+    for (result.items) |brk| {
+        if (brk.byte_offset == 40) space_before_hello = brk;
+        if (brk.byte_offset == 46) space_after_hello = brk;
+    }
+
+    try testing.expect(space_before_hello != null);
+    try testing.expect(space_after_hello != null);
+    try testing.expectEqual(@as(u32, 23), compatCharOffsetForByte(input, space_before_hello.?.byte_offset));
+    try testing.expectEqual(@as(u32, 29), compatCharOffsetForByte(input, space_after_hello.?.byte_offset));
 }
 
 test "layout wrap breaks: direct metadata for wide grapheme delimiter" {
