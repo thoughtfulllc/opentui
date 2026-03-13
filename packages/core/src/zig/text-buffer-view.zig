@@ -835,6 +835,260 @@ pub const UnifiedTextBufferView = struct {
     /// Measure dimensions for given width/height WITHOUT modifying virtual lines cache
     /// This is useful for Yoga measure functions that need to know dimensions without committing changes
     /// Special case: width=0 or wrap_mode=.none means "measure intrinsic/max-content width" (no wrapping)
+    fn measureWordWrappedDimensions(self: *Self, wrap_w: u32, allocator: Allocator) MeasureResult {
+        const MeasureContext = struct {
+            text_buffer: *UnifiedTextBuffer,
+            allocator: Allocator,
+            wrap_w: u32,
+            line_count: u32 = 0,
+            width_cols_max: u32 = 0,
+            line_position: u32 = 0,
+            pending_chunks: std.ArrayListUnmanaged(VirtualChunk) = .{},
+            pending_width: u32 = 0,
+
+            fn commitLine(ctx: *@This()) void {
+                ctx.width_cols_max = @max(ctx.width_cols_max, ctx.line_position);
+                ctx.line_count += 1;
+                ctx.line_position = 0;
+            }
+
+            fn addWidth(ctx: *@This(), width: u32) void {
+                ctx.line_position += width;
+            }
+
+            fn queuePendingChunk(ctx: *@This(), chunk: *const TextChunk, start: u32, width: u32) void {
+                if (width == 0) return;
+
+                if (ctx.pending_chunks.items.len > 0) {
+                    const last_idx = ctx.pending_chunks.items.len - 1;
+                    const last = &ctx.pending_chunks.items[last_idx];
+                    if (last.chunk == chunk and last.grapheme_start + last.width == start) {
+                        last.width += width;
+                        ctx.pending_width += width;
+                        return;
+                    }
+                }
+
+                ctx.pending_chunks.append(ctx.allocator, .{
+                    .grapheme_start = start,
+                    .width = width,
+                    .chunk = chunk,
+                }) catch {};
+                ctx.pending_width += width;
+            }
+
+            fn clearPending(ctx: *@This()) void {
+                ctx.pending_chunks.clearRetainingCapacity();
+                ctx.pending_width = 0;
+            }
+
+            fn appendPendingAllToLine(ctx: *@This()) void {
+                ctx.line_position += ctx.pending_width;
+                clearPending(ctx);
+            }
+
+            fn dropPendingPrefixChunks(ctx: *@This(), count: usize) void {
+                if (count == 0) return;
+                const remaining = ctx.pending_chunks.items.len - count;
+                if (remaining > 0) {
+                    std.mem.copyForwards(VirtualChunk, ctx.pending_chunks.items[0..remaining], ctx.pending_chunks.items[count..]);
+                }
+                ctx.pending_chunks.items.len = remaining;
+            }
+
+            fn fitChunkToWidth(ctx: *@This(), vchunk: VirtualChunk, max_width: u32, allow_forced_partial: bool) u32 {
+                if (vchunk.width <= max_width) return vchunk.width;
+                if (max_width == 0) return 0;
+
+                const chunk_bytes = vchunk.chunk.getBytes(ctx.text_buffer.memRegistry());
+                const is_ascii_only = (vchunk.chunk.flags & TextChunk.Flags.ASCII_ONLY) != 0;
+
+                const slice_start = utf8.findPosByWidth(
+                    chunk_bytes,
+                    vchunk.grapheme_start,
+                    ctx.text_buffer.tabWidth(),
+                    is_ascii_only,
+                    false,
+                    ctx.text_buffer.widthMethod(),
+                );
+                const slice_end = utf8.findPosByWidth(
+                    chunk_bytes,
+                    vchunk.grapheme_start + vchunk.width,
+                    ctx.text_buffer.tabWidth(),
+                    is_ascii_only,
+                    false,
+                    ctx.text_buffer.widthMethod(),
+                );
+
+                const slice_bytes = chunk_bytes[slice_start.byte_offset..slice_end.byte_offset];
+                const fit = utf8.findWrapPosByWidth(
+                    slice_bytes,
+                    max_width,
+                    ctx.text_buffer.tabWidth(),
+                    is_ascii_only,
+                    ctx.text_buffer.widthMethod(),
+                );
+
+                if (fit.columns_used > 0) return @min(fit.columns_used, vchunk.width);
+                return if (allow_forced_partial) @min(max_width, vchunk.width) else 0;
+            }
+
+            fn consumePendingPrefixToLine(ctx: *@This(), max_width: u32) bool {
+                if (max_width == 0 or ctx.pending_width == 0) return false;
+
+                const line_before = ctx.line_position;
+                var remaining = max_width;
+                var consumed_chunks: usize = 0;
+
+                while (consumed_chunks < ctx.pending_chunks.items.len and remaining > 0) {
+                    const vchunk = ctx.pending_chunks.items[consumed_chunks];
+
+                    if (vchunk.width <= remaining) {
+                        addWidth(ctx, vchunk.width);
+                        remaining -= vchunk.width;
+                        consumed_chunks += 1;
+                        continue;
+                    }
+
+                    const take_width = fitChunkToWidth(ctx, vchunk, remaining, ctx.line_position == line_before);
+                    if (take_width == 0) break;
+
+                    addWidth(ctx, take_width);
+                    ctx.pending_chunks.items[consumed_chunks].grapheme_start += take_width;
+                    ctx.pending_chunks.items[consumed_chunks].width -= take_width;
+                    if (ctx.pending_chunks.items[consumed_chunks].width == 0) {
+                        consumed_chunks += 1;
+                    }
+                    break;
+                }
+
+                dropPendingPrefixChunks(ctx, consumed_chunks);
+
+                const consumed_width = ctx.line_position - line_before;
+                if (consumed_width > 0) {
+                    ctx.pending_width -= consumed_width;
+                }
+                return consumed_width > 0;
+            }
+
+            fn finalizePendingToken(ctx: *@This()) void {
+                const wrap_limit = if (ctx.wrap_w > 0) ctx.wrap_w else 1;
+
+                while (ctx.pending_width > 0) {
+                    if (ctx.line_position > 0 and ctx.line_position + ctx.pending_width > wrap_limit) {
+                        commitLine(ctx);
+                        continue;
+                    }
+
+                    if (ctx.line_position == 0 and ctx.pending_width > wrap_limit) {
+                        if (!consumePendingPrefixToLine(ctx, wrap_limit)) break;
+                        if (ctx.pending_width > 0) {
+                            commitLine(ctx);
+                        }
+                        continue;
+                    }
+
+                    appendPendingAllToLine(ctx);
+                }
+            }
+
+            fn placeDirectTokenPiece(ctx: *@This(), chunk: *const TextChunk, start: u32, width: u32) void {
+                if (width == 0) return;
+
+                const wrap_limit = if (ctx.wrap_w > 0) ctx.wrap_w else 1;
+
+                if (width <= wrap_limit) {
+                    if (ctx.line_position > 0 and ctx.line_position + width > wrap_limit) {
+                        commitLine(ctx);
+                    }
+                    addWidth(ctx, width);
+                    return;
+                }
+
+                if (ctx.line_position > 0) {
+                    commitLine(ctx);
+                }
+
+                var piece_start = start;
+                var piece_width = width;
+                while (piece_width > 0) {
+                    const vchunk = VirtualChunk{
+                        .grapheme_start = piece_start,
+                        .width = piece_width,
+                        .chunk = chunk,
+                    };
+                    const take_width = fitChunkToWidth(ctx, vchunk, wrap_limit, true);
+                    if (take_width == 0) break;
+
+                    addWidth(ctx, take_width);
+                    piece_start += take_width;
+                    piece_width -= take_width;
+
+                    if (piece_width > 0) {
+                        commitLine(ctx);
+                    }
+                }
+            }
+
+            fn flushCompleteTokenPiece(ctx: *@This(), chunk: *const TextChunk, start: u32, width: u32) void {
+                if (width == 0) return;
+
+                if (ctx.pending_width > 0) {
+                    queuePendingChunk(ctx, chunk, start, width);
+                    finalizePendingToken(ctx);
+                    return;
+                }
+
+                placeDirectTokenPiece(ctx, chunk, start, width);
+            }
+
+            fn segment_callback(ctx_ptr: *anyopaque, _: u32, chunk: *const TextChunk, _: u32) void {
+                const ctx = @as(*@This(), @ptrCast(@alignCast(ctx_ptr)));
+
+                const layout_info = ctx.text_buffer.getLayoutInfoFor(chunk) catch utf8.ChunkLayoutInfo{
+                    .graphemes = &[_]utf8.GraphemeInfo{},
+                    .wrap_breaks = &[_]utf8.LayoutWrapBreak{},
+                };
+
+                var chunk_col_start: u32 = 0;
+                for (layout_info.wrap_breaks) |wrap_break| {
+                    const piece_end = @as(u32, wrap_break.col_end);
+                    if (piece_end <= chunk_col_start) continue;
+
+                    flushCompleteTokenPiece(ctx, chunk, chunk_col_start, piece_end - chunk_col_start);
+                    chunk_col_start = piece_end;
+                }
+
+                if (chunk_col_start < chunk.width) {
+                    queuePendingChunk(ctx, chunk, chunk_col_start, chunk.width - chunk_col_start);
+                }
+            }
+
+            fn line_end_callback(ctx_ptr: *anyopaque, line_info: iter_mod.LineInfo) void {
+                const ctx = @as(*@This(), @ptrCast(@alignCast(ctx_ptr)));
+                finalizePendingToken(ctx);
+                clearPending(ctx);
+
+                if (ctx.line_position > 0 or line_info.width_cols == 0) {
+                    commitLine(ctx);
+                }
+            }
+        };
+
+        var ctx = MeasureContext{
+            .text_buffer = self.text_buffer,
+            .allocator = allocator,
+            .wrap_w = wrap_w,
+        };
+
+        self.text_buffer.walkLinesAndSegments(&ctx, MeasureContext.segment_callback, MeasureContext.line_end_callback);
+
+        return .{
+            .line_count = ctx.line_count,
+            .width_cols_max = ctx.width_cols_max,
+        };
+    }
+
     pub fn measureForDimensions(self: *Self, width: u32, height: u32) TextBufferViewError!MeasureResult {
         _ = height; // Height is for future use, currently only width affects layout
         const epoch = self.text_buffer.getContentEpoch();
@@ -874,6 +1128,18 @@ pub const UnifiedTextBufferView = struct {
         // Reuse arena capacity to avoid allocation overhead during streaming.
         _ = self.measure_arena.reset(.retain_capacity);
         const measure_allocator = self.measure_arena.allocator();
+
+        if (self.wrap_mode == .word and width > 0) {
+            const result = self.measureWordWrappedDimensions(width, measure_allocator);
+
+            self.cached_measure_width = width;
+            self.cached_measure_wrap_mode = self.wrap_mode;
+            self.cached_measure_result = result;
+            self.cached_measure_epoch = epoch;
+            self.cached_measure_buffer = self.text_buffer;
+
+            return result;
+        }
 
         // Create temporary output structures
         var temp_virtual_lines = std.ArrayListUnmanaged(VirtualLine){};
@@ -1164,7 +1430,7 @@ pub const UnifiedTextBufferView = struct {
                     return consumed_width > 0;
                 }
 
-                fn placePendingPiece(wctx: *@This()) void {
+                fn finalizePendingToken(wctx: *@This()) void {
                     const wrap_limit = if (wctx.wrap_w > 0) wctx.wrap_w else 1;
 
                     while (wctx.pending_width > 0) {
@@ -1185,6 +1451,56 @@ pub const UnifiedTextBufferView = struct {
                     }
                 }
 
+                fn placeDirectTokenPiece(wctx: *@This(), chunk: *const TextChunk, start: u32, width: u32) void {
+                    if (width == 0) return;
+
+                    const wrap_limit = if (wctx.wrap_w > 0) wctx.wrap_w else 1;
+
+                    if (width <= wrap_limit) {
+                        if (wctx.line_position > 0 and wctx.line_position + width > wrap_limit) {
+                            commitVirtualLine(wctx);
+                        }
+                        addVirtualChunk(wctx, chunk, 0, start, width);
+                        return;
+                    }
+
+                    if (wctx.line_position > 0) {
+                        commitVirtualLine(wctx);
+                    }
+
+                    var piece_start = start;
+                    var piece_width = width;
+                    while (piece_width > 0) {
+                        const vchunk = VirtualChunk{
+                            .grapheme_start = piece_start,
+                            .width = piece_width,
+                            .chunk = chunk,
+                        };
+                        const take_width = fitVirtualChunkToWidth(wctx, vchunk, wrap_limit, true);
+                        if (take_width == 0) break;
+
+                        addVirtualChunk(wctx, chunk, 0, piece_start, take_width);
+                        piece_start += take_width;
+                        piece_width -= take_width;
+
+                        if (piece_width > 0) {
+                            commitVirtualLine(wctx);
+                        }
+                    }
+                }
+
+                fn flushCompleteTokenPiece(wctx: *@This(), chunk: *const TextChunk, start: u32, width: u32) void {
+                    if (width == 0) return;
+
+                    if (wctx.pending_width > 0) {
+                        queuePendingChunk(wctx, chunk, start, width);
+                        finalizePendingToken(wctx);
+                        return;
+                    }
+
+                    placeDirectTokenPiece(wctx, chunk, start, width);
+                }
+
                 fn segment_callback(ctx_ptr: *anyopaque, _: u32, chunk: *const TextChunk, chunk_idx_in_line: u32) void {
                     const wctx = @as(*@This(), @ptrCast(@alignCast(ctx_ptr)));
 
@@ -1200,9 +1516,8 @@ pub const UnifiedTextBufferView = struct {
                             const piece_end = @as(u32, wrap_break.col_end);
                             if (piece_end <= chunk_col_start) continue;
 
-                            queuePendingChunk(wctx, chunk, chunk_col_start, piece_end - chunk_col_start);
+                            flushCompleteTokenPiece(wctx, chunk, chunk_col_start, piece_end - chunk_col_start);
                             chunk_col_start = piece_end;
-                            placePendingPiece(wctx);
                         }
 
                         if (chunk_col_start < chunk.width) {
@@ -1275,7 +1590,7 @@ pub const UnifiedTextBufferView = struct {
                     const wctx = @as(*@This(), @ptrCast(@alignCast(ctx_ptr)));
 
                     if (wctx.wrap_mode == .word) {
-                        placePendingPiece(wctx);
+                        finalizePendingToken(wctx);
                         clearPending(wctx);
                     }
 

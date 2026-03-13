@@ -1615,6 +1615,7 @@ fn scanChunkLayout(
         return;
     }
 
+    const vector_len = 16;
     var pos: usize = 0;
     var col: u32 = 0;
     var grapheme_offset: u32 = 0;
@@ -1630,6 +1631,85 @@ fn scanChunkLayout(
     var cluster_is_tab = false;
     var cluster_has_wrap_break = false;
     var cluster_class: WordClass = .other;
+
+    while (pos + vector_len <= text.len) {
+        const chunk: @Vector(vector_len, u8) = text[pos..][0..vector_len].*;
+        const ascii_threshold: @Vector(vector_len, u8) = @splat(0x80);
+        const is_non_ascii = chunk >= ascii_threshold;
+
+        if (@reduce(.Or, is_non_ascii)) break;
+
+        const first_class = classifyWordClass(text[pos]);
+        if (cluster_started) {
+            const cluster_width = try commitScannedCluster(
+                allocator,
+                graphemes,
+                public_wrap_breaks,
+                layout_wrap_breaks,
+                width_method,
+                cluster_start,
+                pos,
+                cluster_char_offset,
+                cluster_col_offset,
+                cluster_width_state,
+                cluster_is_multibyte,
+                cluster_is_tab,
+                cluster_has_wrap_break,
+                cluster_class,
+                first_class,
+            );
+            col += cluster_width;
+            grapheme_offset += 1;
+            cluster_started = false;
+        }
+
+        var i: usize = 0;
+        while (i + 1 < vector_len) : (i += 1) {
+            const b = text[pos + i];
+            const cp_width = asciiCharWidth(b, tab_width);
+
+            if (b == '\t') {
+                if (graphemes) |list| {
+                    try list.append(allocator, .{
+                        .byte_offset = @intCast(pos + i),
+                        .byte_len = 1,
+                        .width = @intCast(cp_width),
+                        .col_offset = col,
+                    });
+                }
+            }
+
+            if (isAsciiWrapBreak(b)) {
+                try appendWrapBreaks(
+                    public_wrap_breaks,
+                    layout_wrap_breaks,
+                    allocator,
+                    @intCast(pos + i),
+                    grapheme_offset,
+                    col,
+                    col + cp_width,
+                );
+            }
+
+            col += cp_width;
+            grapheme_offset += 1;
+        }
+
+        const last_b = text[pos + vector_len - 1];
+        const last_cp: u21 = last_b;
+        cluster_started = true;
+        cluster_start = pos + vector_len - 1;
+        cluster_col_offset = col;
+        cluster_char_offset = grapheme_offset;
+        cluster_width_state = GraphemeWidthState.init(last_cp, asciiCharWidth(last_b, tab_width), width_method);
+        cluster_is_multibyte = false;
+        cluster_is_tab = (last_b == '\t');
+        cluster_has_wrap_break = isAsciiWrapBreak(last_b);
+        cluster_class = classifyWordClass(last_cp);
+        prev_cp = last_cp;
+        break_state = .default;
+        pos += vector_len;
+    }
 
     while (pos < text.len) {
         const b0 = text[pos];
