@@ -83,6 +83,36 @@ const PendingWordPieceFit = struct {
     bytes_used: u32,
 };
 
+inline fn wordWrapProcessChunk(
+    comptime Context: type,
+    ctx: *Context,
+    chunk: *const TextChunk,
+    comptime flushCompleteTokenPiece: fn (*Context, *const TextChunk, u32, u32, u32, u32) void,
+    comptime queuePendingChunk: fn (*Context, *const TextChunk, u32, u32, u32, u32) void,
+) void {
+    const chunk_bytes = chunk.getBytes(ctx.text_buffer.memRegistry());
+    const layout_info = ctx.text_buffer.getLayoutInfoFor(chunk) catch seg_mod.ChunkLayoutInfo{
+        .wrap_breaks = &[_]utf8.LayoutWrapBreak{},
+    };
+
+    var chunk_col_start: u32 = 0;
+    var chunk_byte_start: u32 = 0;
+
+    for (layout_info.wrap_breaks) |wrap_break| {
+        const piece_end = wrap_break.colEnd();
+        const piece_byte_end = wrap_break.byteEnd();
+        if (piece_end <= chunk_col_start) continue;
+
+        flushCompleteTokenPiece(ctx, chunk, chunk_col_start, piece_end - chunk_col_start, chunk_byte_start, piece_byte_end);
+        chunk_col_start = piece_end;
+        chunk_byte_start = piece_byte_end;
+    }
+
+    if (chunk_col_start < chunk.width) {
+        queuePendingChunk(ctx, chunk, chunk_col_start, chunk.width - chunk_col_start, chunk_byte_start, @intCast(chunk_bytes.len));
+    }
+}
+
 pub const VirtualLine = struct {
     chunks: std.ArrayListUnmanaged(VirtualChunk),
     width_cols: u32,
@@ -1543,27 +1573,7 @@ pub const UnifiedTextBufferView = struct {
                     const wctx = @as(*@This(), @ptrCast(@alignCast(ctx_ptr)));
 
                     if (wctx.wrap_mode == .word) {
-                        const chunk_bytes = chunk.getBytes(wctx.text_buffer.memRegistry());
-                        const layout_info = wctx.text_buffer.getLayoutInfoFor(chunk) catch seg_mod.ChunkLayoutInfo{
-                            .wrap_breaks = &[_]utf8.LayoutWrapBreak{},
-                        };
-                        const wrap_offsets = layout_info.wrap_breaks;
-                        var chunk_col_start: u32 = 0;
-                        var chunk_byte_start: u32 = 0;
-
-                        for (wrap_offsets) |wrap_break| {
-                            const piece_end = wrap_break.colEnd();
-                            const piece_byte_end = wrap_break.byteEnd();
-                            if (piece_end <= chunk_col_start) continue;
-
-                            flushCompleteTokenPiece(wctx, chunk, chunk_col_start, piece_end - chunk_col_start, chunk_byte_start, piece_byte_end);
-                            chunk_col_start = piece_end;
-                            chunk_byte_start = piece_byte_end;
-                        }
-
-                        if (chunk_col_start < chunk.width) {
-                            queuePendingChunk(wctx, chunk, chunk_col_start, chunk.width - chunk_col_start, chunk_byte_start, @intCast(chunk_bytes.len));
-                        }
+                        wordWrapProcessChunk(@This(), wctx, chunk, @This().flushCompleteTokenPiece, @This().queuePendingChunk);
                     } else {
                         const chunk_bytes = chunk.getBytes(wctx.text_buffer.memRegistry());
                         const is_ascii_only = (chunk.flags & TextChunk.Flags.ASCII_ONLY) != 0;
