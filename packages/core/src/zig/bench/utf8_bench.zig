@@ -289,8 +289,8 @@ fn benchFindLineBreaks(
     return results.toOwnedSlice(results_alloc);
 }
 
-// Benchmark findWrapBreaks
-fn benchFindWrapBreaks(
+// Benchmark findChunkLayoutInfo
+fn benchFindChunkLayoutInfo(
     results_alloc: std.mem.Allocator,
     iterations: usize,
     bench_filter: ?[]const u8,
@@ -300,20 +300,20 @@ fn benchFindWrapBreaks(
 
     // ASCII text
     {
-        const name = "findWrapBreaks: ASCII (10KB)";
+        const name = "findChunkLayoutInfo: ASCII (10KB)";
         if (bench_utils.matchesBenchFilter(name, bench_filter)) {
             var temp = std.heap.ArenaAllocator.init(std.heap.page_allocator);
             defer temp.deinit();
             const alloc = temp.allocator();
             const text = try generateAsciiText(alloc, 10 * 1024);
 
-            var wrap_result = utf8.WrapBreakResult.init(alloc);
-            defer wrap_result.deinit();
+            var wrap_breaks: std.ArrayListUnmanaged(utf8.LayoutWrapBreak) = .{};
+            defer wrap_breaks.deinit(alloc);
 
             var stats = BenchStats{};
             for (0..iterations) |_| {
                 var timer = try std.time.Timer.start();
-                try utf8.findWrapBreaks(text, &wrap_result, .unicode);
+                try utf8.findChunkLayoutInfo(text, 4, true, .unicode, alloc, &wrap_breaks);
                 stats.record(timer.read());
             }
 
@@ -331,20 +331,20 @@ fn benchFindWrapBreaks(
 
     // Mixed text
     {
-        const name = "findWrapBreaks: Mixed (10KB)";
+        const name = "findChunkLayoutInfo: Mixed (10KB)";
         if (bench_utils.matchesBenchFilter(name, bench_filter)) {
             var temp = std.heap.ArenaAllocator.init(std.heap.page_allocator);
             defer temp.deinit();
             const alloc = temp.allocator();
             const text = try generateMixedText(alloc, 10 * 1024);
 
-            var wrap_result = utf8.WrapBreakResult.init(alloc);
-            defer wrap_result.deinit();
+            var wrap_breaks: std.ArrayListUnmanaged(utf8.LayoutWrapBreak) = .{};
+            defer wrap_breaks.deinit(alloc);
 
             var stats = BenchStats{};
             for (0..iterations) |_| {
                 var timer = try std.time.Timer.start();
-                try utf8.findWrapBreaks(text, &wrap_result, .unicode);
+                try utf8.findChunkLayoutInfo(text, 4, false, .unicode, alloc, &wrap_breaks);
                 stats.record(timer.read());
             }
 
@@ -779,9 +779,9 @@ pub fn run(
     const line_breaks_results = try benchFindLineBreaks(allocator, iterations, bench_filter);
     try all_results.appendSlice(allocator, line_breaks_results);
 
-    // findWrapBreaks benchmarks
-    const wrap_breaks_results = try benchFindWrapBreaks(allocator, iterations, bench_filter);
-    try all_results.appendSlice(allocator, wrap_breaks_results);
+    // findChunkLayoutInfo benchmarks
+    const layout_info_results = try benchFindChunkLayoutInfo(allocator, iterations, bench_filter);
+    try all_results.appendSlice(allocator, layout_info_results);
 
     // findWrapPosByWidth benchmarks
     const wrap_pos_results = try benchFindWrapPosByWidth(allocator, iterations, bench_filter);

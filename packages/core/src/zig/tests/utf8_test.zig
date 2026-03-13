@@ -676,257 +676,61 @@ test "tab stops: tabs across multiple SIMD chunks" {
 // WORD WRAP BREAK TESTS
 // ============================================================================
 
-const WrapBreakTestCase = struct {
+const LayoutWrapBreakTestCase = struct {
     name: []const u8,
     input: []const u8,
     expected: []const usize,
 };
 
-const wrap_break_golden_tests = [_]WrapBreakTestCase{
-    .{
-        .name = "empty string",
-        .input = "",
-        .expected = &[_]usize{},
-    },
-    .{
-        .name = "no breaks",
-        .input = "abcdef",
-        .expected = &[_]usize{},
-    },
-    .{
-        .name = "single space",
-        .input = "a b",
-        .expected = &[_]usize{1},
-    },
-    .{
-        .name = "multiple spaces",
-        .input = "a b c",
-        .expected = &[_]usize{ 1, 3 },
-    },
-    .{
-        .name = "tab character",
-        .input = "a\tb",
-        .expected = &[_]usize{1},
-    },
-    .{
-        .name = "newline",
-        .input = "a\nb",
-        .expected = &[_]usize{},
-    },
-    .{
-        .name = "carriage return",
-        .input = "a\rb",
-        .expected = &[_]usize{},
-    },
-    .{
-        .name = "dash",
-        .input = "pre-post",
-        .expected = &[_]usize{3},
-    },
-    .{
-        .name = "forward slash",
-        .input = "path/to/file",
-        .expected = &[_]usize{ 4, 7 },
-    },
-    .{
-        .name = "backslash",
-        .input = "path\\to\\file",
-        .expected = &[_]usize{ 4, 7 },
-    },
-    .{
-        .name = "punctuation",
-        .input = "Hello, world! How are you? Fine.",
-        .expected = &[_]usize{ 5, 6, 12, 13, 17, 21, 25, 26, 31 },
-    },
-    .{
-        .name = "brackets",
-        .input = "(a)[b]{c}",
-        .expected = &[_]usize{ 0, 2, 3, 5, 6, 8 },
-    },
-    .{
-        .name = "mixed breaks",
-        .input = "Hello, world! -path/file.",
-        .expected = &[_]usize{ 5, 6, 12, 13, 14, 19, 24 },
-    },
-    .{
-        .name = "consecutive spaces",
-        .input = "a  b",
-        .expected = &[_]usize{ 1, 2 },
-    },
-    .{
-        .name = "only spaces",
-        .input = "   ",
-        .expected = &[_]usize{ 0, 1, 2 },
-    },
-    .{
-        .name = "all break types",
-        .input = " \t-/\\.,:;!?()[]{}",
-        .expected = &[_]usize{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16 },
-    },
-    .{
-        .name = "nbsp",
-        .input = "a\u{00A0}b",
-        .expected = &[_]usize{1},
-    },
-    .{
-        .name = "em space",
-        .input = "a\u{2003}b",
-        .expected = &[_]usize{1},
-    },
-    .{
-        .name = "ideo space",
-        .input = "a\u{3000}b",
-        .expected = &[_]usize{1},
-    },
-    .{
-        .name = "soft hyphen",
-        .input = "pre\u{00AD}post",
-        .expected = &[_]usize{3},
-    },
-    .{
-        .name = "unicode hyphen",
-        .input = "pre\u{2010}post",
-        .expected = &[_]usize{3},
-    },
-    .{
-        .name = "zero width space",
-        .input = "a\u{200B}b",
-        .expected = &[_]usize{1},
-    },
+const layout_wrap_break_golden_tests = [_]LayoutWrapBreakTestCase{
+    .{ .name = "empty string", .input = "", .expected = &[_]usize{} },
+    .{ .name = "no breaks", .input = "abcdef", .expected = &[_]usize{} },
+    .{ .name = "single space", .input = "a b", .expected = &[_]usize{1} },
+    .{ .name = "multiple spaces", .input = "a b c", .expected = &[_]usize{ 1, 3 } },
+    .{ .name = "tab character", .input = "a\tb", .expected = &[_]usize{1} },
+    .{ .name = "dash", .input = "pre-post", .expected = &[_]usize{3} },
+    .{ .name = "forward slash", .input = "path/to/file", .expected = &[_]usize{ 4, 7 } },
+    .{ .name = "punctuation", .input = "Hello, world!", .expected = &[_]usize{ 5, 6, 12 } },
+    .{ .name = "nbsp", .input = "a\u{00A0}b", .expected = &[_]usize{1} },
+    .{ .name = "zero width space", .input = "a\u{200B}b", .expected = &[_]usize{1} },
 };
 
-fn testWrapBreaks(test_case: WrapBreakTestCase, allocator: std.mem.Allocator) !void {
-    var result = utf8.WrapBreakResult.init(allocator);
-    defer result.deinit();
+fn testLayoutWrapBreaks(test_case: LayoutWrapBreakTestCase, allocator: std.mem.Allocator) !void {
+    var result: std.ArrayListUnmanaged(utf8.LayoutWrapBreak) = .{};
+    defer result.deinit(allocator);
 
-    try utf8.findWrapBreaks(test_case.input, &result, .unicode);
+    try utf8.findChunkLayoutInfo(test_case.input, 4, utf8.isAsciiOnly(test_case.input), .unicode, allocator, &result);
 
-    try testing.expectEqual(test_case.expected.len, result.breaks.items.len);
-
+    try testing.expectEqual(test_case.expected.len, result.items.len);
     for (test_case.expected, 0..) |exp, i| {
-        try testing.expectEqual(exp, result.breaks.items[i].byte_offset);
+        try testing.expectEqual(exp, result.items[i].byte_offset);
     }
 }
 
-test "wrap breaks: golden tests" {
-    for (wrap_break_golden_tests) |tc| {
-        try testWrapBreaks(tc, testing.allocator);
+test "layout wrap breaks: golden tests" {
+    for (layout_wrap_break_golden_tests) |tc| {
+        try testLayoutWrapBreaks(tc, testing.allocator);
     }
 }
 
-test "wrap breaks: space at SIMD16 edge (15)" {
+test "layout wrap breaks: space at SIMD16 edge (15)" {
     var buf: [32]u8 = undefined;
     @memset(&buf, 'x');
     buf[15] = ' ';
     buf[16] = 'y';
 
-    const expected = [_]usize{15};
-
-    try testWrapBreaks(.{
-        .name = "space@15",
-        .input = &buf,
-        .expected = &expected,
-    }, testing.allocator);
+    try testLayoutWrapBreaks(.{ .name = "space@15", .input = &buf, .expected = &[_]usize{15} }, testing.allocator);
 }
 
-test "wrap breaks: unicode NBSP at SIMD16 edge (15)" {
-    var buf: [32]u8 = undefined;
-    @memset(&buf, 'x');
-    // NBSP U+00A0 = 0xC2 0xA0
-    buf[15] = 0xC2;
-    buf[16] = 0xA0;
-
-    const expected = [_]usize{15};
-
-    try testWrapBreaks(.{
-        .name = "nbsp@15",
-        .input = &buf,
-        .expected = &expected,
-    }, testing.allocator);
+test "layout wrap breaks: script transitions around multibyte text" {
+    try testLayoutWrapBreaks(.{ .name = "Test世界Test", .input = "Test世界Test", .expected = &[_]usize{ 3, 7 } }, testing.allocator);
+    try testLayoutWrapBreaks(.{ .name = "日本語abc", .input = "日本語abc", .expected = &[_]usize{6} }, testing.allocator);
+    try testLayoutWrapBreaks(.{ .name = "abc日本語", .input = "abc日本語", .expected = &[_]usize{2} }, testing.allocator);
 }
 
-test "wrap breaks: multiple breaks around SIMD16 boundary" {
-    var buf: [32]u8 = undefined;
-    @memset(&buf, 'x');
-    buf[14] = ' ';
-    buf[15] = '-';
-    buf[16] = '/';
-    buf[17] = '.';
-
-    const expected = [_]usize{ 14, 15, 16, 17 };
-
-    try testWrapBreaks(.{
-        .name = "multi@boundary",
-        .input = &buf,
-        .expected = &expected,
-    }, testing.allocator);
-}
-
-test "wrap breaks: multibyte adjacent to space" {
-    const input = "é test"; // é is 2 bytes: 0xC3 0xA9
-    const expected = [_]usize{2}; // Space at index 2
-
-    try testWrapBreaks(.{
-        .name = "é space",
-        .input = input,
-        .expected = &expected,
-    }, testing.allocator);
-}
-
-test "wrap breaks: multibyte adjacent to dash" {
-    const input = "漢-test"; // 漢 is 3 bytes: 0xE6 0xBC 0xA2
-    const expected = [_]usize{3}; // Dash at index 3
-
-    try testWrapBreaks(.{
-        .name = "漢-",
-        .input = input,
-        .expected = &expected,
-    }, testing.allocator);
-}
-
-test "wrap breaks: multibyte at SIMD boundary with script transitions" {
-    var buf: [32]u8 = undefined;
-    @memset(&buf, 0);
-
-    // Place UTF-8 sequences around boundary
-    const text = "Test世界Test";
-    @memcpy(buf[0..text.len], text);
-
-    //// Breaks at ASCII<->CJK transitions:
-    // - after 't' in "Test" (byte 3)
-    // - after '界' before "Test" (byte 7)
-    const expected = [_]usize{ 3, 7 };
-
-    try testWrapBreaks(.{
-        .name = "unicode@boundary",
-        .input = buf[0..text.len],
-        .expected = &expected,
-    }, testing.allocator);
-}
-
-test "wrap breaks: realistic text" {
-    const sample_text =
-        "The quick brown fox jumps over the lazy dog.\n" ++
-        "Lorem ipsum dolor sit amet, consectetur adipiscing elit.\n" ++
-        "File paths: /usr/local/bin and C:\\Windows\\System32\n" ++
-        "Punctuation test: Hello, world! How are you? I'm fine.\n" ++
-        "Brackets test: (parentheses) [square] {curly}\n" ++
-        "Dashes test: pre-dash post-dash multi-word-expression\n" ++
-        "Mixed: Hello, /path/to-file.txt [done]!\n";
-
-    var result = utf8.WrapBreakResult.init(testing.allocator);
-    defer result.deinit();
-
-    try utf8.findWrapBreaks(sample_text, &result, .unicode);
-
-    // Verify we found many breaks
-    try testing.expect(result.breaks.items.len > 0);
-}
-
-test "wrap breaks: random small buffers" {
+test "layout wrap breaks: random small buffers" {
     var prng = std.Random.DefaultPrng.init(42);
     const random = prng.random();
-
     const break_chars = " \t-/\\.,:;!?()[]{}";
 
     var i: usize = 0;
@@ -935,367 +739,75 @@ test "wrap breaks: random small buffers" {
         const buf = try testing.allocator.alloc(u8, size);
         defer testing.allocator.free(buf);
 
-        // Fill with ASCII letters and randomly insert breaks
         for (buf) |*b| {
             const r = random.uintLessThan(u8, 100);
             if (r < 20) {
-                const break_idx = random.uintLessThan(usize, break_chars.len);
-                b.* = break_chars[break_idx];
+                b.* = break_chars[random.uintLessThan(usize, break_chars.len)];
             } else {
                 b.* = 'a' + random.uintLessThan(u8, 26);
             }
         }
 
-        var result = utf8.WrapBreakResult.init(testing.allocator);
-        defer result.deinit();
-        try utf8.findWrapBreaks(buf, &result, .unicode);
+        var result: std.ArrayListUnmanaged(utf8.LayoutWrapBreak) = .{};
+        defer result.deinit(testing.allocator);
+        try utf8.findChunkLayoutInfo(buf, 4, utf8.isAsciiOnly(buf), .unicode, testing.allocator, &result);
     }
 }
 
-test "wrap breaks: large buffer" {
-    const size = 10000;
-    const buf = try testing.allocator.alloc(u8, size);
-    defer testing.allocator.free(buf);
-
-    // Create realistic text with periodic breaks
-    for (buf, 0..) |*b, idx| {
-        if (idx % 50 == 0) {
-            b.* = ' ';
-        } else if (idx % 75 == 0) {
-            b.* = '-';
-        } else {
-            b.* = 'a' + @as(u8, @intCast(idx % 26));
-        }
-    }
-
-    var result = utf8.WrapBreakResult.init(testing.allocator);
-    defer result.deinit();
-    try utf8.findWrapBreaks(buf, &result, .unicode);
-
-    try testing.expect(result.breaks.items.len > 0);
-}
-
-test "wrap breaks: buffer exceeding 64KB" {
+test "layout wrap breaks: large buffer and >64KB offsets" {
     const size = 100_000;
     const buf = try testing.allocator.alloc(u8, size);
     defer testing.allocator.free(buf);
-
     @memset(buf, 'a');
+    buf[70_000] = ' ';
 
-    // Place a space at 70000, with u16, this will truncate to 4464 (70000 % 65536)
-    const break_pos: usize = 70_000;
-    buf[break_pos] = ' ';
+    var result: std.ArrayListUnmanaged(utf8.LayoutWrapBreak) = .{};
+    defer result.deinit(testing.allocator);
+    try utf8.findChunkLayoutInfo(buf, 4, true, .unicode, testing.allocator, &result);
 
-    var result = utf8.WrapBreakResult.init(testing.allocator);
-    defer result.deinit();
-    try utf8.findWrapBreaks(buf, &result, .unicode);
-
-    // Should find exactly one wrap break
-    try testing.expectEqual(@as(usize, 1), result.breaks.items.len);
-
-    // The byte_offset must be the actual position, not truncated
-    try testing.expectEqual(@as(u32, break_pos), result.breaks.items[0].byte_offset);
-    try testing.expectEqual(@as(u32, break_pos), result.breaks.items[0].char_offset);
+    try testing.expectEqual(@as(usize, 1), result.items.len);
+    try testing.expectEqual(@as(u32, 70_000), result.items[0].byte_offset);
 }
 
-// ============================================================================
-// EDGE CASES AND INTEGRATION TESTS
-// ============================================================================
+test "layout wrap breaks: result reuse and empty input" {
+    var result: std.ArrayListUnmanaged(utf8.LayoutWrapBreak) = .{};
+    defer result.deinit(testing.allocator);
 
-test "edge case: result reuse" {
-    var line_result = utf8.LineBreakResult.init(testing.allocator);
-    defer line_result.deinit();
+    try utf8.findChunkLayoutInfo("a b c", 4, true, .unicode, testing.allocator, &result);
+    try testing.expectEqual(@as(usize, 2), result.items.len);
 
-    // First use - line breaks
-    try utf8.findLineBreaks("a\nb\nc", &line_result);
-    try testing.expectEqual(@as(usize, 2), line_result.breaks.items.len);
-
-    // Second use - should reset automatically
-    try utf8.findLineBreaks("x\ny", &line_result);
-    try testing.expectEqual(@as(usize, 1), line_result.breaks.items.len);
-    try testing.expectEqual(@as(usize, 1), line_result.breaks.items[0].pos);
-
-    // Third use - wrap breaks (different result type)
-    var wrap_result = utf8.WrapBreakResult.init(testing.allocator);
-    defer wrap_result.deinit();
-    try utf8.findWrapBreaks("a b c", &wrap_result, .unicode);
-    try testing.expectEqual(@as(usize, 2), wrap_result.breaks.items.len);
+    try utf8.findChunkLayoutInfo("", 4, false, .unicode, testing.allocator, &result);
+    try testing.expectEqual(@as(usize, 0), result.items.len);
 }
 
-test "edge case: empty input" {
-    var line_result = utf8.LineBreakResult.init(testing.allocator);
-    defer line_result.deinit();
-
-    try utf8.findLineBreaks("", &line_result);
-    try testing.expectEqual(@as(usize, 0), line_result.breaks.items.len);
-
-    var wrap_result = utf8.WrapBreakResult.init(testing.allocator);
-    defer wrap_result.deinit();
-    try utf8.findWrapBreaks("", &wrap_result, .unicode);
-    try testing.expectEqual(@as(usize, 0), wrap_result.breaks.items.len);
-}
-
-test "edge case: exactly 16 bytes" {
-    var line_result = utf8.LineBreakResult.init(testing.allocator);
-    defer line_result.deinit();
-
-    const input = "0123456789abcdef"; // exactly 16 bytes
-    try utf8.findLineBreaks(input, &line_result);
-    try testing.expectEqual(@as(usize, 0), line_result.breaks.items.len);
-
-    var wrap_result = utf8.WrapBreakResult.init(testing.allocator);
-    defer wrap_result.deinit();
-    try utf8.findWrapBreaks(input, &wrap_result, .unicode);
-    try testing.expectEqual(@as(usize, 0), wrap_result.breaks.items.len);
-}
-
-test "edge case: 17 bytes with break at 16" {
-    var line_result = utf8.LineBreakResult.init(testing.allocator);
-    defer line_result.deinit();
-
-    const input = "0123456789abcde\nx"; // break at position 15
-    try utf8.findLineBreaks(input, &line_result);
-    try testing.expectEqual(@as(usize, 1), line_result.breaks.items.len);
-    try testing.expectEqual(@as(usize, 15), line_result.breaks.items[0].pos);
-
-    var wrap_result = utf8.WrapBreakResult.init(testing.allocator);
-    defer wrap_result.deinit();
-    const input2 = "0123456789abcde x"; // space at position 15
-    try utf8.findWrapBreaks(input2, &wrap_result, .unicode);
-    try testing.expectEqual(@as(usize, 1), wrap_result.breaks.items.len);
-    try testing.expectEqual(@as(u16, 15), wrap_result.breaks.items[0].byte_offset);
-    try testing.expectEqual(@as(u16, 15), wrap_result.breaks.items[0].char_offset);
-}
-
-// ============================================================================
-// GRAPHEME CLUSTER TESTS
-// ============================================================================
-
-test "wrap breaks: emoji with ZWJ - char offset should count grapheme not codepoints" {
-    const input = "ab 👩‍🚀 cd";
-
-    var result = utf8.WrapBreakResult.init(testing.allocator);
-    defer result.deinit();
-    try utf8.findWrapBreaks(input, &result, .unicode);
-
-    try testing.expectEqual(@as(usize, 2), result.breaks.items.len);
-    try testing.expectEqual(@as(u16, 2), result.breaks.items[0].byte_offset);
-    try testing.expectEqual(@as(u16, 2), result.breaks.items[0].char_offset);
-    try testing.expectEqual(@as(u16, 14), result.breaks.items[1].byte_offset);
-    try testing.expectEqual(@as(u16, 4), result.breaks.items[1].char_offset); // Should be 4, not 6
-}
-
-test "wrap breaks: emoji with skin tone - char offset should count grapheme" {
-    const input = "hi 👋🏿 bye";
-
-    var result = utf8.WrapBreakResult.init(testing.allocator);
-    defer result.deinit();
-    try utf8.findWrapBreaks(input, &result, .unicode);
-
-    try testing.expectEqual(@as(usize, 2), result.breaks.items.len);
-    try testing.expectEqual(@as(u16, 2), result.breaks.items[0].byte_offset);
-    try testing.expectEqual(@as(u16, 2), result.breaks.items[0].char_offset);
-    try testing.expectEqual(@as(u16, 11), result.breaks.items[1].byte_offset);
-    try testing.expectEqual(@as(u16, 4), result.breaks.items[1].char_offset); // Should be 4, not 5
-}
-
-test "wrap breaks: emoji with VS16 selector - char offset should count grapheme" {
-    const input = "I ❤️ U";
-
-    var result = utf8.WrapBreakResult.init(testing.allocator);
-    defer result.deinit();
-    try utf8.findWrapBreaks(input, &result, .unicode);
-
-    try testing.expectEqual(@as(usize, 2), result.breaks.items.len);
-    try testing.expectEqual(@as(u16, 1), result.breaks.items[0].byte_offset);
-    try testing.expectEqual(@as(u16, 1), result.breaks.items[0].char_offset);
-    try testing.expectEqual(@as(u16, 8), result.breaks.items[1].byte_offset);
-    try testing.expectEqual(@as(u16, 3), result.breaks.items[1].char_offset); // Should be 3, not 4
-}
-
-test "wrap breaks: combining diacritic - char offset should count grapheme" {
-    const input = "cafe\u{0301} time";
-
-    var result = utf8.WrapBreakResult.init(testing.allocator);
-    defer result.deinit();
-    try utf8.findWrapBreaks(input, &result, .unicode);
-
-    try testing.expectEqual(@as(usize, 1), result.breaks.items.len);
-    try testing.expectEqual(@as(u16, 6), result.breaks.items[0].byte_offset);
-    try testing.expectEqual(@as(u16, 4), result.breaks.items[0].char_offset); // Should be 4, not 5
-}
-
-test "wrap breaks: flag emoji - char offset should count grapheme" {
-    const input = "USA🇺🇸 flag";
-
-    var result = utf8.WrapBreakResult.init(testing.allocator);
-    defer result.deinit();
-    try utf8.findWrapBreaks(input, &result, .unicode);
-
-    try testing.expectEqual(@as(usize, 1), result.breaks.items.len);
-    try testing.expectEqual(@as(u16, 11), result.breaks.items[0].byte_offset);
-    try testing.expectEqual(@as(u16, 4), result.breaks.items[0].char_offset); // 3(USA) + 1(flag) = 4
-}
-
-test "wrap breaks: mixed graphemes and ASCII" {
-    const input = "Hello 👋🏿 world 🇺🇸 test";
-
-    var result = utf8.WrapBreakResult.init(testing.allocator);
-    defer result.deinit();
-    try utf8.findWrapBreaks(input, &result, .unicode);
-
-    try testing.expectEqual(@as(usize, 4), result.breaks.items.len);
-    try testing.expectEqual(@as(u16, 5), result.breaks.items[0].byte_offset);
-    try testing.expectEqual(@as(u16, 5), result.breaks.items[0].char_offset);
-    try testing.expectEqual(@as(u16, 14), result.breaks.items[1].byte_offset);
-    try testing.expectEqual(@as(u16, 7), result.breaks.items[1].char_offset); // 5 + 1 + 1(grapheme) = 7
-    try testing.expectEqual(@as(u16, 20), result.breaks.items[2].byte_offset);
-    try testing.expectEqual(@as(u16, 13), result.breaks.items[2].char_offset); // 7 + 1 + 5 = 13
-    try testing.expectEqual(@as(u16, 29), result.breaks.items[3].byte_offset);
-    try testing.expectEqual(@as(u16, 15), result.breaks.items[3].char_offset); // 13 + 1(space) + 1(RI) + 1(RI) = 15 (per uucode)
-}
-
-test "wrap breaks: CJK characters keep break offsets" {
-    // Ensure multibyte graphemes don't shift wrap break offsets.
-    const input = "Hello 世界 test";
-
-    var result = utf8.WrapBreakResult.init(testing.allocator);
-    defer result.deinit();
-    try utf8.findWrapBreaks(input, &result, .unicode);
-
-    // Should find 2 wrap breaks (2 spaces)
-    try testing.expectEqual(@as(usize, 2), result.breaks.items.len);
-
-    // First break: space after "Hello"
-    try testing.expectEqual(@as(u16, 5), result.breaks.items[0].byte_offset);
-    try testing.expectEqual(@as(u16, 5), result.breaks.items[0].char_offset);
-
-    // Second break: space after "世界"
-    // Byte: "Hello " = 6 bytes, "世" = 3 bytes, "界" = 3 bytes, total = 12
-    try testing.expectEqual(@as(u16, 12), result.breaks.items[1].byte_offset);
-    try testing.expectEqual(@as(u16, 8), result.breaks.items[1].char_offset); // 6 graphemes(Hello space) + 2 graphemes(世界) = 8
-}
-
-test "wrap breaks: CJK to ASCII script transition" {
-    const input = "日本語abc";
-
-    var result = utf8.WrapBreakResult.init(testing.allocator);
-    defer result.deinit();
-    try utf8.findWrapBreaks(input, &result, .unicode);
-
-    try testing.expectEqual(@as(usize, 1), result.breaks.items.len);
-    try testing.expectEqual(@as(u16, 6), result.breaks.items[0].byte_offset);
-    try testing.expectEqual(@as(u16, 2), result.breaks.items[0].char_offset);
-}
-
-test "wrap breaks: ASCII to CJK script transition" {
-    const input = "abc日本語";
-
-    var result = utf8.WrapBreakResult.init(testing.allocator);
-    defer result.deinit();
-    try utf8.findWrapBreaks(input, &result, .unicode);
-
-    try testing.expectEqual(@as(usize, 1), result.breaks.items.len);
-    try testing.expectEqual(@as(u16, 2), result.breaks.items[0].byte_offset);
-    try testing.expectEqual(@as(u16, 2), result.breaks.items[0].char_offset);
-}
-
-test "wrap breaks: CJK punctuation before ASCII" {
-    const input = "日本語。abc";
-
-    var result = utf8.WrapBreakResult.init(testing.allocator);
-    defer result.deinit();
-    try utf8.findWrapBreaks(input, &result, .unicode);
-
-    try testing.expectEqual(@as(usize, 1), result.breaks.items.len);
-    try testing.expectEqual(@as(u16, 9), result.breaks.items[0].byte_offset);
-    try testing.expectEqual(@as(u16, 3), result.breaks.items[0].char_offset);
-}
-
-test "wrap breaks: compat ideograph to ASCII script transition" {
-    const input = "丽abc";
-
-    var result = utf8.WrapBreakResult.init(testing.allocator);
-    defer result.deinit();
-    try utf8.findWrapBreaks(input, &result, .unicode);
-
-    try testing.expectEqual(@as(usize, 1), result.breaks.items.len);
-    try testing.expectEqual(@as(u16, 0), result.breaks.items[0].byte_offset);
-    try testing.expectEqual(@as(u16, 0), result.breaks.items[0].char_offset);
-}
-
-test "wrap breaks: extension I ideograph to ASCII script transition" {
-    const input = "𮯰abc";
-
-    var result = utf8.WrapBreakResult.init(testing.allocator);
-    defer result.deinit();
-    try utf8.findWrapBreaks(input, &result, .unicode);
-
-    try testing.expectEqual(@as(usize, 1), result.breaks.items.len);
-    try testing.expectEqual(@as(u16, 0), result.breaks.items[0].byte_offset);
-    try testing.expectEqual(@as(u16, 0), result.breaks.items[0].char_offset);
-}
-
-test "wrap breaks: emoji and CJK mixed offsets" {
-    const input = "🌟 Unicode test: こんにちは世界 Hello World";
-
-    var result = utf8.WrapBreakResult.init(testing.allocator);
-    defer result.deinit();
-    try utf8.findWrapBreaks(input, &result, .unicode);
-
-    // Find the space before "Hello"
-    var space_before_hello: ?utf8.WrapBreak = null;
-    for (result.breaks.items) |brk| {
-        if (brk.byte_offset == 40) {
-            space_before_hello = brk;
-            break;
-        }
-    }
-
-    try testing.expect(space_before_hello != null);
-    try testing.expectEqual(@as(u16, 40), space_before_hello.?.byte_offset);
-    try testing.expectEqual(@as(u16, 23), space_before_hello.?.char_offset); // Graphemes before this space
-
-    // Find the space after "Hello"
-    var space_after_hello: ?utf8.WrapBreak = null;
-    for (result.breaks.items) |brk| {
-        if (brk.byte_offset == 46) {
-            space_after_hello = brk;
-            break;
-        }
-    }
-
-    try testing.expect(space_after_hello != null);
-    try testing.expectEqual(@as(u16, 46), space_after_hello.?.byte_offset);
-    try testing.expectEqual(@as(u16, 29), space_after_hello.?.char_offset);
-}
-
-test "wrap breaks: direct column metadata for wide grapheme delimiter" {
+test "layout wrap breaks: direct metadata for wide grapheme delimiter" {
     const input = "AB🌟 CD";
+    var result: std.ArrayListUnmanaged(utf8.LayoutWrapBreak) = .{};
+    defer result.deinit(testing.allocator);
+    try utf8.findChunkLayoutInfo(input, 2, false, .unicode, testing.allocator, &result);
 
-    var result = utf8.WrapBreakResult.init(testing.allocator);
-    defer result.deinit();
-    try utf8.findWrapBreaksWithTabWidth(input, 2, &result, .unicode);
-
-    try testing.expectEqual(@as(usize, 1), result.breaks.items.len);
-    try testing.expectEqual(@as(u32, 6), result.breaks.items[0].byte_offset);
-    try testing.expectEqual(@as(u32, 3), result.breaks.items[0].char_offset);
-    try testing.expectEqual(@as(u32, 4), @as(u32, result.breaks.items[0].col_offset));
-    try testing.expectEqual(@as(u32, 5), @as(u32, result.breaks.items[0].col_end));
+    try testing.expectEqual(@as(usize, 1), result.items.len);
+    try testing.expectEqual(@as(u32, 6), result.items[0].byte_offset);
+    try testing.expectEqual(@as(u32, 4), @as(u32, result.items[0].col_offset));
+    try testing.expectEqual(@as(u8, 1), result.items[0].byte_len);
+    try testing.expectEqual(@as(u8, 1), result.items[0].width);
+    try testing.expectEqual(@as(u32, 5), result.items[0].colEnd());
+    try testing.expectEqual(@as(u32, 7), result.items[0].byteEnd());
 }
 
-test "wrap breaks: direct column metadata for tab delimiter" {
+test "layout wrap breaks: direct metadata for tab delimiter" {
     const input = "AB\tCD";
+    var result: std.ArrayListUnmanaged(utf8.LayoutWrapBreak) = .{};
+    defer result.deinit(testing.allocator);
+    try utf8.findChunkLayoutInfo(input, 2, false, .unicode, testing.allocator, &result);
 
-    var result = utf8.WrapBreakResult.init(testing.allocator);
-    defer result.deinit();
-    try utf8.findWrapBreaksWithTabWidth(input, 2, &result, .unicode);
-
-    try testing.expectEqual(@as(usize, 1), result.breaks.items.len);
-    try testing.expectEqual(@as(u32, 2), result.breaks.items[0].byte_offset);
-    try testing.expectEqual(@as(u32, 2), result.breaks.items[0].char_offset);
-    try testing.expectEqual(@as(u32, 2), @as(u32, result.breaks.items[0].col_offset));
-    try testing.expectEqual(@as(u32, 4), @as(u32, result.breaks.items[0].col_end));
+    try testing.expectEqual(@as(usize, 1), result.items.len);
+    try testing.expectEqual(@as(u32, 2), result.items[0].byte_offset);
+    try testing.expectEqual(@as(u32, 2), @as(u32, result.items[0].col_offset));
+    try testing.expectEqual(@as(u8, 1), result.items[0].byte_len);
+    try testing.expectEqual(@as(u8, 2), result.items[0].width);
+    try testing.expectEqual(@as(u32, 4), result.items[0].colEnd());
+    try testing.expectEqual(@as(u32, 3), result.items[0].byteEnd());
 }
 
 // ============================================================================

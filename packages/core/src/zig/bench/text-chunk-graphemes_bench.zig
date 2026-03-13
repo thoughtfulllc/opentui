@@ -11,9 +11,17 @@ const BenchResult = bench_utils.BenchResult;
 const BenchStats = bench_utils.BenchStats;
 const MemStat = bench_utils.MemStat;
 
-pub const benchName = "TextChunk getGraphemes";
+pub const benchName = "TextChunk Analysis";
 
 const TextType = enum { ascii, mixed, heavy_unicode };
+
+fn textTypeLabel(text_type: TextType) []const u8 {
+    return switch (text_type) {
+        .ascii => "ASCII",
+        .mixed => "Mixed",
+        .heavy_unicode => "Heavy Unicode",
+    };
+}
 
 fn generateTestText(allocator: std.mem.Allocator, size: usize, text_type: TextType) ![]u8 {
     var buffer: std.ArrayListUnmanaged(u8) = .{};
@@ -143,11 +151,7 @@ fn benchGetGraphemes(
         }
     }
 
-    const type_str = switch (text_type) {
-        .ascii => "ASCII",
-        .mixed => "Mixed",
-        .heavy_unicode => "Heavy Unicode",
-    };
+    const type_str = textTypeLabel(text_type);
 
     const name = try std.fmt.allocPrint(
         allocator,
@@ -203,16 +207,121 @@ fn computeBenchName(allocator: std.mem.Allocator, size: usize, text_type: TextTy
         .unicode,
     );
 
-    const type_str = switch (text_type) {
-        .ascii => "ASCII",
-        .mixed => "Mixed",
-        .heavy_unicode => "Heavy Unicode",
-    };
+    const type_str = textTypeLabel(text_type);
 
     return try std.fmt.allocPrint(
         allocator,
         "getGraphemes {s} ({d} bytes, {d} graphemes)",
         .{ type_str, size, graphemes.len },
+    );
+}
+
+fn benchGetLayoutInfo(
+    allocator: std.mem.Allocator,
+    size: usize,
+    text_type: TextType,
+    iterations: usize,
+    show_mem: bool,
+) !BenchResult {
+    const text = try generateTestText(allocator, size, text_type);
+    defer allocator.free(text);
+
+    var registry = MemRegistry.init(allocator);
+    defer registry.deinit();
+
+    const mem_id = try registry.register(text, false);
+    const is_ascii = switch (text_type) {
+        .ascii => true,
+        else => false,
+    };
+
+    const approx_width: u16 = @intCast(@min(text.len, std.math.maxInt(u16)));
+    var chunk = TextChunk{
+        .mem_id = mem_id,
+        .byte_start = 0,
+        .byte_end = @intCast(text.len),
+        .width = approx_width,
+        .flags = if (is_ascii) TextChunk.Flags.ASCII_ONLY else 0,
+    };
+
+    var stats = BenchStats{};
+    var wrap_break_count: usize = 0;
+    var final_mem: usize = 0;
+
+    for (0..iterations) |i| {
+        var arena = std.heap.ArenaAllocator.init(allocator);
+        defer arena.deinit();
+        const arena_alloc = arena.allocator();
+
+        chunk.wrap_breaks = null;
+
+        var timer = try std.time.Timer.start();
+        const layout = try chunk.getLayoutInfo(&registry, arena_alloc, 4, .unicode);
+        stats.record(timer.read());
+
+        if (i == 0) {
+            wrap_break_count = layout.wrap_breaks.len;
+        }
+
+        if (i == iterations - 1 and show_mem) {
+            final_mem = layout.wrap_breaks.len * @sizeOf(utf8.LayoutWrapBreak);
+        }
+    }
+
+    const type_str = textTypeLabel(text_type);
+    const name = try std.fmt.allocPrint(
+        allocator,
+        "getLayoutInfo {s} ({d} bytes, {d} wrap breaks)",
+        .{ type_str, size, wrap_break_count },
+    );
+
+    const mem_stats: ?[]const MemStat = if (show_mem) blk: {
+        const mem_stat_slice = try allocator.alloc(MemStat, 1);
+        mem_stat_slice[0] = .{ .name = "WrapBreaks", .bytes = final_mem };
+        break :blk mem_stat_slice;
+    } else null;
+
+    return BenchResult{
+        .name = name,
+        .min_ns = stats.min_ns,
+        .avg_ns = stats.avg(),
+        .max_ns = stats.max_ns,
+        .total_ns = stats.total_ns,
+        .iterations = iterations,
+        .mem_stats = mem_stats,
+    };
+}
+
+fn computeLayoutBenchName(allocator: std.mem.Allocator, size: usize, text_type: TextType) ![]const u8 {
+    var temp_arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer temp_arena.deinit();
+    const temp_alloc = temp_arena.allocator();
+
+    const text = try generateTestText(temp_alloc, size, text_type);
+
+    var registry = MemRegistry.init(temp_alloc);
+    defer registry.deinit();
+
+    const mem_id = try registry.register(text, false);
+    const is_ascii = switch (text_type) {
+        .ascii => true,
+        else => false,
+    };
+    const approx_width: u16 = @intCast(@min(text.len, std.math.maxInt(u16)));
+    var chunk = TextChunk{
+        .mem_id = mem_id,
+        .byte_start = 0,
+        .byte_end = @intCast(text.len),
+        .width = approx_width,
+        .flags = if (is_ascii) TextChunk.Flags.ASCII_ONLY else 0,
+    };
+
+    const layout = try chunk.getLayoutInfo(&registry, temp_alloc, 4, .unicode);
+
+    return try std.fmt.allocPrint(
+        allocator,
+        "getLayoutInfo {s} ({d} bytes, {d} wrap breaks)",
+        .{ textTypeLabel(text_type), size, layout.wrap_breaks.len },
     );
 }
 
@@ -236,35 +345,59 @@ pub fn run(
     if (bench_filter == null) {
         for (text_types) |text_type| {
             for (sizes) |size| {
-                const result = try benchGetGraphemes(
+                const grapheme_result = try benchGetGraphemes(
                     allocator,
                     size,
                     text_type,
                     iterations,
                     show_mem,
                 );
-                try results.append(allocator, result);
+                try results.append(allocator, grapheme_result);
+
+                const layout_result = try benchGetLayoutInfo(
+                    allocator,
+                    size,
+                    text_type,
+                    iterations,
+                    show_mem,
+                );
+                try results.append(allocator, layout_result);
             }
         }
     } else {
         for (text_types) |text_type| {
             for (sizes) |size| {
-                const name = try computeBenchName(allocator, size, text_type);
-                if (!bench_utils.matchesBenchFilter(name, bench_filter)) {
-                    allocator.free(name);
-                    continue;
+                const grapheme_name = try computeBenchName(allocator, size, text_type);
+                if (bench_utils.matchesBenchFilter(grapheme_name, bench_filter)) {
+                    var grapheme_result = try benchGetGraphemes(
+                        allocator,
+                        size,
+                        text_type,
+                        iterations,
+                        show_mem,
+                    );
+                    allocator.free(grapheme_result.name);
+                    grapheme_result.name = grapheme_name;
+                    try results.append(allocator, grapheme_result);
+                } else {
+                    allocator.free(grapheme_name);
                 }
 
-                var result = try benchGetGraphemes(
-                    allocator,
-                    size,
-                    text_type,
-                    iterations,
-                    show_mem,
-                );
-                allocator.free(result.name);
-                result.name = name;
-                try results.append(allocator, result);
+                const layout_name = try computeLayoutBenchName(allocator, size, text_type);
+                if (bench_utils.matchesBenchFilter(layout_name, bench_filter)) {
+                    var layout_result = try benchGetLayoutInfo(
+                        allocator,
+                        size,
+                        text_type,
+                        iterations,
+                        show_mem,
+                    );
+                    allocator.free(layout_result.name);
+                    layout_result.name = layout_name;
+                    try results.append(allocator, layout_result);
+                } else {
+                    allocator.free(layout_name);
+                }
             }
         }
     }

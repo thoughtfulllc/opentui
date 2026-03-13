@@ -1,0 +1,207 @@
+
+=== TextBuffer Wrapping Benchmarks ===
+
+[2m------------------------------------------------------------------------------------------------------------------------------------[0m
+[36mBenchmark                                                                 [0m[2m | [0m[36mMin     [0m[2m | [0m[36mAvg     [0m[2m | [0m[36mMax     [0m[2m | [0m[36mTB       [0m[2m | [0m[36mView      [0m
+[2m------------------------------------------------------------------------------------------------------------------------------------[0m
+TextBuffer setText small (3 lines, 40 bytes)                              [2m | [0m[92m375.00ns[0m[2m | [0m  [32m6.38us[0m[2m | [0m [32m56.13us[0m[2m | [0m 4.62 KiB[2m | [0m          
+[48;5;234mTextBuffer setText large (4590 lines, 1.00 MiB)                           [2m | [0m[48;5;234m  [38;5;202m2.41ms[0m[2m | [0m[48;5;234m  [31m2.88ms[0m[2m | [0m[48;5;234m  [31m3.58ms[0m[2m | [0m[48;5;234m 2.84 MiB[2m | [0m[48;5;234m          [0m
+TextBufferView measureForDimensions (layout streaming wrap, 1.00 MiB)     [2m | [0m[31m126.60ms[0m[2m | [0m[31m127.84ms[0m[2m | [0m[31m129.64ms[0m[2m | [0m 7.10 MiB[2m | [0m    0.00 B
+[48;5;234mTextBufferView measureForDimensions (layout streaming intrinsic, 1.00 MiB)[2m | [0m[48;5;234m [31m22.58ms[0m[2m | [0m[48;5;234m [31m22.71ms[0m[2m | [0m[48;5;234m [31m22.78ms[0m[2m | [0m[48;5;234m 7.10 MiB[2m | [0m[48;5;234m    0.00 B[0m
+TextBufferView measureForDimensions (layout static wrap, 1.00 MiB)        [2m | [0m  [31m4.46ms[0m[2m | [0m  [31m4.54ms[0m[2m | [0m  [31m4.64ms[0m[2m | [0m 7.10 MiB[2m | [0m    0.00 B
+[48;5;234mTextBufferView wrap (char, width=40, multi-line)                          [2m | [0m[48;5;234m  [31m2.88ms[0m[2m | [0m[48;5;234m  [31m2.99ms[0m[2m | [0m[48;5;234m  [31m3.18ms[0m[2m | [0m[48;5;234m 2.84 MiB[2m | [0m[48;5;234m  8.85 MiB[0m
+TextBufferView wrap (char, width=80, multi-line)                          [2m | [0m  [38;5;202m2.47ms[0m[2m | [0m  [31m2.56ms[0m[2m | [0m  [31m2.79ms[0m[2m | [0m 2.84 MiB[2m | [0m  5.58 MiB
+[48;5;234mTextBufferView wrap (char, width=120, multi-line)                         [2m | [0m[48;5;234m  [38;5;202m2.25ms[0m[2m | [0m[48;5;234m  [38;5;202m2.32ms[0m[2m | [0m[48;5;234m  [38;5;202m2.40ms[0m[2m | [0m[48;5;234m 2.84 MiB[2m | [0m[48;5;234m  3.78 MiB[0m
+TextBufferView wrap (word, width=40, multi-line)                          [2m | [0m  [31m4.92ms[0m[2m | [0m  [31m5.21ms[0m[2m | [0m  [31m5.62ms[0m[2m | [0m 7.10 MiB[2m | [0m  9.02 MiB
+[48;5;234mTextBufferView wrap (word, width=80, multi-line)                          [2m | [0m[48;5;234m  [31m4.46ms[0m[2m | [0m[48;5;234m  [31m4.65ms[0m[2m | [0m[48;5;234m  [31m4.91ms[0m[2m | [0m[48;5;234m 7.10 MiB[2m | [0m[48;5;234m  5.59 MiB[0m
+TextBufferView wrap (word, width=120, multi-line)                         [2m | [0m  [31m4.28ms[0m[2m | [0m  [31m4.45ms[0m[2m | [0m  [31m4.97ms[0m[2m | [0m 7.10 MiB[2m | [0m  3.79 MiB
+[48;5;234mTextBufferView wrap (char, width=40, single-line)                         [2m | [0m[48;5;234m[32m262.13us[0m[2m | [0m[48;5;234m[32m276.00us[0m[2m | [0m[48;5;234m[32m305.21us[0m[2m | [0m[48;5;234m 1.62 KiB[2m | [0m[48;5;234m698.34 KiB[0m
+TextBufferView wrap (char, width=80, single-line)                         [2m | [0m[32m229.96us[0m[2m | [0m[32m241.53us[0m[2m | [0m[32m270.71us[0m[2m | [0m 1.62 KiB[2m | [0m315.55 KiB
+[48;5;234mTextBufferView wrap (char, width=120, single-line)                        [2m | [0m[48;5;234m[32m216.13us[0m[2m | [0m[48;5;234m[32m220.97us[0m[2m | [0m[48;5;234m[32m228.29us[0m[2m | [0m[48;5;234m 1.62 KiB[2m | [0m[48;5;234m207.27 KiB[0m
+TextBufferView wrap (word, width=40, single-line)                         [2m | [0m  [31m9.61ms[0m[2m | [0m  [31m9.90ms[0m[2m | [0m [31m11.22ms[0m[2m | [0m21.13 MiB[2m | [0m706.72 KiB
+[48;5;234mTextBufferView wrap (word, width=80, single-line)                         [2m | [0m[48;5;234m  [31m9.65ms[0m[2m | [0m[48;5;234m  [31m9.90ms[0m[2m | [0m[48;5;234m [31m10.28ms[0m[2m | [0m[48;5;234m21.13 MiB[2m | [0m[48;5;234m318.18 KiB[0m
+TextBufferView wrap (word, width=120, single-line)                        [2m | [0m  [31m9.43ms[0m[2m | [0m  [31m9.72ms[0m[2m | [0m  [31m9.84ms[0m[2m | [0m26.64 MiB[2m | [0m208.65 KiB
+[2m------------------------------------------------------------------------------------------------------------------------------------[0m
+
+  Overall time: 2633.72ms
+
+=== EditBuffer Operations Benchmarks ===
+
+[2m-------------------------------------------------------------------------------------------[0m
+[36mBenchmark                                    [0m[2m | [0m[36mMin     [0m[2m | [0m[36mAvg     [0m[2m | [0m[36mMax     [0m[2m | [0m[36mTB        [0m
+[2m-------------------------------------------------------------------------------------------[0m
+EditBuffer insert 1k times at start          [2m | [0m  [31m3.10ms[0m[2m | [0m  [31m3.12ms[0m[2m | [0m  [31m3.14ms[0m[2m | [0m  2.83 MiB
+[48;5;234mEditBuffer insert 500 multi-line blocks      [2m | [0m[48;5;234m [31m12.31ms[0m[2m | [0m[48;5;234m [31m12.39ms[0m[2m | [0m[48;5;234m [31m12.59ms[0m[2m | [0m[48;5;234m  3.89 MiB[0m
+EditBuffer backspace 500 chars               [2m | [0m  [31m8.83ms[0m[2m | [0m  [31m8.88ms[0m[2m | [0m  [31m8.99ms[0m[2m | [0m  1.26 MiB
+[48;5;234mEditBuffer delete 50-line range              [2m | [0m[48;5;234m  [32m6.54us[0m[2m | [0m[48;5;234m  [32m7.10us[0m[2m | [0m[48;5;234m  [32m8.08us[0m[2m | [0m[48;5;234m516.90 KiB[0m
+EditBuffer mixed operations (300 lines)      [2m | [0m  [33m1.40ms[0m[2m | [0m  [33m1.43ms[0m[2m | [0m  [33m1.45ms[0m[2m | [0m  1.38 MiB
+[48;5;234mEditBuffer getNextWordBoundary 1k times      [2m | [0m[48;5;234m[32m397.21us[0m[2m | [0m[48;5;234m[32m404.48us[0m[2m | [0m[48;5;234m[32m427.17us[0m[2m | [0m[48;5;234m110.29 KiB[0m
+EditBuffer getPrevWordBoundary 1k times      [2m | [0m[32m566.33us[0m[2m | [0m[32m572.56us[0m[2m | [0m[32m591.63us[0m[2m | [0m110.29 KiB
+[48;5;234mEditBuffer word boundary multi-line 500 times[2m | [0m[48;5;234m [32m50.00us[0m[2m | [0m[48;5;234m [32m51.52us[0m[2m | [0m[48;5;234m [32m52.96us[0m[2m | [0m[48;5;234m516.90 KiB[0m
+[2m-------------------------------------------------------------------------------------------[0m
+
+  Overall time: 140.20ms
+
+=== Rope Data Structure Benchmarks ===
+
+[2m-------------------------------------------------------------------------[0m
+[36mBenchmark                               [0m[2m | [0m[36mMin     [0m[2m | [0m[36mAvg     [0m[2m | [0m[36mMax     [0m
+[2m-------------------------------------------------------------------------[0m
+Rope sequential append 10k items        [2m | [0m  [31m2.62ms[0m[2m | [0m  [31m2.66ms[0m[2m | [0m  [31m2.69ms[0m
+[48;5;234mRope sequential prepend 10k items       [2m | [0m[48;5;234m  [31m2.65ms[0m[2m | [0m[48;5;234m  [31m2.72ms[0m[2m | [0m[48;5;234m  [31m2.81ms[0m[0m
+Rope random insert 5k items             [2m | [0m  [33m1.42ms[0m[2m | [0m  [33m1.47ms[0m[2m | [0m  [38;5;208m1.55ms[0m
+[48;5;234mRope sequential delete 5k from end      [2m | [0m[48;5;234m[32m430.38us[0m[2m | [0m[48;5;234m[32m440.54us[0m[2m | [0m[48;5;234m[32m450.63us[0m[0m
+Rope sequential delete 5k from beginning[2m | [0m[32m805.29us[0m[2m | [0m[32m839.12us[0m[2m | [0m[32m889.92us[0m
+[48;5;234mRope random delete 5k items             [2m | [0m[48;5;234m  [38;5;208m1.72ms[0m[2m | [0m[48;5;234m  [38;5;208m1.78ms[0m[2m | [0m[48;5;234m  [38;5;208m1.91ms[0m[0m
+Rope insert_slice 10x1k items           [2m | [0m[32m111.00us[0m[2m | [0m[32m115.08us[0m[2m | [0m[32m118.79us[0m
+[48;5;234mRope delete_range 10x500 items          [2m | [0m[48;5;234m  [32m2.04us[0m[2m | [0m[48;5;234m  [32m2.33us[0m[2m | [0m[48;5;234m  [32m2.75us[0m[0m
+Rope split/concat 100 cycles at midpoint[2m | [0m[92m583.00ns[0m[2m | [0m[92m608.00ns[0m[2m | [0m[92m666.00ns[0m
+[48;5;234mRope concat two 5k-item ropes           [2m | [0m[48;5;234m  [92m0.00ns[0m[2m | [0m[48;5;234m [92m12.00ns[0m[2m | [0m[48;5;234m [92m42.00ns[0m[0m
+Rope sequential get all 10k items       [2m | [0m  [92m0.00ns[0m[2m | [0m [92m41.00ns[0m[2m | [0m[92m166.00ns[0m
+[48;5;234mRope random get 10k accesses            [2m | [0m[48;5;234m  [92m0.00ns[0m[2m | [0m[48;5;234m [92m66.00ns[0m[2m | [0m[48;5;234m[92m125.00ns[0m[0m
+Rope walk all 10k items                 [2m | [0m [32m25.17us[0m[2m | [0m [32m25.60us[0m[2m | [0m [32m26.46us[0m
+[2m-------------------------------------------------------------------------[0m
+
+  Overall time: 114.96ms
+
+=== Rope Marker Tracking Benchmarks ===
+
+[2m-----------------------------------------------------------------------------------------------------------[0m
+[36mBenchmark                                                                 [0m[2m | [0m[36mMin     [0m[2m | [0m[36mAvg     [0m[2m | [0m[36mMax     [0m
+[2m-----------------------------------------------------------------------------------------------------------[0m
+Create rope with markers: 1k tokens, marker every 10 (~100 markers)       [2m | [0m [32m18.13us[0m[2m | [0m [32m19.96us[0m[2m | [0m [32m24.38us[0m
+[48;5;234mRebuild index: 1k tokens, marker every 100 (~10 markers)                  [2m | [0m[48;5;234m [32m16.67us[0m[2m | [0m[48;5;234m [32m17.65us[0m[2m | [0m[48;5;234m [32m19.58us[0m[0m
+Rebuild index: 10k tokens, marker every 10 (~1k markers)                  [2m | [0m[32m158.29us[0m[2m | [0m[32m179.50us[0m[2m | [0m[32m219.83us[0m
+[48;5;234mRebuild index: 10k tokens, marker every 100 (~100 markers)                [2m | [0m[48;5;234m[32m138.04us[0m[2m | [0m[48;5;234m[32m147.32us[0m[2m | [0m[48;5;234m[32m157.17us[0m[0m
+Rebuild index: 50k tokens, marker every 50 (~1k markers, text-editor-like)[2m | [0m[32m752.04us[0m[2m | [0m[32m827.19us[0m[2m | [0m  [33m1.13ms[0m
+[48;5;234mRebuild index: 100k tokens, marker every 200 (~500 markers)               [2m | [0m[48;5;234m  [38;5;208m1.54ms[0m[2m | [0m[48;5;234m  [38;5;208m1.69ms[0m[2m | [0m[48;5;234m  [38;5;202m2.27ms[0m[0m
+O(1) lookup: 100 random marker accesses, ~100 markers                     [2m | [0m  [32m5.13us[0m[2m | [0m  [32m5.44us[0m[2m | [0m  [32m6.96us[0m
+[48;5;234mO(1) lookup: 1k random marker accesses, ~200 markers                      [2m | [0m[48;5;234m [32m45.75us[0m[2m | [0m[48;5;234m [32m46.65us[0m[2m | [0m[48;5;234m [32m49.92us[0m[0m
+O(1) lookup: 10k random line jumps, ~1k lines (text-editor)               [2m | [0m  [32m7.42us[0m[2m | [0m  [32m9.32us[0m[2m | [0m [32m24.17us[0m
+[48;5;234mO(1) lookup: Sequential access to all ~200 markers                        [2m | [0m[48;5;234m  [92m0.00ns[0m[2m | [0m[48;5;234m  [92m8.00ns[0m[2m | [0m[48;5;234m [92m42.00ns[0m[0m
+markerCount: 100k calls (should be ~O(1))                                 [2m | [0m[32m171.29us[0m[2m | [0m[32m175.27us[0m[2m | [0m[32m189.79us[0m
+[48;5;234mCreate BALANCED tree with markers: 10k tokens, ~200 markers               [2m | [0m[48;5;234m[32m153.96us[0m[2m | [0m[48;5;234m[32m161.43us[0m[2m | [0m[48;5;234m[32m181.75us[0m[0m
+Rebuild on UNBALANCED tree: 10k tokens, ~200 markers                      [2m | [0m  [92m0.00ns[0m[2m | [0m [92m16.00ns[0m[2m | [0m [92m42.00ns[0m
+[48;5;234mEdit workflow: 3 inserts + rebuild (~200 markers)                         [2m | [0m[48;5;234m [32m44.46us[0m[2m | [0m[48;5;234m [32m44.81us[0m[2m | [0m[48;5;234m [32m45.46us[0m[0m
+Insert newline: insert marker + rebuild (~200 markers)                    [2m | [0m[92m292.00ns[0m[2m | [0m[92m354.00ns[0m[2m | [0m[92m500.00ns[0m
+[48;5;234mDelete line: remove marker + rebuild (~200 markers)                       [2m | [0m[48;5;234m [32m44.50us[0m[2m | [0m[48;5;234m [32m45.12us[0m[2m | [0m[48;5;234m [32m47.42us[0m[0m
+Memory: 50k tokens WITHOUT marker index                                   [2m | [0m  [92m0.00ns[0m[2m | [0m  [92m0.00ns[0m[2m | [0m  [92m0.00ns[0m
+[48;5;234mMemory: 50k tokens WITH marker index (~1k markers)                        [2m | [0m[48;5;234m  [92m0.00ns[0m[2m | [0m[48;5;234m  [92m0.00ns[0m[2m | [0m[48;5;234m  [92m0.00ns[0m[0m
+[2m-----------------------------------------------------------------------------------------------------------[0m
+
+  Overall time: 106.54ms
+
+=== TextBuffer Coordinate Conversion Benchmarks ===
+
+[2m--------------------------------------------------------------------------------------------------------[0m
+[36mBenchmark                                                              [0m[2m | [0m[36mMin     [0m[2m | [0m[36mAvg     [0m[2m | [0m[36mMax     [0m
+[2m--------------------------------------------------------------------------------------------------------[0m
+[CURRENT] coordsToOffset: 100 calls, 100 lines                         [2m | [0m  [32m1.25us[0m[2m | [0m  [32m1.38us[0m[2m | [0m  [32m2.00us[0m
+[48;5;234m[CURRENT] coordsToOffset: 100 calls, 1k lines                          [2m | [0m[48;5;234m [32m13.21us[0m[2m | [0m[48;5;234m [32m13.60us[0m[2m | [0m[48;5;234m [32m14.13us[0m[0m
+[CURRENT] coordsToOffset: 100 calls, 10k lines                         [2m | [0m[32m128.08us[0m[2m | [0m[32m140.91us[0m[2m | [0m[32m155.25us[0m
+[48;5;234m[CURRENT] coordsToOffset: 100 calls to LAST line, 1k lines (worst case)[2m | [0m[48;5;234m [32m12.92us[0m[2m | [0m[48;5;234m [32m13.33us[0m[2m | [0m[48;5;234m [32m13.58us[0m[0m
+[CURRENT] offsetToCoords: 100 calls, 100 lines                         [2m | [0m  [32m1.46us[0m[2m | [0m  [32m1.56us[0m[2m | [0m  [32m2.00us[0m
+[48;5;234m[CURRENT] offsetToCoords: 100 calls, 1k lines                          [2m | [0m[48;5;234m [32m12.92us[0m[2m | [0m[48;5;234m [32m13.24us[0m[2m | [0m[48;5;234m [32m13.54us[0m[0m
+[CURRENT] offsetToCoords: 100 calls, 10k lines                         [2m | [0m[32m130.71us[0m[2m | [0m[32m135.14us[0m[2m | [0m[32m138.50us[0m
+[48;5;234mgetLineCount: 100k calls (already O(1) via metrics)                    [2m | [0m[48;5;234m  [92m0.00ns[0m[2m | [0m[48;5;234m [92m12.00ns[0m[2m | [0m[48;5;234m [92m42.00ns[0m[0m
+[2m--------------------------------------------------------------------------------------------------------[0m
+
+  Overall time: 25.69ms
+
+=== Styled Text Operations Benchmarks ===
+
+[2m---------------------------------------------------------------------------------[0m
+[36mBenchmark                                       [0m[2m | [0m[36mMin     [0m[2m | [0m[36mAvg     [0m[2m | [0m[36mMax     [0m
+[2m---------------------------------------------------------------------------------[0m
+setStyledText - single chunk (55 chars)         [2m | [0m[92m250.00ns[0m[2m | [0m[92m684.00ns[0m[2m | [0m [32m18.88us[0m
+[48;5;234msetStyledText - 6 small chunks (~6 chars each)  [2m | [0m[48;5;234m[92m625.00ns[0m[2m | [0m[48;5;234m[92m909.00ns[0m[2m | [0m[48;5;234m  [32m2.33us[0m[0m
+setStyledText - 8 chunks (syntax highlighting)  [2m | [0m[92m875.00ns[0m[2m | [0m  [32m1.24us[0m[2m | [0m  [32m3.00us[0m
+[48;5;234msetStyledText - 10 chunks (~120 chars total)    [2m | [0m[48;5;234m  [32m1.08us[0m[2m | [0m[48;5;234m  [32m1.57us[0m[2m | [0m[48;5;234m  [32m7.50us[0m[0m
+setStyledText - 5 chunks with attributes        [2m | [0m[92m541.00ns[0m[2m | [0m[92m796.00ns[0m[2m | [0m  [32m2.04us[0m
+[48;5;234maddHighlightByCharRange - 1000 calls (unbatched)[2m | [0m[48;5;234m [31m42.16ms[0m[2m | [0m[48;5;234m [31m43.13ms[0m[2m | [0m[48;5;234m [31m44.02ms[0m[0m
+addHighlightByCharRange - 1000 calls (batched)  [2m | [0m [32m79.21us[0m[2m | [0m [32m87.13us[0m[2m | [0m[32m124.38us[0m
+[48;5;234msetStyledText - 100 chunks (realistic code)     [2m | [0m[48;5;234m [32m25.71us[0m[2m | [0m[48;5;234m [32m28.21us[0m[2m | [0m[48;5;234m [32m63.92us[0m[0m
+[2m---------------------------------------------------------------------------------[0m
+
+  Overall time: 4354.97ms
+
+=== Buffer drawTextBuffer Benchmarks ===
+
+[2m-----------------------------------------------------------------------------------------------------------------------------------[0m
+[36mBenchmark                                                  [0m[2m | [0m[36mMin     [0m[2m | [0m[36mAvg     [0m[2m | [0m[36mMax     [0m[2m | [0m[36mBuf       [0m[2m | [0m[36mTB        [0m[2m | [0m[36mView      [0m
+[2m-----------------------------------------------------------------------------------------------------------------------------------[0m
+COLD: 120x40 render (500 lines, wrap=120, includes setup)  [2m | [0m[32m136.17us[0m[2m | [0m[32m142.53us[0m[2m | [0m[32m155.29us[0m[2m | [0m173.69 KiB[2m | [0m          [2m | [0m          
+[48;5;234mWARM: 120x40 render (500 lines, pre-wrapped, pure render)  [2m | [0m[48;5;234m [32m42.71us[0m[2m | [0m[48;5;234m [32m56.21us[0m[2m | [0m[48;5;234m[32m146.08us[0m[2m | [0m[48;5;234m173.69 KiB[2m | [0m[48;5;234m          [2m | [0m[48;5;234m          [0m
+HOT:  120x40 render (500 lines, reused buffer, pure render)[2m | [0m [32m45.58us[0m[2m | [0m [32m57.03us[0m[2m | [0m[32m138.17us[0m[2m | [0m          [2m | [0m          [2m | [0m          
+[48;5;234mWRAP+RENDER: 120x40 render (500 lines, wrap=120)           [2m | [0m[48;5;234m[32m134.71us[0m[2m | [0m[48;5;234m[32m140.25us[0m[2m | [0m[48;5;234m[32m154.13us[0m[2m | [0m[48;5;234m173.69 KiB[2m | [0m[48;5;234m798.09 KiB[2m | [0m[48;5;234m254.81 KiB[0m
+80x24 render (100 lines, no wrap)                          [2m | [0m [32m19.29us[0m[2m | [0m [32m21.99us[0m[2m | [0m [32m42.21us[0m[2m | [0m 69.63 KiB[2m | [0m          [2m | [0m          
+[48;5;234m80x24 render (100 lines, wrap=40)                          [2m | [0m[48;5;234m [32m12.96us[0m[2m | [0m[48;5;234m [32m15.97us[0m[2m | [0m[48;5;234m [32m37.46us[0m[2m | [0m[48;5;234m          [2m | [0m[48;5;234m          [2m | [0m[48;5;234m          [0m
+200x60 render (1000 lines, wrap=200)                       [2m | [0m [32m94.71us[0m[2m | [0m[32m114.05us[0m[2m | [0m[32m281.88us[0m[2m | [0m433.84 KiB[2m | [0m          [2m | [0m          
+[48;5;234m400x200 render (10k lines, wrap=400)                       [2m | [0m[48;5;234m[32m513.67us[0m[2m | [0m[48;5;234m[32m790.42us[0m[2m | [0m[48;5;234m  [31m3.14ms[0m[2m | [0m[48;5;234m  2.82 MiB[2m | [0m[48;5;234m          [2m | [0m[48;5;234m          [0m
+120x40 render (50k lines, viewport first 40)               [2m | [0m [32m40.96us[0m[2m | [0m[32m370.94us[0m[2m | [0m  [31m3.33ms[0m[2m | [0m173.69 KiB[2m | [0m          [2m | [0m          
+[48;5;234m80x30 render (1 massive line 500KB, wrap=80)               [2m | [0m[48;5;234m [32m29.46us[0m[2m | [0m[48;5;234m [32m33.77us[0m[2m | [0m[48;5;234m [32m70.29us[0m[2m | [0m[48;5;234m 86.97 KiB[2m | [0m[48;5;234m          [2m | [0m[48;5;234m          [0m
+80x30 render (10k tiny chunks)                             [2m | [0m [32m22.25us[0m[2m | [0m [32m26.20us[0m[2m | [0m [32m61.00us[0m[2m | [0m 86.97 KiB[2m | [0m          [2m | [0m          
+[48;5;234m100x30 render (10k lines, viewport at line 5000)           [2m | [0m[48;5;234m [32m42.67us[0m[2m | [0m[48;5;234m[32m119.73us[0m[2m | [0m[48;5;234m[32m672.25us[0m[2m | [0m[48;5;234m          [2m | [0m[48;5;234m          [2m | [0m[48;5;234m          [0m
+100x30 render (10k lines, no viewport)                     [2m | [0m [32m40.54us[0m[2m | [0m[32m100.78us[0m[2m | [0m[32m635.96us[0m[2m | [0m          [2m | [0m          [2m | [0m          
+[48;5;234m120x40 render (500 lines, with selection)                  [2m | [0m[48;5;234m [32m42.79us[0m[2m | [0m[48;5;234m [32m53.24us[0m[2m | [0m[48;5;234m[32m137.33us[0m[2m | [0m[48;5;234m          [2m | [0m[48;5;234m          [2m | [0m[48;5;234m          [0m
+120x40 render (500 lines, no selection)                    [2m | [0m [32m45.08us[0m[2m | [0m [32m56.60us[0m[2m | [0m[32m149.54us[0m[2m | [0m          [2m | [0m          [2m | [0m          
+[2m-----------------------------------------------------------------------------------------------------------------------------------[0m
+
+  Overall time: 41.91ms
+
+=== UTF-8 Operations Benchmarks ===
+
+[2m---------------------------------------------------------------------------[0m
+[36mBenchmark                                 [0m[2m | [0m[36mMin     [0m[2m | [0m[36mAvg     [0m[2m | [0m[36mMax     [0m
+[2m---------------------------------------------------------------------------[0m
+isAsciiOnly: ASCII text (1KB)             [2m | [0m  [92m0.00ns[0m[2m | [0m [92m12.00ns[0m[2m | [0m [92m42.00ns[0m
+[48;5;234misAsciiOnly: ASCII text (100KB)           [2m | [0m[48;5;234m  [92m0.00ns[0m[2m | [0m[48;5;234m [92m12.00ns[0m[2m | [0m[48;5;234m [92m42.00ns[0m[0m
+isAsciiOnly: ASCII text (1MB)             [2m | [0m  [92m0.00ns[0m[2m | [0m [92m12.00ns[0m[2m | [0m [92m42.00ns[0m
+[48;5;234misAsciiOnly: Mixed text (10KB)            [2m | [0m[48;5;234m  [92m0.00ns[0m[2m | [0m[48;5;234m [92m12.00ns[0m[2m | [0m[48;5;234m [92m42.00ns[0m[0m
+findLineBreaks: 100 LF lines              [2m | [0m[92m833.00ns[0m[2m | [0m[92m909.00ns[0m[2m | [0m  [32m1.79us[0m
+[48;5;234mfindLineBreaks: 100 CRLF lines            [2m | [0m[48;5;234m[92m791.00ns[0m[2m | [0m[48;5;234m[92m876.00ns[0m[2m | [0m[48;5;234m  [32m1.96us[0m[0m
+findLineBreaks: 1000 short lines          [2m | [0m  [32m4.83us[0m[2m | [0m  [32m4.95us[0m[2m | [0m [32m16.88us[0m
+[48;5;234mfindWrapBreaks: ASCII (10KB)              [2m | [0m[48;5;234m  [32m4.25us[0m[2m | [0m[48;5;234m  [32m4.40us[0m[2m | [0m[48;5;234m [32m16.42us[0m[0m
+findWrapBreaks: Mixed (10KB)              [2m | [0m [32m18.00us[0m[2m | [0m [32m18.50us[0m[2m | [0m [32m32.42us[0m
+[48;5;234mfindWrapPosByWidth: ASCII 1KB, width=40   [2m | [0m[48;5;234m  [92m0.00ns[0m[2m | [0m[48;5;234m [92m14.00ns[0m[2m | [0m[48;5;234m [92m42.00ns[0m[0m
+findWrapPosByWidth: ASCII 1KB, width=120  [2m | [0m  [92m0.00ns[0m[2m | [0m [92m14.00ns[0m[2m | [0m [92m42.00ns[0m
+[48;5;234mfindWrapPosByWidth: Mixed 1KB, width=80   [2m | [0m[48;5;234m[92m167.00ns[0m[2m | [0m[48;5;234m[92m225.00ns[0m[2m | [0m[48;5;234m[92m791.00ns[0m[0m
+findWrapPosByWidth: Unicode 1KB, width=80 [2m | [0m[92m291.00ns[0m[2m | [0m[92m343.00ns[0m[2m | [0m[92m833.00ns[0m
+[48;5;234mfindPosByWidth: ASCII 1KB, target=500     [2m | [0m[48;5;234m  [92m0.00ns[0m[2m | [0m[48;5;234m [92m14.00ns[0m[2m | [0m[48;5;234m [92m84.00ns[0m[0m
+findPosByWidth: ASCII 100KB, target=90000 [2m | [0m  [92m0.00ns[0m[2m | [0m [92m14.00ns[0m[2m | [0m [92m83.00ns[0m
+[48;5;234mfindPosByWidth: Mixed 10KB, target=5000   [2m | [0m[48;5;234m [32m13.25us[0m[2m | [0m[48;5;234m [32m14.14us[0m[2m | [0m[48;5;234m [32m28.88us[0m[0m
+calculateTextWidth: ASCII (1KB)           [2m | [0m  [92m0.00ns[0m[2m | [0m [92m12.00ns[0m[2m | [0m [92m42.00ns[0m
+[48;5;234mcalculateTextWidth: ASCII (100KB)         [2m | [0m[48;5;234m  [92m0.00ns[0m[2m | [0m[48;5;234m [92m12.00ns[0m[2m | [0m[48;5;234m [92m42.00ns[0m[0m
+calculateTextWidth: ASCII (1MB)           [2m | [0m  [92m0.00ns[0m[2m | [0m [92m12.00ns[0m[2m | [0m [92m42.00ns[0m
+[48;5;234mcalculateTextWidth: ASCII with tabs (10KB)[2m | [0m[48;5;234m [32m19.38us[0m[2m | [0m[48;5;234m [32m21.82us[0m[2m | [0m[48;5;234m [32m38.92us[0m[0m
+calculateTextWidth: Mixed (10KB)          [2m | [0m [32m13.63us[0m[2m | [0m [32m15.45us[0m[2m | [0m [32m27.42us[0m
+[48;5;234mcalculateTextWidth: Unicode heavy (10KB)  [2m | [0m[48;5;234m [32m22.54us[0m[2m | [0m[48;5;234m [32m23.17us[0m[2m | [0m[48;5;234m [32m35.04us[0m[0m
+[2m---------------------------------------------------------------------------[0m
+
+  Overall time: 106.43ms
+
+=== TextChunk getGraphemes Benchmarks ===
+
+[2m-------------------------------------------------------------------------------------------------------[0m
+[36mBenchmark                                                [0m[2m | [0m[36mMin     [0m[2m | [0m[36mAvg     [0m[2m | [0m[36mMax     [0m[2m | [0m[36mGraphemes [0m
+[2m-------------------------------------------------------------------------------------------------------[0m
+getGraphemes ASCII (100 bytes, 0 graphemes)              [2m | [0m  [92m0.00ns[0m[2m | [0m [92m12.00ns[0m[2m | [0m [92m42.00ns[0m[2m | [0m    0.00 B
+[48;5;234mgetGraphemes ASCII (1024 bytes, 0 graphemes)             [2m | [0m[48;5;234m  [92m0.00ns[0m[2m | [0m[48;5;234m [92m14.00ns[0m[2m | [0m[48;5;234m [92m42.00ns[0m[2m | [0m[48;5;234m    0.00 B[0m
+getGraphemes ASCII (4096 bytes, 0 graphemes)             [2m | [0m  [92m0.00ns[0m[2m | [0m [92m15.00ns[0m[2m | [0m [92m42.00ns[0m[2m | [0m    0.00 B
+[48;5;234mgetGraphemes ASCII (16384 bytes, 0 graphemes)            [2m | [0m[48;5;234m  [92m0.00ns[0m[2m | [0m[48;5;234m [92m15.00ns[0m[2m | [0m[48;5;234m[92m125.00ns[0m[2m | [0m[48;5;234m    0.00 B[0m
+getGraphemes ASCII (65536 bytes, 0 graphemes)            [2m | [0m  [92m0.00ns[0m[2m | [0m [92m18.00ns[0m[2m | [0m[92m125.00ns[0m[2m | [0m    0.00 B
+[48;5;234mgetGraphemes Mixed (100 bytes, 25 graphemes)             [2m | [0m[48;5;234m[92m375.00ns[0m[2m | [0m[48;5;234m[92m685.00ns[0m[2m | [0m[48;5;234m [32m22.29us[0m[2m | [0m[48;5;234m  300.00 B[0m
+getGraphemes Mixed (1024 bytes, 33 graphemes)            [2m | [0m  [32m2.00us[0m[2m | [0m  [32m2.13us[0m[2m | [0m  [32m2.71us[0m[2m | [0m  396.00 B
+[48;5;234mgetGraphemes Mixed (4096 bytes, 33 graphemes)            [2m | [0m[48;5;234m  [32m7.13us[0m[2m | [0m[48;5;234m  [32m7.14us[0m[2m | [0m[48;5;234m  [32m7.21us[0m[2m | [0m[48;5;234m  396.00 B[0m
+getGraphemes Mixed (16384 bytes, 33 graphemes)           [2m | [0m [32m27.42us[0m[2m | [0m [32m28.04us[0m[2m | [0m [32m40.25us[0m[2m | [0m  396.00 B
+[48;5;234mgetGraphemes Mixed (65536 bytes, 33 graphemes)           [2m | [0m[48;5;234m [32m99.71us[0m[2m | [0m[48;5;234m[32m111.02us[0m[2m | [0m[48;5;234m[32m133.92us[0m[2m | [0m[48;5;234m  396.00 B[0m
+getGraphemes Heavy Unicode (100 bytes, 26 graphemes)     [2m | [0m[92m208.00ns[0m[2m | [0m[92m542.00ns[0m[2m | [0m [32m22.42us[0m[2m | [0m  312.00 B
+[48;5;234mgetGraphemes Heavy Unicode (1024 bytes, 236 graphemes)   [2m | [0m[48;5;234m  [32m2.21us[0m[2m | [0m[48;5;234m  [32m2.45us[0m[2m | [0m[48;5;234m [32m10.29us[0m[2m | [0m[48;5;234m  2.77 KiB[0m
+getGraphemes Heavy Unicode (4096 bytes, 931 graphemes)   [2m | [0m  [32m8.63us[0m[2m | [0m  [32m9.68us[0m[2m | [0m [32m17.42us[0m[2m | [0m 10.91 KiB
+[48;5;234mgetGraphemes Heavy Unicode (16384 bytes, 3725 graphemes) [2m | [0m[48;5;234m [32m34.50us[0m[2m | [0m[48;5;234m [32m38.48us[0m[2m | [0m[48;5;234m [32m46.63us[0m[2m | [0m[48;5;234m 43.65 KiB[0m
+getGraphemes Heavy Unicode (65536 bytes, 14895 graphemes)[2m | [0m[32m155.33us[0m[2m | [0m[32m158.14us[0m[2m | [0m[32m179.71us[0m[2m | [0m174.55 KiB
+[2m-------------------------------------------------------------------------------------------------------[0m
+
+  Overall time: 35.94ms
+
+✓ Benchmarks complete
