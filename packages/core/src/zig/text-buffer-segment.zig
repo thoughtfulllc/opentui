@@ -107,7 +107,7 @@ pub const TextChunk = struct {
         return graphemes;
     }
 
-    /// Lazily compute grapheme and wrap metadata together for wrap-sensitive paths.
+    /// Lazily compute cached wrap metadata for wrap-sensitive paths.
     /// Returns slices that are valid until the buffer is reset.
     pub fn getLayoutInfo(
         self: *const TextChunk,
@@ -119,26 +119,15 @@ pub const TextChunk = struct {
         const mut_self = @constCast(self);
         if (self.wrap_breaks) |cached_wrap_breaks| {
             return .{
-                .graphemes = self.graphemes orelse &[_]GraphemeInfo{},
                 .wrap_breaks = cached_wrap_breaks,
             };
         }
 
         const chunk_bytes = self.getBytes(mem_registry);
-        var grapheme_list: std.ArrayListUnmanaged(GraphemeInfo) = .{};
-        errdefer grapheme_list.deinit(allocator);
-
         var wrap_list: std.ArrayListUnmanaged(utf8.LayoutWrapBreak) = .{};
         errdefer wrap_list.deinit(allocator);
 
-        try utf8.findChunkLayoutInfo(chunk_bytes, tabwidth, self.isAsciiOnly(), width_method, allocator, &grapheme_list, &wrap_list);
-
-        const has_graphemes = grapheme_list.items.len > 0;
-        const graphemes = if (has_graphemes)
-            try grapheme_list.toOwnedSlice(allocator)
-        else
-            &[_]GraphemeInfo{};
-        errdefer if (has_graphemes) allocator.free(graphemes);
+        try utf8.findChunkLayoutInfo(chunk_bytes, tabwidth, self.isAsciiOnly(), width_method, allocator, &wrap_list);
 
         const has_wrap_breaks = wrap_list.items.len > 0;
         const wrap_breaks = if (has_wrap_breaks)
@@ -146,11 +135,9 @@ pub const TextChunk = struct {
         else
             &[_]utf8.LayoutWrapBreak{};
 
-        mut_self.graphemes = graphemes;
         mut_self.wrap_breaks = wrap_breaks;
 
         return .{
-            .graphemes = graphemes,
             .wrap_breaks = wrap_breaks,
         };
     }

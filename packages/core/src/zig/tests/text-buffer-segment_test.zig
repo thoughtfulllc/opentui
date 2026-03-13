@@ -341,14 +341,16 @@ test "TextChunk.getLayoutInfo caches graphemes and wrap breaks together" {
     };
 
     const layout = try chunk.getLayoutInfo(&registry, allocator, 2, .unicode);
-    try testing.expectEqual(@as(usize, 1), layout.graphemes.len);
     try testing.expectEqual(@as(usize, 1), layout.wrap_breaks.len);
     try testing.expectEqual(@as(u32, 4), @as(u32, layout.wrap_breaks[0].col_offset));
-    try testing.expectEqual(@as(u32, 5), @as(u32, layout.wrap_breaks[0].col_end));
+    try testing.expectEqual(@as(u32, 5), layout.wrap_breaks[0].colEnd());
 
     const graphemes = try chunk.getGraphemes(&registry, allocator, 2, .unicode);
-    try testing.expectEqual(@intFromPtr(layout.graphemes.ptr), @intFromPtr(graphemes.ptr));
+    try testing.expectEqual(@as(usize, 1), graphemes.len);
 
     const layout_again = try chunk.getLayoutInfo(&registry, allocator, 2, .unicode);
     try testing.expectEqual(@intFromPtr(layout.wrap_breaks.ptr), @intFromPtr(layout_again.wrap_breaks.ptr));
+
+    const graphemes_again = try chunk.getGraphemes(&registry, allocator, 2, .unicode);
+    try testing.expectEqual(@intFromPtr(graphemes.ptr), @intFromPtr(graphemes_again.ptr));
 }

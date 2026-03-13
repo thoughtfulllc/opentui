@@ -119,7 +119,16 @@ pub const WrapBreak = struct {
 pub const LayoutWrapBreak = struct {
     byte_offset: u32,
     col_offset: u16,
-    col_end: u16,
+    byte_len: u8,
+    width: u8,
+
+    pub fn colEnd(self: @This()) u32 {
+        return @as(u32, self.col_offset) + @as(u32, self.width);
+    }
+
+    pub fn byteEnd(self: @This()) u32 {
+        return self.byte_offset + @as(u32, self.byte_len);
+    }
 };
 
 pub const WrapBreakResult = struct {
@@ -1422,7 +1431,6 @@ pub const GraphemeInfoResult = struct {
 };
 
 pub const ChunkLayoutInfo = struct {
-    graphemes: []const GraphemeInfo,
     wrap_breaks: []const LayoutWrapBreak,
 };
 
@@ -1453,13 +1461,15 @@ inline fn appendLayoutWrapBreak(
     allocator: std.mem.Allocator,
     byte_offset: u32,
     col_offset: u32,
-    col_end: u32,
+    byte_len: u32,
+    width: u32,
 ) !void {
     if (wrap_breaks) |list| {
         try list.append(allocator, .{
             .byte_offset = byte_offset,
             .col_offset = @intCast(@min(col_offset, std.math.maxInt(u16))),
-            .col_end = @intCast(@min(col_end, std.math.maxInt(u16))),
+            .byte_len = @intCast(@min(byte_len, std.math.maxInt(u8))),
+            .width = @intCast(@min(width, std.math.maxInt(u8))),
         });
     }
 }
@@ -1469,12 +1479,14 @@ inline fn appendWrapBreaks(
     layout_wrap_breaks: ?*std.ArrayListUnmanaged(LayoutWrapBreak),
     allocator: std.mem.Allocator,
     byte_offset: u32,
+    byte_len: u32,
     char_offset: u32,
     col_offset: u32,
-    col_end: u32,
+    width: u32,
 ) !void {
+    const col_end = col_offset + width;
     try appendPublicWrapBreak(public_wrap_breaks, allocator, byte_offset, char_offset, col_offset, col_end);
-    try appendLayoutWrapBreak(layout_wrap_breaks, allocator, byte_offset, col_offset, col_end);
+    try appendLayoutWrapBreak(layout_wrap_breaks, allocator, byte_offset, col_offset, byte_len, width);
 }
 
 fn commitScannedCluster(
@@ -1495,7 +1507,7 @@ fn commitScannedCluster(
     next_class: ?WordClass,
 ) !u32 {
     const cluster_width = cluster_width_state.width;
-    const cluster_col_end = cluster_col_offset + cluster_width;
+    const cluster_byte_len = cluster_end - cluster_start;
 
     if (cluster_is_multibyte or cluster_is_tab) {
         if (cluster_width > 0 or width_method == .wcwidth) {
@@ -1516,9 +1528,10 @@ fn commitScannedCluster(
             layout_wrap_breaks,
             allocator,
             @intCast(cluster_start),
+            @intCast(cluster_byte_len),
             cluster_char_offset,
             cluster_col_offset,
-            cluster_col_end,
+            cluster_width,
         );
     }
 
@@ -1529,9 +1542,10 @@ fn commitScannedCluster(
                 layout_wrap_breaks,
                 allocator,
                 @intCast(cluster_start),
+                @intCast(cluster_byte_len),
                 cluster_char_offset,
                 cluster_col_offset,
-                cluster_col_end,
+                cluster_width,
             );
         }
     }
@@ -1584,7 +1598,7 @@ fn scanAsciiOnlyWrapBreaks(
         while (bitmask != 0) {
             const bit_pos = @ctz(bitmask);
             const break_offset = @as(u32, @intCast(pos + bit_pos));
-            try appendWrapBreaks(public_wrap_breaks, layout_wrap_breaks, allocator, break_offset, break_offset, break_offset, break_offset + 1);
+            try appendWrapBreaks(public_wrap_breaks, layout_wrap_breaks, allocator, break_offset, 1, break_offset, break_offset, 1);
             bitmask &= bitmask - 1;
         }
 
@@ -1594,7 +1608,7 @@ fn scanAsciiOnlyWrapBreaks(
     while (pos < text.len) : (pos += 1) {
         if (!isAsciiWrapBreak(text[pos])) continue;
         const break_offset = @as(u32, @intCast(pos));
-        try appendWrapBreaks(public_wrap_breaks, layout_wrap_breaks, allocator, break_offset, break_offset, break_offset, break_offset + 1);
+        try appendWrapBreaks(public_wrap_breaks, layout_wrap_breaks, allocator, break_offset, 1, break_offset, break_offset, 1);
     }
 }
 
@@ -1685,9 +1699,10 @@ fn scanChunkLayout(
                     layout_wrap_breaks,
                     allocator,
                     @intCast(pos + i),
+                    1,
                     grapheme_offset,
                     col,
-                    col + cp_width,
+                    cp_width,
                 );
             }
 
@@ -1806,12 +1821,10 @@ pub fn findChunkLayoutInfo(
     isASCIIOnly: bool,
     width_method: WidthMethod,
     allocator: std.mem.Allocator,
-    graphemes: *std.ArrayListUnmanaged(GraphemeInfo),
     wrap_breaks: *std.ArrayListUnmanaged(LayoutWrapBreak),
 ) !void {
-    graphemes.clearRetainingCapacity();
     wrap_breaks.clearRetainingCapacity();
-    try scanChunkLayout(text, tab_width, isASCIIOnly, width_method, allocator, graphemes, null, wrap_breaks);
+    try scanChunkLayout(text, tab_width, isASCIIOnly, width_method, allocator, null, null, wrap_breaks);
 }
 
 /// Find all grapheme clusters in text and return info for multi-byte graphemes and tabs

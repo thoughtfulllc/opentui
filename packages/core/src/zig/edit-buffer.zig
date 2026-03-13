@@ -680,7 +680,7 @@ pub const EditBuffer = struct {
 
                     for (wrap_offsets) |wrap_break| {
                         const break_col = @as(u32, wrap_break.col_offset);
-                        const target_col = cols_before + @as(u32, wrap_break.col_end);
+                        const target_col = cols_before + wrap_break.colEnd();
 
                         // If we've passed the cursor chunk, any break is valid
                         // If we're in the cursor chunk, break must be after cursor position
@@ -748,7 +748,7 @@ pub const EditBuffer = struct {
                 }).wrap_breaks;
 
                 for (wrap_offsets) |wrap_break| {
-                    const boundary_col = cols_before + @as(u32, wrap_break.col_end);
+                    const boundary_col = cols_before + wrap_break.colEnd();
                     if (boundary_col < cursor.col) {
                         last_boundary = boundary_col;
                     }
