@@ -4,8 +4,8 @@ import { SyntaxStyle } from "../syntax-style.js"
 import { RGBA } from "../lib/RGBA.js"
 import { createMockMouse, createTestRenderer, type TestRenderer } from "../testing.js"
 import { MockTreeSitterClient } from "../testing/mock-tree-sitter-client.js"
-import type { CodeRenderable } from "./Code.js"
 import type { SimpleHighlight } from "../lib/tree-sitter/types.js"
+import { settleDiffHighlighting } from "./__tests__/renderable-test-utils.js"
 
 let currentRenderer: TestRenderer
 let renderOnce: () => Promise<void>
@@ -23,28 +23,6 @@ afterEach(async () => {
     currentRenderer.destroy()
   }
 })
-
-// Settle Diff highlighting deterministically. Each iteration:
-// 1. Render twice — the first render may trigger Diff.requestRebuild via microtask
-//    (runs during renderOnce's internal awaits), which calls requestRender while
-//    rendering=true, setting immediateRerenderRequested. The resulting re-render
-//    is scheduled via clock.setTimeout (ManualClock), so needs a second renderOnce.
-// 2. Resolve all pending highlights (proper signal via mock)
-// 3. Await Code.highlightingDone on both sides (proper signal from Code)
-// Loop exits when mock has no more pending requests (state-based, not count-based).
-async function settleDiffHighlighting(diff: DiffRenderable, client: MockTreeSitterClient, render: () => Promise<void>) {
-  const MAX = 15
-  for (let i = 0; i < MAX; i++) {
-    await render()
-    await render()
-    if (!client.isHighlighting()) break
-    client.resolveAllHighlightOnce()
-    const left: CodeRenderable | null = (diff as any).leftCodeRenderable
-    const right: CodeRenderable | null = (diff as any).rightCodeRenderable
-    if (left) await left.highlightingDone
-    if (right) await right.highlightingDone
-  }
-}
 
 const simpleDiff = `--- a/test.js
 +++ b/test.js

@@ -1,6 +1,6 @@
 import { describe, expect, it, beforeEach, afterEach } from "bun:test"
 import { createTestRenderer, type TestRenderer, type MockMouse } from "../../testing/test-renderer.js"
-import { createTextareaRenderable } from "./renderable-test-utils.js"
+import { createTextareaRenderable, simulateFrames as _simulateFrames } from "./renderable-test-utils.js"
 import { TestRecorder } from "../../testing/test-recorder.js"
 import { RGBA } from "../../lib/RGBA.js"
 import { ManualClock } from "../../testing/manual-clock.js"
@@ -10,13 +10,7 @@ let renderOnce: () => Promise<void>
 let currentMouse: MockMouse
 let clock: ManualClock
 
-async function simulateFrames(ms: number, frameInterval: number = 50): Promise<void> {
-  const frames = Math.ceil(ms / frameInterval)
-  for (let i = 0; i < frames; i++) {
-    clock.advance(frameInterval)
-    await renderOnce()
-  }
-}
+const simulateFrames = (ms: number, frameInterval?: number) => _simulateFrames(clock, renderOnce, ms, frameInterval)
 
 describe("Textarea - Scroll Tests", () => {
   beforeEach(async () => {
