@@ -1050,6 +1050,41 @@ test "layout wrap breaks: direct metadata for tab delimiter" {
     try testing.expectEqual(@as(u32, 3), result.items[0].byteEnd());
 }
 
+test "layout wrap breaks: trailing delimiter at end of chunk" {
+    const input = "abc ";
+    var result: std.ArrayListUnmanaged(utf8.LayoutWrapBreak) = .{};
+    defer result.deinit(testing.allocator);
+    try utf8.findChunkLayoutInfo(input, 4, true, .unicode, testing.allocator, &result);
+
+    try testing.expectEqual(@as(usize, 1), result.items.len);
+    try testing.expectEqual(@as(u32, 3), result.items[0].byte_offset);
+    try testing.expectEqual(@as(u32, 3), result.items[0].col_offset);
+    try testing.expectEqual(@as(u8, 1), result.items[0].byte_len);
+    try testing.expectEqual(@as(u8, 1), result.items[0].width);
+}
+
+test "layout wrap breaks: tab width affects break width" {
+    const input = "AB\tCD";
+
+    // tab_width=4: tab at col 2 has width 4, colEnd()=6
+    var result4: std.ArrayListUnmanaged(utf8.LayoutWrapBreak) = .{};
+    defer result4.deinit(testing.allocator);
+    try utf8.findChunkLayoutInfo(input, 4, false, .unicode, testing.allocator, &result4);
+
+    try testing.expectEqual(@as(usize, 1), result4.items.len);
+    try testing.expectEqual(@as(u8, 4), result4.items[0].width);
+    try testing.expectEqual(@as(u32, 6), result4.items[0].colEnd());
+
+    // tab_width=8: same tab at col 2 has width 8, colEnd()=10
+    var result8: std.ArrayListUnmanaged(utf8.LayoutWrapBreak) = .{};
+    defer result8.deinit(testing.allocator);
+    try utf8.findChunkLayoutInfo(input, 8, false, .unicode, testing.allocator, &result8);
+
+    try testing.expectEqual(@as(usize, 1), result8.items.len);
+    try testing.expectEqual(@as(u8, 8), result8.items[0].width);
+    try testing.expectEqual(@as(u32, 10), result8.items[0].colEnd());
+}
+
 test "layout wrap breaks: col_offset beyond u16 max is truncated" {
     // For ASCII text, byte_offset == col_offset. Place a space at column 65536
     // which exceeds u16 max (65535). The correct col_offset should be 65536.

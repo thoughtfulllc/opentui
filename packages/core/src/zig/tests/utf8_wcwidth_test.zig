@@ -355,3 +355,31 @@ test "wcwidth: getPrevGraphemeStart with ZWJ sequence" {
     }
     try testing.expect(count >= 3); // At least rocket, ZWJ, woman
 }
+
+test "findChunkLayoutInfo wcwidth: CJK to ASCII transition" {
+    // "漢字abc": CJK→ASCII transition produces a break at 字 (byte 3)
+    const text = "漢字abc";
+    var result: std.ArrayListUnmanaged(utf8.LayoutWrapBreak) = .{};
+    defer result.deinit(testing.allocator);
+    try utf8.findChunkLayoutInfo(text, 4, false, .wcwidth, testing.allocator, &result);
+
+    try testing.expectEqual(@as(usize, 1), result.items.len);
+    try testing.expectEqual(@as(u32, 3), result.items[0].byte_offset);
+    try testing.expectEqual(@as(u32, 2), result.items[0].col_offset);
+    try testing.expectEqual(@as(u8, 3), result.items[0].byte_len);
+    try testing.expectEqual(@as(u8, 2), result.items[0].width);
+}
+
+test "findChunkLayoutInfo wcwidth: space and CJK mixed" {
+    // "漢 abc": space is the only break (字→space is cjk→other, not a transition)
+    const text = "漢 abc";
+    var result: std.ArrayListUnmanaged(utf8.LayoutWrapBreak) = .{};
+    defer result.deinit(testing.allocator);
+    try utf8.findChunkLayoutInfo(text, 4, false, .wcwidth, testing.allocator, &result);
+
+    try testing.expectEqual(@as(usize, 1), result.items.len);
+    try testing.expectEqual(@as(u32, 3), result.items[0].byte_offset);
+    try testing.expectEqual(@as(u32, 2), result.items[0].col_offset);
+    try testing.expectEqual(@as(u8, 1), result.items[0].byte_len);
+    try testing.expectEqual(@as(u8, 1), result.items[0].width);
+}
