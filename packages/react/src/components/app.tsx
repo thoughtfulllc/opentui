@@ -1,4 +1,5 @@
-import type { CliRenderer, KeyHandler } from "@opentui/core"
+import type { KeyHandler } from "@opentui/core"
+import type { CliRenderer } from "@opentui/core/native"
 import { createContext, useContext } from "react"
 
 interface AppContext {

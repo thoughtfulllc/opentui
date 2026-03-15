@@ -1,4 +1,5 @@
 // Core exports without 3D dependencies
+// Browser-safe: no native-only modules (renderer, console, NativeSpanFeed, zig)
 export * from "./Renderable"
 export * from "./types"
 export * from "./utils"
@@ -11,9 +12,6 @@ export * from "./syntax-style"
 export * from "./post/filters"
 export * from "./animation/Timeline"
 export * from "./lib"
-export * from "./renderer"
-export * from "./NativeSpanFeed"
 export * from "./renderables"
-export * from "./zig"
-export * from "./console"
+export * from "./zig-registry"
 export * as Yoga from "yoga-layout"

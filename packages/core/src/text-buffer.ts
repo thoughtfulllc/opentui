@@ -1,7 +1,6 @@
 import type { StyledText } from "./lib/styled-text"
 import { RGBA } from "./lib/RGBA"
-import { resolveRenderLib, type LineInfo, type RenderLib } from "./zig"
-import { type Pointer } from "bun:ffi"
+import { resolveRenderLib, type LineInfo, type RenderLib, type Pointer } from "./zig-registry"
 import { type WidthMethod, type Highlight } from "./types"
 import type { SyntaxStyle } from "./syntax-style"
 

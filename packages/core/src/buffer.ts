@@ -1,8 +1,12 @@
 import type { TextBuffer } from "./text-buffer"
 import { RGBA } from "./lib"
-import { resolveRenderLib, type RenderLib } from "./zig"
-import { type Pointer, toArrayBuffer, ptr } from "bun:ffi"
+import { resolveRenderLib, type RenderLib, type Pointer } from "./zig-registry"
 import { type BorderStyle, type BorderSides, BorderCharArrays, parseBorderStyle } from "./lib"
+
+let _ffi: any
+function getFfi() {
+  return (_ffi ??= require("bun:ffi"))
+}
 import { type WidthMethod, type CapturedSpan, type CapturedLine } from "./types"
 import type { TextBufferView } from "./text-buffer-view"
 import type { EditorView } from "./editor-view"
@@ -83,10 +87,10 @@ export class OptimizedBuffer {
       const attributesPtr = this.lib.bufferGetAttributesPtr(this.bufferPtr)
 
       this._rawBuffers = {
-        char: new Uint32Array(toArrayBuffer(charPtr, 0, size * 4)),
-        fg: new Float32Array(toArrayBuffer(fgPtr, 0, size * 4 * 4)),
-        bg: new Float32Array(toArrayBuffer(bgPtr, 0, size * 4 * 4)),
-        attributes: new Uint32Array(toArrayBuffer(attributesPtr, 0, size * 4)),
+        char: new Uint32Array(getFfi().toArrayBuffer(charPtr, 0, size * 4)),
+        fg: new Float32Array(getFfi().toArrayBuffer(fgPtr, 0, size * 4 * 4)),
+        bg: new Float32Array(getFfi().toArrayBuffer(bgPtr, 0, size * 4 * 4)),
+        attributes: new Uint32Array(getFfi().toArrayBuffer(attributesPtr, 0, size * 4)),
       }
     }
 
@@ -367,7 +371,7 @@ export class OptimizedBuffer {
     bg: RGBA | null = null,
   ): void {
     this.guard()
-    this.lib.bufferDrawGrayscaleBuffer(this.bufferPtr, posX, posY, ptr(intensities), srcWidth, srcHeight, fg, bg)
+    this.lib.bufferDrawGrayscaleBuffer(this.bufferPtr, posX, posY, getFfi().ptr(intensities), srcWidth, srcHeight, fg, bg)
   }
 
   public drawGrayscaleBufferSupersampled(
@@ -384,7 +388,7 @@ export class OptimizedBuffer {
       this.bufferPtr,
       posX,
       posY,
-      ptr(intensities),
+      getFfi().ptr(intensities),
       srcWidth,
       srcHeight,
       fg,

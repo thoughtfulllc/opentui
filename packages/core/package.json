@@ -62,6 +62,10 @@
       "types": "./src/index.ts",
       "import": "./src/index.ts"
     },
+    "./native": {
+      "types": "./src/native.ts",
+      "import": "./src/native.ts"
+    },
     "./3d": {
       "types": "./src/3d.ts",
       "import": "./src/3d.ts"

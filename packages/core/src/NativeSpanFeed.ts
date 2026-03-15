@@ -1,5 +1,9 @@
-import { toArrayBuffer, type Pointer } from "bun:ffi"
-import { resolveRenderLib } from "./zig"
+import { resolveRenderLib, type Pointer } from "./zig-registry"
+
+let _ffi: any
+function getFfi() {
+  return (_ffi ??= require("bun:ffi"))
+}
 import { SpanInfoStruct } from "./zig-structs"
 import type { GrowthPolicy, NativeSpanFeedOptions, NativeSpanFeedStats } from "./zig-structs"
 
@@ -174,7 +178,7 @@ export class NativeSpanFeed {
           const len = toNumber(arg1)
           if (len > 0 && arg0) {
             // toArrayBuffer must alias Zig memory so refcount writes are visible.
-            const buffer = toArrayBuffer(arg0, 0, len)
+            const buffer = getFfi().toArrayBuffer(arg0, 0, len)
             this.stateBuffer = new Uint8Array(buffer)
           }
           break
@@ -192,7 +196,7 @@ export class NativeSpanFeed {
           const chunkLen = toNumber(arg1)
           if (chunkLen > 0 && arg0) {
             if (!this.chunkMap.has(arg0)) {
-              const buffer = toArrayBuffer(arg0, 0, chunkLen)
+              const buffer = getFfi().toArrayBuffer(arg0, 0, chunkLen)
               this.chunkMap.set(arg0, buffer)
             }
             this.chunkSizes.set(arg0, chunkLen)
@@ -243,7 +247,7 @@ export class NativeSpanFeed {
         if (!buffer) {
           const size = this.chunkSizes.get(span.chunkPtr)
           if (!size) continue
-          buffer = toArrayBuffer(span.chunkPtr, 0, size)
+          buffer = getFfi().toArrayBuffer(span.chunkPtr, 0, size)
           this.chunkMap.set(span.chunkPtr, buffer)
         }
 

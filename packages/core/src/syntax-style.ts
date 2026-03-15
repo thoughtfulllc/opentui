@@ -1,6 +1,5 @@
 import { RGBA, parseColor, type ColorInput } from "./lib/RGBA"
-import { resolveRenderLib, type RenderLib } from "./zig"
-import { type Pointer } from "bun:ffi"
+import { resolveRenderLib, type RenderLib, type Pointer } from "./zig-registry"
 import { createTextAttributes } from "./utils"
 
 export interface StyleDefinition {

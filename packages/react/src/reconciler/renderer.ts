@@ -1,4 +1,5 @@
-import { CliRenderer, CliRenderEvents, engine } from "@opentui/core"
+import { engine } from "@opentui/core"
+import { CliRenderer, CliRenderEvents } from "@opentui/core/native"
 import React, { type ReactNode } from "react"
 import type { OpaqueRoot } from "react-reconciler"
 import { AppContext } from "../components/app"

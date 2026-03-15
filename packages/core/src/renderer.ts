@@ -10,9 +10,8 @@ import {
   type WidthMethod,
 } from "./types"
 import { RGBA, parseColor, type ColorInput } from "./lib/RGBA"
-import type { Pointer } from "bun:ffi"
 import { OptimizedBuffer } from "./buffer"
-import { resolveRenderLib, type RenderLib } from "./zig"
+import { resolveRenderLib, type RenderLib, type Pointer } from "./zig-registry"
 import { TerminalConsole, type ConsoleOptions, capture } from "./console"
 import { MouseParser, type MouseEventType, type RawMouseEvent, type ScrollInfo } from "./lib/parse.mouse"
 import { Selection } from "./lib/selection"
