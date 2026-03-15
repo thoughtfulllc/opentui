@@ -85,6 +85,21 @@ if (!buildResult.success) {
   process.exit(1)
 }
 
+// Ensure @opentui/core type declarations exist — the react tsconfig.build.json
+// maps @opentui/core to ../core/dist. Without this, tsc falls back to source
+// resolution and fails on .scm/.wasm imports it can't handle.
+const coreTsconfigBuild = join(rootDir, "../core/tsconfig.build.json")
+if (existsSync(coreTsconfigBuild) && !existsSync(join(rootDir, "../core/dist/index.d.ts"))) {
+  console.log("Building @opentui/core type declarations...")
+  const coreResult = spawnSync("bunx", ["tsc", "-p", coreTsconfigBuild], {
+    cwd: join(rootDir, "../core"),
+    stdio: "inherit",
+  })
+  if (coreResult.status !== 0) {
+    console.warn("Warning: @opentui/core type declaration generation failed")
+  }
+}
+
 console.log("Generating TypeScript declarations...")
 
 const tsconfigBuildPath = join(rootDir, "tsconfig.build.json")
