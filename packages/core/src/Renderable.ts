@@ -20,7 +20,7 @@ import {
   type WrapString,
 } from "./lib/yoga.options"
 import type { VNode } from "./renderables/composition/vnode"
-import { maybeMakeRenderable } from "./renderable-brand"
+import { isRenderable, maybeMakeRenderable } from "./renderable-brand"
 import type { MouseEvent } from "./renderer"
 import type { RenderContext } from "./types"
 import {
