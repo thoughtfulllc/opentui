@@ -1,7 +1,6 @@
 import { isRenderable, BrandedRenderable, registerMaybeMakeRenderable } from "../../renderable-brand"
 import type { Renderable, RenderableOptions } from "../../Renderable"
 import type { RenderContext } from "../../types"
-import util from "node:util"
 
 export type VChild = VNode | Renderable | VChild[] | null | undefined | false
 
@@ -141,7 +140,7 @@ export function maybeMakeRenderable(
   if (isRenderable(node)) return node
   if (isVNode(node)) return instantiate(ctx, node)
   if (process.env.NODE_ENV !== "production") {
-    console.warn("maybeMakeRenderable received an invalid node", util.inspect(node, { depth: 2 }))
+    console.warn("maybeMakeRenderable received an invalid node", node)
   }
   return null
 }
