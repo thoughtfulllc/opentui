@@ -19,7 +19,8 @@ import {
   type PositionTypeString,
   type WrapString,
 } from "./lib/yoga.options"
-import { maybeMakeRenderable, type VNode } from "./renderables/composition/vnode"
+import type { VNode } from "./renderables/composition/vnode"
+import { maybeMakeRenderable } from "./renderable-brand"
 import type { MouseEvent } from "./renderer"
 import type { RenderContext } from "./types"
 import {
@@ -34,7 +35,7 @@ import {
   isOverflowType,
 } from "./lib/renderable.validations"
 
-const BrandedRenderable: unique symbol = Symbol.for("@opentui/core/Renderable")
+import { BrandedRenderable } from "./renderable-brand"
 
 export enum LayoutEvents {
   LAYOUT_CHANGED = "layout-changed",
@@ -128,9 +129,7 @@ export interface RenderableOptions<T extends BaseRenderable = BaseRenderable> ex
   onSizeChange?: (this: T) => void
 }
 
-export function isRenderable(obj: any): obj is Renderable {
-  return !!obj?.[BrandedRenderable]
-}
+export { isRenderable } from "./renderable-brand"
 
 export abstract class BaseRenderable extends EventEmitter {
   [BrandedRenderable] = true

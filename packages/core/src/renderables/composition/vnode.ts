@@ -1,4 +1,5 @@
-import { isRenderable, Renderable, type RenderableOptions } from "../../Renderable"
+import { isRenderable, BrandedRenderable, registerMaybeMakeRenderable } from "../../renderable-brand"
+import type { Renderable, RenderableOptions } from "../../Renderable"
 import type { RenderContext } from "../../types"
 import util from "node:util"
 
@@ -43,7 +44,7 @@ export type Construct<P = any> =
 function isRenderableConstructor<P extends RenderableOptions<any> = RenderableOptions<any>>(
   value: any,
 ): value is RenderableConstructor<P> {
-  return typeof value === "function" && value.prototype && Renderable.prototype.isPrototypeOf(value.prototype)
+  return typeof value === "function" && value.prototype && !!value.prototype[BrandedRenderable]
 }
 
 function flattenChildren(children: VChild[]): VChild[] {
@@ -144,6 +145,9 @@ export function maybeMakeRenderable(
   }
   return null
 }
+
+// Register with renderable-brand so Renderable.ts can call this without a circular import.
+registerMaybeMakeRenderable(maybeMakeRenderable)
 
 export function wrapWithDelegates<T extends InstanceType<RenderableConstructor>>(
   instance: T,
