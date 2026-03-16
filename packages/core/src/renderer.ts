@@ -302,7 +302,6 @@ export async function createCliRenderer(config: CliRendererConfig = {}): Promise
   if (process.platform === "linux") {
     config.useThread = false
   }
-  ziglib.setUseThread(rendererPtr, config.useThread)
 
   const kittyConfig = config.useKittyKeyboard ?? {}
   const kittyFlags = buildKittyKeyboardFlags(kittyConfig)
@@ -313,6 +312,11 @@ export async function createCliRenderer(config: CliRendererConfig = {}): Promise
   if (!config.testing) {
     await renderer.setupTerminal()
   }
+
+  // Start the render thread AFTER terminal setup to avoid race conditions
+  // where the thread tries to render before the terminal is configured.
+  ziglib.setUseThread(rendererPtr, config.useThread)
+
   return renderer
 }
 
