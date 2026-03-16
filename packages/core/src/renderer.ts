@@ -294,12 +294,6 @@ export async function createCliRenderer(config: CliRendererConfig = {}): Promise
     throw new Error("Failed to create renderer")
   }
   if (config.useThread === undefined) {
-    config.useThread = true
-  }
-
-  // Disable threading on linux because there currently is currently an issue
-  // might be just a missing dependency for the build or something, but threads crash on linux
-  if (process.platform === "linux") {
     config.useThread = false
   }
 
@@ -311,11 +305,11 @@ export async function createCliRenderer(config: CliRendererConfig = {}): Promise
   const renderer = new CliRenderer(ziglib, rendererPtr, stdin, stdout, width, height, config)
   if (!config.testing) {
     await renderer.setupTerminal()
+    // Start the render thread AFTER terminal setup to avoid race conditions
+    // where the thread tries to render before the terminal is configured.
+    // In testing mode, the thread is not started (no terminal to render to).
+    ziglib.setUseThread(rendererPtr, config.useThread)
   }
-
-  // Start the render thread AFTER terminal setup to avoid race conditions
-  // where the thread tries to render before the terminal is configured.
-  ziglib.setUseThread(rendererPtr, config.useThread)
 
   return renderer
 }
